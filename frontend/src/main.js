@@ -14,12 +14,27 @@ import { showError } from './ui/showError.js';
 
 const BACKEND_URL = 'http://localhost:8000';
 const PUBLISHED_NANOPUBS_STORAGE_KEY = 'iadopt-published-nanopubs';
+const FALLBACK_MODEL_PROVIDER = 'openrouter';
 const FALLBACK_MODEL_NAME = 'qwen/qwen3.5-flash-02-23';
 const FALLBACK_MODEL_NAMES = [
   'qwen/qwen3.5-flash-02-23',
   'qwen/qwen3-32b',
   'qwen/qwen3.5-397b-a17b',
 ];
+const FALLBACK_PROVIDER_OPTIONS = {
+  openrouter: {
+    label: 'OpenRouter',
+    default_model_name: FALLBACK_MODEL_NAME,
+    model_names: FALLBACK_MODEL_NAMES,
+  },
+  psnc: {
+    label: 'PSNC',
+    default_model_name: 'Qwen3.5-397B-A17B',
+    model_names: ['Qwen3.5-397B-A17B', 'Qwen3-VL-235B-A22B-Instruct-FP8'],
+  },
+};
+
+let modelProviderOptions = FALLBACK_PROVIDER_OPTIONS;
 
 function setDecomposeStatus(message, isError = false) {
   const el = document.querySelector('#decomposeStatus');
@@ -185,6 +200,7 @@ let isDecomposing = false;
 
 function setDecomposeButtonState(isLoading) {
   const button = document.querySelector('#decompose');
+  const modelProviderSelect = document.querySelector('#modelProviderSelect');
   const modelSelect = document.querySelector('#modelSelect');
   const thinkingToggle = document.querySelector('#disableThinkingToggle');
   const creatorOrcidInput = document.querySelector('#creatorOrcidInput');
@@ -193,6 +209,7 @@ function setDecomposeButtonState(isLoading) {
   button.disabled = isLoading;
   button.textContent = isLoading ? 'Decomposing...' : 'Decompose';
   button.classList.toggle('is-loading', isLoading);
+  if (modelProviderSelect) modelProviderSelect.disabled = isLoading;
   if (modelSelect) modelSelect.disabled = isLoading;
   if (thinkingToggle) thinkingToggle.disabled = isLoading;
   if (creatorOrcidInput) creatorOrcidInput.disabled = isLoading;
@@ -218,12 +235,80 @@ function getRetractCreatorMetadataOverrides() {
   };
 }
 
-function renderModelOptions(modelNames = FALLBACK_MODEL_NAMES, defaultModelName = FALLBACK_MODEL_NAME) {
+function getSelectedModelProvider() {
+  return document.querySelector('#modelProviderSelect')?.value?.trim() || FALLBACK_MODEL_PROVIDER;
+}
+
+function getProviderOptions(providerId) {
+  return (
+    modelProviderOptions[providerId]
+    || modelProviderOptions[FALLBACK_MODEL_PROVIDER]
+    || FALLBACK_PROVIDER_OPTIONS.openrouter
+  );
+}
+
+function normalizeProviderOptions(data = {}) {
+  const rawProviders = data.providers && typeof data.providers === 'object'
+    ? data.providers
+    : {
+        [FALLBACK_MODEL_PROVIDER]: {
+          label: 'OpenRouter',
+          default_model_name: data.default_model_name || FALLBACK_MODEL_NAME,
+          model_names: data.model_names || FALLBACK_MODEL_NAMES,
+        },
+      };
+  const normalized = {};
+
+  for (const [providerId, provider] of Object.entries(rawProviders)) {
+    if (!providerId || !provider || typeof provider !== 'object') continue;
+
+    const fallbackProvider = FALLBACK_PROVIDER_OPTIONS[providerId] || {};
+    const modelNames = [...new Set((provider.model_names || fallbackProvider.model_names || []).filter(Boolean))];
+    const defaultModelName = provider.default_model_name || fallbackProvider.default_model_name || modelNames[0];
+
+    if (!modelNames.length) continue;
+
+    normalized[providerId] = {
+      label: provider.label || fallbackProvider.label || providerId,
+      default_model_name: modelNames.includes(defaultModelName) ? defaultModelName : modelNames[0],
+      model_names: modelNames,
+    };
+  }
+
+  return Object.keys(normalized).length ? normalized : FALLBACK_PROVIDER_OPTIONS;
+}
+
+function renderModelProviderOptions(defaultProvider = FALLBACK_MODEL_PROVIDER) {
+  const modelProviderSelect = document.querySelector('#modelProviderSelect');
+  if (!modelProviderSelect) return;
+
+  const providerIds = Object.keys(modelProviderOptions);
+  const selectedProvider = providerIds.includes(defaultProvider)
+    ? defaultProvider
+    : providerIds[0] || FALLBACK_MODEL_PROVIDER;
+
+  modelProviderSelect.innerHTML = '';
+
+  for (const providerId of providerIds) {
+    const option = document.createElement('option');
+    option.value = providerId;
+    option.textContent = modelProviderOptions[providerId]?.label || providerId;
+    option.selected = providerId === selectedProvider;
+    modelProviderSelect.appendChild(option);
+  }
+
+  renderModelOptions(selectedProvider);
+}
+
+function renderModelOptions(providerId = getSelectedModelProvider()) {
   const modelSelect = document.querySelector('#modelSelect');
   if (!modelSelect) return;
 
-  const uniqueModelNames = [...new Set((modelNames || []).filter(Boolean))];
-  const finalModelNames = uniqueModelNames.length ? uniqueModelNames : FALLBACK_MODEL_NAMES;
+  const providerOptions = getProviderOptions(providerId);
+  const fallbackOptions = FALLBACK_PROVIDER_OPTIONS[providerId] || FALLBACK_PROVIDER_OPTIONS.openrouter;
+  const uniqueModelNames = [...new Set((providerOptions.model_names || []).filter(Boolean))];
+  const finalModelNames = uniqueModelNames.length ? uniqueModelNames : fallbackOptions.model_names;
+  const defaultModelName = providerOptions.default_model_name || fallbackOptions.default_model_name;
   const selectedModelName = finalModelNames.includes(defaultModelName) ? defaultModelName : finalModelNames[0];
 
   modelSelect.innerHTML = '';
@@ -246,18 +331,24 @@ async function loadModelOptions() {
       throw new Error(data.detail || 'Could not load model options.');
     }
 
-    renderModelOptions(data.model_names, data.default_model_name);
+    modelProviderOptions = normalizeProviderOptions(data);
+    renderModelProviderOptions(data.default_model_provider || FALLBACK_MODEL_PROVIDER);
   } catch (e) {
     console.error(e);
-    // Keep the dropdown usable even if the backend config endpoint is temporarily unavailable.
-    renderModelOptions();
+    // Keep both dropdowns usable even if the backend config endpoint is temporarily unavailable.
+    modelProviderOptions = FALLBACK_PROVIDER_OPTIONS;
+    renderModelProviderOptions();
   }
 }
 
 async function decomposeDefinition() {
   if (isDecomposing) return;
   const definition = document.querySelector('#definitionInput')?.value?.trim();
-  const modelName = document.querySelector('#modelSelect')?.value?.trim() || FALLBACK_MODEL_NAME;
+  const modelProvider = getSelectedModelProvider();
+  const modelName = (
+    document.querySelector('#modelSelect')?.value?.trim()
+    || getProviderOptions(modelProvider).default_model_name
+  );
   const disableThinking = Boolean(document.querySelector('#disableThinkingToggle')?.checked);
   const creatorMetadata = getCreatorMetadataOverrides();
   const rawOutputEl = document.querySelector('#rawOutput');
@@ -285,6 +376,7 @@ async function decomposeDefinition() {
       // The backend treats the absence of the override as normal thinking, so we only send a boolean flag here.
       body: JSON.stringify({
         definition,
+        model_provider: modelProvider,
         model_name: modelName,
         disable_thinking: disableThinking,
         ...creatorMetadata,
@@ -504,6 +596,11 @@ async function retractNanopub() {
 document.querySelector('#decompose')
   ?.addEventListener('click', async () => {
     await decomposeDefinition();
+  });
+
+document.querySelector('#modelProviderSelect')
+  ?.addEventListener('change', (e) => {
+    renderModelOptions(e.target.value);
   });
 
 document.querySelector('#visualize')

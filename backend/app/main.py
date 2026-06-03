@@ -33,8 +33,9 @@ from contextlib import asynccontextmanager
 def warmup_assets() -> None:
     global _schema_cache, _validator_cache, _prompt_version_cache, _examples_5_cache
 
-    # OpenRouter client init
-    get_openai_client()
+    # OpenRouter is only needed when the user selects the OpenRouter provider.
+    if OPENROUTER_API_KEY:
+        get_openai_client()
 
     # Heavy model load (do this at startup)
     if ENABLE_WIKIDATA_LINKING:
@@ -61,9 +62,21 @@ async def lifespan(_: FastAPI):
     yield
 
 
+API_DESCRIPTION = """
+I-ADOPT variable decomposition, Turtle generation, visualization support, and nanopublication publishing.
+
+There are two decomposition endpoints on purpose:
+
+- `POST /decompose/stream` is the endpoint used by the frontend. It streams raw LLM output while the model is
+  responding, then emits the final parsed JSON, validation result, enriched JSON, and Turtle payload.
+- `POST /decompose` runs the same backend pipeline but returns only one final JSON response. It is kept for API
+  clients, scripts, tests, and debugging tools that do not want to consume an NDJSON stream.
+"""
+
 app = FastAPI(
     title="I-ADOPT Variable Decomposition API",
     version="0.1.0",
+    description=API_DESCRIPTION,
     lifespan=lifespan,
 )
 
@@ -97,6 +110,13 @@ DEFAULT_MODEL_NAMES = [
     "qwen/qwen3.5-397b-a17b",
     "google/gemini-3-flash-preview",
 ]
+DEFAULT_MODEL_PROVIDER = "openrouter"
+PSNC_MODEL_PROVIDER = "psnc"
+DEFAULT_PSNC_MODEL_NAME = "Qwen3.5-397B-A17B"
+DEFAULT_PSNC_MODEL_NAMES = [
+    "Qwen3.5-397B-A17B",
+    "Qwen3-VL-235B-A22B-Instruct-FP8",
+]
 
 # MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3.5-397b-a17b")
 MODEL_NAME = os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
@@ -105,6 +125,8 @@ MODEL_NAME = os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
 
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.5"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+PSNC_API_KEY = os.getenv("PSNC_API_KEY")
+PSNC_API_BASE_URL = os.getenv("PSNC_API_BASE_URL", "https://llm.hpc.psnc.pl")
 NANOPUB_PRIVATE_KEY = os.getenv("NANOPUB_PRIVATE_KEY")
 NANOPUB_PUBLIC_KEY = os.getenv("NANOPUB_PUBLIC_KEY")
 NANOPUB_ORCID_ID = os.getenv("NANOPUB_ORCID_ID")
@@ -196,6 +218,17 @@ def _load_model_names() -> List[str]:
 
 
 MODEL_NAMES = _load_model_names()
+PSNC_MODEL_NAME = os.getenv("PSNC_MODEL_NAME", DEFAULT_PSNC_MODEL_NAME)
+
+
+def _load_psnc_model_names() -> List[str]:
+    configured = os.getenv("PSNC_MODEL_NAMES", "")
+    configured_models = [value.strip() for value in configured.split(",") if value.strip()]
+    base_models = configured_models or DEFAULT_PSNC_MODEL_NAMES
+    return _dedupe_preserve_order([PSNC_MODEL_NAME, *base_models])
+
+
+PSNC_MODEL_NAMES = _load_psnc_model_names()
 
 
 # ======================================================================================
@@ -206,6 +239,10 @@ MODEL_NAMES = _load_model_names()
 class DecomposeRequest(BaseModel):
     definition: str = Field(..., min_length=1, description="Variable definition in plain text")
     model_name: Optional[str] = Field(default=None, description="One of the backend-configured model names to use.")
+    model_provider: str = Field(
+        default=DEFAULT_MODEL_PROVIDER,
+        description="Model provider to use for decomposition. Supported values: openrouter, psnc.",
+    )
     creator_orcid_id: Optional[str] = Field(
         default=None,
         description="Optional ORCID override for TTL/provenance metadata; falls back to NANOPUB_ORCID_ID when omitted.",
@@ -226,8 +263,10 @@ class DecomposeResponse(BaseModel):
 
 
 class ModelOptionsResponse(BaseModel):
+    default_model_provider: str
     default_model_name: str
     model_names: List[str]
+    providers: Dict[str, Dict[str, Any]]
 
 
 class PublishNanopubRequest(BaseModel):
@@ -653,6 +692,99 @@ def call_model(model: str, prompt: str, temperature: float, disable_thinking: bo
     return ""
 
 
+def _build_psnc_chat_payload(
+    model: str,
+    prompt: str,
+    temperature: float,
+    *,
+    disable_thinking: bool = False,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "model": model,
+        "temperature": temperature,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": stream,
+    }
+
+    if disable_thinking:
+        # PSNC is LiteLLM-compatible, but Qwen3.5 thinking is controlled by the model chat template.
+        # Send both known request-level switches used by Qwen-compatible providers:
+        # DashScope-style `enable_thinking` and vLLM-style `chat_template_kwargs`.
+        payload["enable_thinking"] = False
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+
+    return payload
+
+
+def _psnc_chat_headers() -> Dict[str, str]:
+    if not PSNC_API_KEY:
+        raise RuntimeError("PSNC_API_KEY is not set.")
+
+    return {
+        "Authorization": f"Bearer {PSNC_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def _psnc_chat_completions_url() -> str:
+    return f"{PSNC_API_BASE_URL.rstrip('/')}/v1/chat/completions"
+
+
+def _extract_chat_completion_text(data: Dict[str, Any]) -> str:
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return ""
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return ""
+
+    message = first_choice.get("message")
+    if isinstance(message, dict):
+        return _flatten_text_fragments(message.get("content"))
+
+    return _flatten_text_fragments(first_choice.get("text"))
+
+
+def call_psnc_model(model: str, prompt: str, temperature: float, disable_thinking: bool = False) -> str:
+    url = _psnc_chat_completions_url()
+    headers = _psnc_chat_headers()
+
+    for attempt in range(1, 4):
+        try:
+            response = get_http_session().post(
+                url,
+                headers=headers,
+                json=_build_psnc_chat_payload(
+                    model,
+                    prompt,
+                    temperature,
+                    disable_thinking=disable_thinking,
+                ),
+                timeout=120,
+            )
+            response.raise_for_status()
+            text = _extract_chat_completion_text(response.json())
+            stripped = text.strip()
+
+            if stripped.startswith("<!DOCTYPE html") or stripped.startswith("<html"):
+                continue
+            if not stripped:
+                continue
+
+            return text
+        except requests.HTTPError as e:
+            response_text = getattr(e.response, "text", "")
+            print(f"PSNC HTTP error attempt {attempt}: {e} {response_text[:500]}")
+        except requests.RequestException as e:
+            print(f"PSNC transport error attempt {attempt}: {e}")
+        except Exception as e:
+            print(f"Unexpected PSNC error attempt {attempt}: {e}")
+
+    return ""
+
+
 def coerce_prediction(pred: Dict[str, Any]) -> Dict[str, Any]:
     pred = dict(pred or {})
 
@@ -684,14 +816,28 @@ def parse_llm_json(raw: str, definition: str) -> Dict[str, Any]:
     return coerce_prediction(data)
 
 
-def _resolve_model_name(requested_model_name: Optional[str]) -> str:
-    selected_model = (requested_model_name or MODEL_NAME).strip()
+def _resolve_model_provider(requested_provider: Optional[str]) -> str:
+    provider = (requested_provider or DEFAULT_MODEL_PROVIDER).strip().lower()
+
+    if not provider:
+        provider = DEFAULT_MODEL_PROVIDER
+
+    if provider not in {DEFAULT_MODEL_PROVIDER, PSNC_MODEL_PROVIDER}:
+        raise ValueError(f"Unsupported model provider '{provider}'. Allowed providers: openrouter, psnc")
+
+    return provider
+
+
+def _resolve_model_name(requested_model_name: Optional[str], model_provider: str = DEFAULT_MODEL_PROVIDER) -> str:
+    default_model = PSNC_MODEL_NAME if model_provider == PSNC_MODEL_PROVIDER else MODEL_NAME
+    allowed_models = PSNC_MODEL_NAMES if model_provider == PSNC_MODEL_PROVIDER else MODEL_NAMES
+    selected_model = (requested_model_name or default_model).strip()
 
     if not selected_model:
-        selected_model = MODEL_NAME
+        selected_model = default_model
 
-    if selected_model not in MODEL_NAMES:
-        raise ValueError(f"Unsupported model '{selected_model}'. Allowed models: {', '.join(MODEL_NAMES)}")
+    if selected_model not in allowed_models:
+        raise ValueError(f"Unsupported model '{selected_model}'. Allowed models: {', '.join(allowed_models)}")
 
     return selected_model
 
@@ -785,11 +931,84 @@ def _extract_stream_text_deltas(chunk: Any) -> Tuple[str, str]:
     return reasoning_delta, content_delta
 
 
+def _extract_stream_text_deltas_from_dict(data: Dict[str, Any]) -> Tuple[str, str]:
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return "", ""
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return "", ""
+
+    delta = first_choice.get("delta")
+    if isinstance(delta, dict):
+        content_delta = _flatten_text_fragments(delta.get("content"))
+        reasoning_delta = "".join(
+            _flatten_text_fragments(delta.get(key))
+            for key in ("reasoning", "reasoning_content", "reasoning_text", "reasoning_details")
+        )
+        return reasoning_delta, content_delta
+
+    message = first_choice.get("message")
+    if isinstance(message, dict):
+        content_delta = _flatten_text_fragments(message.get("content"))
+        reasoning_delta = "".join(
+            _flatten_text_fragments(message.get(key))
+            for key in ("reasoning", "reasoning_content", "reasoning_text", "reasoning_details")
+        )
+        return reasoning_delta, content_delta
+
+    text_delta = _flatten_text_fragments(first_choice.get("text"))
+    return "", text_delta
+
+
+def _stream_psnc_model(
+    model: str,
+    prompt: str,
+    temperature: float,
+    *,
+    disable_thinking: bool = False,
+) -> Iterator[Tuple[str, str]]:
+    response = get_http_session().post(
+        _psnc_chat_completions_url(),
+        headers=_psnc_chat_headers(),
+        json=_build_psnc_chat_payload(
+            model,
+            prompt,
+            temperature,
+            disable_thinking=disable_thinking,
+            stream=True,
+        ),
+        stream=True,
+        timeout=120,
+    )
+    response.raise_for_status()
+
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+
+        line = raw_line.strip()
+        if line.startswith("data:"):
+            line = line.removeprefix("data:").strip()
+
+        if not line or line == "[DONE]":
+            continue
+
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        yield _extract_stream_text_deltas_from_dict(event)
+
+
 def _stream_event(event_type: str, **payload: Any) -> str:
     return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
 
 
 def call_llm_loose(
+    model_provider: str,
     model: str,
     prompt: str,
     definition: str,
@@ -799,7 +1018,11 @@ def call_llm_loose(
     last_raw = ""
 
     for attempt in range(1, 4):
-        raw = call_model(model, prompt, temperature, disable_thinking=disable_thinking)
+        raw = (
+            call_psnc_model(model, prompt, temperature, disable_thinking=disable_thinking)
+            if model_provider == PSNC_MODEL_PROVIDER
+            else call_model(model, prompt, temperature, disable_thinking=disable_thinking)
+        )
         last_raw = raw
 
         if not raw.strip():
@@ -1541,7 +1764,11 @@ def json_to_ttl_repo_style(
 # ======================================================================================
 
 
-def _prepare_pipeline_inputs(definition: str, model_name: Optional[str] = None) -> Tuple[str, str]:
+def _prepare_pipeline_inputs(
+    definition: str,
+    model_name: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> Tuple[str, str, str]:
     definition = definition.strip()
     if not definition:
         raise ValueError("Definition must not be empty.")
@@ -1555,22 +1782,27 @@ def _prepare_pipeline_inputs(definition: str, model_name: Optional[str] = None) 
 
     examples_5 = _examples_5_cache if _examples_5_cache is not None else load_examples(FIVE_SHOT_DIR, 5)
     prompt = build_prompt(definition, prompt_version=prompt_version, examples=examples_5)
-    selected_model_name = _resolve_model_name(model_name)
+    selected_model_provider = _resolve_model_provider(model_provider)
+    selected_model_name = _resolve_model_name(model_name, model_provider=selected_model_provider)
 
-    return prompt, selected_model_name
+    return prompt, selected_model_provider, selected_model_name
 
 
 def stream_pipeline_events(
     definition: str,
     *,
     disable_thinking: bool = False,
+    model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
     creator_orcid_id: Optional[str] = None,
 ) -> Iterator[str]:
     try:
         definition = definition.strip()
-        prompt, selected_model_name = _prepare_pipeline_inputs(definition, model_name=model_name)
-        client = get_openai_client()
+        prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(
+            definition,
+            model_name=model_name,
+            model_provider=model_provider,
+        )
         all_display_parts: List[str] = []
         last_error_message = "Could not extract valid JSON from the model output."
 
@@ -1587,19 +1819,29 @@ def stream_pipeline_events(
                 yield _stream_event("raw_delta", delta=retry_note)
 
             try:
-                stream = client.chat.completions.create(
-                    **_build_chat_completion_request_kwargs(
+                if selected_model_provider == PSNC_MODEL_PROVIDER:
+                    stream = _stream_psnc_model(
                         selected_model_name,
                         prompt,
                         TEMPERATURE,
                         disable_thinking=disable_thinking,
-                        stream=True,
                     )
-                )
+                else:
+                    client = get_openai_client()
+                    stream = (
+                        _extract_stream_text_deltas(chunk)
+                        for chunk in client.chat.completions.create(
+                            **_build_chat_completion_request_kwargs(
+                                selected_model_name,
+                                prompt,
+                                TEMPERATURE,
+                                disable_thinking=disable_thinking,
+                                stream=True,
+                            )
+                        )
+                    )
 
-                for chunk in stream:
-                    reasoning_delta, content_delta = _extract_stream_text_deltas(chunk)
-
+                for reasoning_delta, content_delta in stream:
                     if reasoning_delta:
                         streamed_any_chunk = True
                         saw_reasoning = True
@@ -1657,11 +1899,20 @@ def stream_pipeline_events(
                 print(f"Unexpected streaming error attempt {attempt}: {e}")
 
             if not streamed_any_chunk:
-                fallback_raw = call_model(
-                    selected_model_name,
-                    prompt,
-                    TEMPERATURE,
-                    disable_thinking=disable_thinking,
+                fallback_raw = (
+                    call_psnc_model(
+                        selected_model_name,
+                        prompt,
+                        TEMPERATURE,
+                        disable_thinking=disable_thinking,
+                    )
+                    if selected_model_provider == PSNC_MODEL_PROVIDER
+                    else call_model(
+                        selected_model_name,
+                        prompt,
+                        TEMPERATURE,
+                        disable_thinking=disable_thinking,
+                    )
                 )
                 fallback_display = fallback_raw or ""
                 if fallback_display:
@@ -1694,13 +1945,19 @@ def stream_pipeline_events(
 def run_pipeline(
     definition: str,
     disable_thinking: bool = False,
+    model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
     creator_orcid_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     definition = definition.strip()
-    prompt, selected_model_name = _prepare_pipeline_inputs(definition, model_name=model_name)
+    prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(
+        definition,
+        model_name=model_name,
+        model_provider=model_provider,
+    )
 
     raw_llm_output, pred = call_llm_loose(
+        selected_model_provider,
         selected_model_name,
         prompt,
         definition=definition,
@@ -1944,6 +2201,7 @@ def health() -> Dict[str, Any]:
         "prompt_dir_exists": PROMPT_DIR.exists(),
         "five_shot_dir_exists": FIVE_SHOT_DIR.exists(),
         "openrouter_key_set": bool(OPENROUTER_API_KEY),
+        "psnc_key_set": bool(PSNC_API_KEY),
         "nanopub_publish_ready": bool(NANOPUB_PRIVATE_KEY and NANOPUB_ORCID_ID),
         "wikidata_linking_enabled": ENABLE_WIKIDATA_LINKING,
     }
@@ -1952,16 +2210,51 @@ def health() -> Dict[str, Any]:
 @app.get("/model-options", response_model=ModelOptionsResponse)
 def model_options() -> ModelOptionsResponse:
     """Expose the backend-managed list of allowed model names for the frontend dropdown."""
-    return ModelOptionsResponse(default_model_name=MODEL_NAME, model_names=MODEL_NAMES)
+    return ModelOptionsResponse(
+        default_model_provider=DEFAULT_MODEL_PROVIDER,
+        default_model_name=MODEL_NAME,
+        model_names=MODEL_NAMES,
+        providers={
+            DEFAULT_MODEL_PROVIDER: {
+                "label": "OpenRouter",
+                "default_model_name": MODEL_NAME,
+                "model_names": MODEL_NAMES,
+            },
+            PSNC_MODEL_PROVIDER: {
+                "label": "PSNC",
+                "default_model_name": PSNC_MODEL_NAME,
+                "model_names": PSNC_MODEL_NAMES,
+            },
+        },
+    )
 
 
-@app.post("/decompose/stream")
+@app.post(
+    "/decompose/stream",
+    summary="Decompose a variable with streamed raw LLM output",
+    description=(
+        "Frontend endpoint. Use this when the caller wants to show the raw LLM response while it is being "
+        "generated. The response is newline-delimited JSON with `raw_delta` events during generation, followed "
+        "by one `final` event containing the same final payload shape as `/decompose`. An `error` event is emitted "
+        "if the streamed output cannot be parsed or the backend fails."
+    ),
+    tags=["Decomposition"],
+    responses={
+        200: {
+            "description": (
+                "NDJSON stream. Event types: `raw_delta`, `final`, and `error`. "
+                "Use `/decompose` instead if you need a single JSON response."
+            )
+        }
+    },
+)
 def decompose_stream(req: DecomposeRequest) -> StreamingResponse:
     """Stream raw LLM output chunks first, then emit the final structured decompose payload."""
     return StreamingResponse(
         stream_pipeline_events(
             req.definition,
             disable_thinking=req.disable_thinking,
+            model_provider=req.model_provider,
             model_name=req.model_name,
             creator_orcid_id=req.creator_orcid_id,
         ),
@@ -1969,12 +2262,24 @@ def decompose_stream(req: DecomposeRequest) -> StreamingResponse:
     )
 
 
-@app.post("/decompose", response_model=DecomposeResponse)
+@app.post(
+    "/decompose",
+    response_model=DecomposeResponse,
+    summary="Decompose a variable with one final JSON response",
+    description=(
+        "Non-streaming endpoint. It runs the same decomposition, validation, enrichment, and Turtle-generation "
+        "pipeline as `/decompose/stream`, but waits until the model response is complete and returns one JSON "
+        "object. This is useful for scripts, API clients, tests, and debugging tools. The frontend normally uses "
+        "`/decompose/stream` so users can see raw LLM output progressively."
+    ),
+    tags=["Decomposition"],
+)
 def decompose(req: DecomposeRequest) -> DecomposeResponse:
     try:
         result = run_pipeline(
             req.definition,
             disable_thinking=req.disable_thinking,
+            model_provider=req.model_provider,
             model_name=req.model_name,
             creator_orcid_id=req.creator_orcid_id,
         )

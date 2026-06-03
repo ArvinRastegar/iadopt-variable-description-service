@@ -5,10 +5,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>I-ADOPT Variable Decomposer & Visualizer</title>
-  <script type="module" crossorigin src="./assets/appMain-D6v46-05.js"></script>
+  <script type="module" crossorigin src="./assets/appMain-DVxtolOi.js"></script>
   <link rel="modulepreload" crossorigin href="./assets/error-DiCu80II.js">
   <link rel="stylesheet" crossorigin href="./assets/error-B8NwTY9S.css">
-  <link rel="stylesheet" crossorigin href="./assets/appMain-CzKQuXJG.css">
+  <link rel="stylesheet" crossorigin href="./assets/appMain-BcR4niKG.css">
 </head>
 
 <body data-bs-theme="dark">
@@ -34,6 +34,12 @@
 
         <div class="action-row mb-4">
           <button id="decompose" class="btn btn-primary" type="button">Decompose</button>
+          <div class="model-select-group provider-select-group">
+            <label class="form-label mb-0" for="modelProviderSelect">Provider</label>
+            <select id="modelProviderSelect" class="form-select" aria-label="Model provider selection">
+              <option value="openrouter">OpenRouter</option>
+            </select>
+          </div>
           <div class="model-select-group">
             <label class="form-label mb-0" for="modelSelect">Model</label>
             <select id="modelSelect" class="form-select" aria-label="Model selection">
