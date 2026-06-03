@@ -52,6 +52,10 @@ body {
   min-width: 280px;
 }
 
+.provider-select-group .form-select {
+  min-width: 180px;
+}
+
 svg {
   width: 60%;
   min-width: 600px;

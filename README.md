@@ -131,15 +131,16 @@ Inside the file add:
 
 ```
 OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxxxxxxxxxx
+PSNC_API_KEY=your-psnc-api-key
 NANOPUB_PRIVATE_KEY=base64-body-of-private-key
 NANOPUB_ORCID_ID=0009-0006-1978-4302
 NANOPUB_PROFILE_NAME=Barbara Magagna
 NANOPUB_AGENT_INTRO_URI=https://w3id.org/np/RAwy2xTZzt5Y3ix-7f1HDTewgZqa6eRm5YnmrSKCy0PTA
 ```
 
-Replace the key with your **OpenRouter API key**.
+Replace the keys with your **OpenRouter API key** and, if you want to use PSNC models, your **PSNC API key**.
 
-This key is used by the backend to call the LLM.
+These keys are used by the backend to call the selected LLM provider.
 The nanopub values are used by the backend to sign and publish nanopublications from the frontend's Turtle payload.
 `NANOPUB_PRIVATE_KEY` and `NANOPUB_PUBLIC_KEY` can be provided either as one-line base64 key bodies or as PEM strings with `\n` escapes.
 
@@ -151,6 +152,10 @@ NANOPUB_AGENT_URI=...
 NANOPUB_PROFILE_INTRODUCTION_URI=...
 NANOPUB_LICENSE_URI=https://creativecommons.org/publicdomain/zero/1.0/
 NANOPUB_USE_TEST_SERVER=false
+MODEL_NAMES=qwen/qwen3.5-flash-02-23,qwen/qwen3-32b,qwen/qwen3.5-397b-a17b
+PSNC_API_BASE_URL=https://llm.hpc.psnc.pl
+PSNC_MODEL_NAME=Qwen3.5-397B-A17B
+PSNC_MODEL_NAMES=Qwen3.5-397B-A17B,Qwen3-VL-235B-A22B-Instruct-FP8
 ```
 
 ---
