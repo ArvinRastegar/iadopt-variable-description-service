@@ -1,4 +1,4 @@
-# I-ADOPT Variable Decomposition Service
+# I-ADOPT Variable Description Service
 
 This project provides a simple web interface for **decomposing variable definitions into the I-ADOPT ontology structure** and **visualizing the result**.
 
