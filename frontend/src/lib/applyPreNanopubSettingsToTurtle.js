@@ -14,11 +14,30 @@ const NS = {
   pav: 'http://purl.org/pav/',
   prov: 'http://www.w3.org/ns/prov#',
   rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+  rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
   xsd: 'http://www.w3.org/2001/XMLSchema#',
 };
 
 const VARIABLE_CLASS = namedNode( NS.iop + 'Variable' );
 const FAIR_DIGITAL_OBJECT_CLASS = namedNode( NS.fdof + 'FAIRDigitalObject' );
+
+const RDF_TYPE = NS.rdf + 'type';
+const RDFS_LABEL = NS.rdfs + 'label';
+
+// System classes and the component predicates that make up a system, in canonical order:
+// first part (numerator/source) before second part (denominator/target); symmetric parts in order.
+const SYSTEM_CLASSES = [ NS.iop + 'AsymmetricSystem', NS.iop + 'SymmetricSystem' ];
+const SYSTEM_COMPONENT_PREDICATES = [
+  NS.iop + 'hasNumerator',
+  NS.iop + 'hasSource',
+  NS.iop + 'hasDenominator',
+  NS.iop + 'hasTarget',
+  NS.iop + 'hasPart',
+];
+
+// Resolvable namespace for minted variable URIs (w3id redirects). The variable subject and its
+// dct:identifier must both live under this base so the published identifier always resolves.
+const IADOPT_VARIABLE_BASE = 'https://w3id.org/iadopt/variable/';
 
 // The managed predicates whose objects we own. Anything else on the variable is preserved verbatim.
 const TARGET_PREDICATES = {
@@ -416,22 +435,125 @@ function formatCreatedTimestamp( createdAt ) {
 
 
 /**
- * Build the variable identifier matching the backend's `iadopt-variable-YYYYMMDDTHHMMSS-NN` shape,
- * where the date/time component is derived from the same created timestamp and NN is a 2-digit
- * random number (0-99). An explicit `randomSuffix` can be supplied for deterministic tests.
+ * Build the identifier suffix matching the backend's `YYYYMMDDTHHMMSS-NN` shape, where the date/time
+ * component is derived from the same created timestamp and NN is a 2-digit random number (0-99).
+ * An explicit `randomSuffix` can be supplied for deterministic tests.
  *
  * @param   {string}  createdTimestamp  e.g. "2026-06-18T09:47:20Z"
  * @param   {?number} randomSuffix      optional fixed 0-99 value
- * @returns {string}
+ * @returns {string}                    e.g. "20260618T094720-86"
  */
-function buildVariableIdentifier( createdTimestamp, randomSuffix ) {
+function buildIdentifierSuffix( createdTimestamp, randomSuffix ) {
   // "2026-06-18T09:47:20Z" -> "20260618T094720"
   const compactDateTime = createdTimestamp.replace( /[-:]/g, '' ).replace( /Z$/, '' );
   const number = Number.isInteger( randomSuffix )
     ? Math.min( 99, Math.max( 0, randomSuffix ) )
     : Math.floor( Math.random() * 100 );
   const paddedNumber = String( number ).padStart( 2, '0' );
-  return `iadopt-variable-${compactDateTime}-${paddedNumber}`;
+  return `${compactDateTime}-${paddedNumber}`;
+}
+
+
+/**
+ * Whether a variable subject is already a resolvable minted variable URI of the form
+ * `https://w3id.org/iadopt/variable/<datetime>-<NN>`. Such subjects are kept as-is; anything
+ * else (example.org, urn:, blank-derived, etc.) is replaced with a freshly minted resolvable URI.
+ *
+ * @param   {string}  uri
+ * @returns {boolean}
+ */
+function isResolvableVariableUri( uri ) {
+  if( !uri.startsWith( IADOPT_VARIABLE_BASE ) ) {
+    return false;
+  }
+  const suffix = uri.slice( IADOPT_VARIABLE_BASE.length );
+  return /^\d{8}T\d{6}-\d{2}$/.test( suffix );
+}
+
+
+/**
+ * Replace every whole term (an <IRI> or a prefixed name) that resolves to `fromUri` with
+ * `replacementText`, while skipping comments, string literals and the insides of unrelated IRIs.
+ * This is how a non-resolvable variable subject (e.g. <http://example.org/Temperature> or ex:Temp)
+ * is renamed to the minted resolvable URI everywhere it occurs (subject and any object references),
+ * without disturbing surrounding formatting or unrelated tokens.
+ *
+ * @param   {string}                    text
+ * @param   {Object.<string,string>}    prefixes
+ * @param   {string}                    fromUri
+ * @param   {string}                    replacementText  e.g. "<https://w3id.org/iadopt/variable/...>"
+ * @returns {string}
+ */
+function rewriteTermOccurrences( text, prefixes, fromUri, replacementText ) {
+  const replacements = [];
+  let comment = false;
+  let quote = null;
+  let tripleQuote = false;
+  let escaped = false;
+
+  for( let index = 0; index < text.length; index += 1 ) {
+    const char = text[index];
+
+    if( comment ) {
+      if( char === '\n' || char === '\r' ) {
+        comment = false;
+      }
+      continue;
+    }
+
+    if( quote ) {
+      if( escaped ) {
+        escaped = false;
+        continue;
+      }
+      if( char === '\\' ) {
+        escaped = true;
+        continue;
+      }
+      if( tripleQuote ) {
+        if( text.slice( index, index + 3 ) === quote.repeat( 3 ) ) {
+          quote = null;
+          tripleQuote = false;
+          index += 2;
+        }
+      } else if( char === quote ) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if( char === '#' ) {
+      comment = true;
+      continue;
+    }
+    if( char === '"' || char === '\'' ) {
+      quote = char;
+      tripleQuote = text.slice( index, index + 3 ) === char.repeat( 3 );
+      if( tripleQuote ) {
+        index += 2;
+      }
+      continue;
+    }
+
+    // A term begins at an '<' (IRI) or a non-delimiter, non-whitespace character (prefixed name / `a`).
+    if( char === '<' || !/[\s;,.[\](){}<>"']/.test( char ) ) {
+      const token = readToken( text, index );
+      if( token ) {
+        if( resolveToken( token.value, prefixes ) === fromUri ) {
+          replacements.push({ start: token.start, end: token.end });
+        }
+        // Skip past the whole token so its inner characters are never re-scanned.
+        index = token.end - 1;
+        continue;
+      }
+    }
+  }
+
+  let updated = text;
+  for( const range of replacements.sort( (left, right) => right.start - left.start ) ) {
+    updated = updated.slice( 0, range.start ) + replacementText + updated.slice( range.end );
+  }
+  return updated;
 }
 
 
@@ -456,6 +578,11 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
   const variable = namedNode( variableUri );
   const required = [
     {
+      // The variable subject must be a resolvable minted w3id URI so the published identifier resolves.
+      valid: isResolvableVariableUri( variableUri ),
+      label: 'resolvable variable URI (https://w3id.org/iadopt/variable/<datetime>-NN)',
+    },
+    {
       valid: store.countQuads( variable, namedNode( NS.rdf + 'type' ), FAIR_DIGITAL_OBJECT_CLASS, null ) > 0,
       label: 'fdof:FAIRDigitalObject type',
     },
@@ -464,10 +591,9 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
       label: 'dct:conformsTo',
     },
     {
-      // The identifier value is generated (and random), so only require a non-empty literal.
-      valid: store.getQuads( variable, namedNode( TARGET_PREDICATES.identifier ), null, null )
-        .some( (quad) => quad.object.termType === 'Literal' && quad.object.value.trim().length > 0 ),
-      label: 'dct:identifier',
+      // dct:identifier must be the resolvable variable IRI itself (not a string literal).
+      valid: store.countQuads( variable, namedNode( TARGET_PREDICATES.identifier ), variable, null ) > 0,
+      label: 'dct:identifier (resolvable IRI)',
     },
     {
       valid: store.getQuads( variable, namedNode( TARGET_PREDICATES.created ), null, null )
@@ -510,6 +636,177 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
 
 
 /**
+ * Extract the plain string value of a Turtle literal object (e.g. `"salt"`, `"salt"@en`,
+ * `"""multi"""`, `'x'^^xsd:string`). Returns null when the object is not a literal.
+ * @param   {string} objectText
+ * @returns {?string}
+ */
+function readLiteralValue( objectText ) {
+  const text = objectText.trim();
+  const quote = text[0];
+  if( quote !== '"' && quote !== '\'' ) {
+    return null;
+  }
+
+  const triple = text.slice( 0, 3 ) === quote.repeat( 3 );
+  const open = triple ? 3 : 1;
+  let end = -1;
+
+  for( let index = open; index < text.length; index += 1 ) {
+    if( text[index] === '\\' ) {
+      index += 1;
+      continue;
+    }
+    if( triple ) {
+      if( text.slice( index, index + 3 ) === quote.repeat( 3 ) ) {
+        end = index;
+        break;
+      }
+    } else if( text[index] === quote ) {
+      end = index;
+      break;
+    }
+  }
+
+  if( end < 0 ) {
+    return null;
+  }
+
+  return text
+    .slice( open, end )
+    .replace( /\\(["'\\ntr])/g, (match, char) => (
+      char === 'n' ? '\n' : char === 't' ? '\t' : char === 'r' ? '\r' : char
+    ) );
+}
+
+
+/**
+ * Parse a single Turtle statement into its subject token and `predicate object` clauses.
+ * @param   {string} statement
+ * @returns {?{subjectToken:object, terminalDotIndex:number, clauses:string[]}}
+ */
+function parseStatement( statement ) {
+  const subjectToken = readToken( statement );
+  if( !subjectToken ) {
+    return null;
+  }
+  const terminalDotIndex = statement.lastIndexOf( '.' );
+  const body = statement.slice( subjectToken.end, terminalDotIndex );
+  const clauses = scanDelimitedRanges( body, ';' )
+    .map( (range) => body.slice( range.start, range.end ) );
+  return { subjectToken, terminalDotIndex, clauses };
+}
+
+
+/**
+ * Read the object tokens of a clause's object list (handles comma-separated objects).
+ * @param   {string} objectText  text following the predicate
+ * @returns {string[]}           raw object token strings
+ */
+function readObjectTokens( objectText ) {
+  return scanDelimitedRanges( objectText, ',' )
+    .map( (range) => readToken( objectText.slice( range.start, range.end ) )?.value )
+    .filter( Boolean );
+}
+
+
+/**
+ * Write a derived rdfs:label onto every system node (iop:AsymmetricSystem / iop:SymmetricSystem)
+ * that does not already carry one. The label is built from the system's component labels in
+ * canonical order — first part (numerator/source) then second part (denominator/target), or the
+ * parts in order for symmetric systems — e.g. "salt water", "oxygen water".
+ *
+ * The label is written into the Turtle text itself so the visualization and the published
+ * nanopublication both read the same label (the text stays the single source of truth). Systems
+ * that already have a label, or whose components have no resolvable labels, are left untouched.
+ *
+ * @param   {string}                  turtle
+ * @param   {Object.<string,string>}  prefixes
+ * @param   {string}                  rdfsAlias  prefix alias to use when writing rdfs:label
+ * @returns {string}
+ */
+function applySystemLabels( turtle, prefixes, rdfsAlias ) {
+  const statements = scanTurtleStatements( turtle )
+    .map( (range) => {
+      const statement = turtle.slice( range.start, range.end );
+      const info = parseStatement( statement );
+      return info ? { range, ...info } : null;
+    } )
+    .filter( Boolean );
+
+  const keyOf = (tokenValue) => resolveToken( tokenValue, prefixes ) || tokenValue;
+
+  // Pass 1: map each subject (resolved IRI, or raw token for blank nodes) to its rdfs:label value.
+  const labelByKey = new Map();
+  for( const stmt of statements ) {
+    const subjectKey = keyOf( stmt.subjectToken.value );
+    for( const clause of stmt.clauses ) {
+      const predToken = readToken( clause );
+      if( resolveToken( predToken?.value, prefixes ) === RDFS_LABEL ) {
+        const value = readLiteralValue( clause.slice( predToken.end ) );
+        if( value != null && !labelByKey.has( subjectKey ) ) {
+          labelByKey.set( subjectKey, value );
+        }
+      }
+    }
+  }
+
+  // Pass 2: for each labelless system statement, derive a label from its components and append it.
+  const patches = [];
+  for( const stmt of statements ) {
+    let isSystem = false;
+    let hasLabel = false;
+    const componentsByPredicate = new Map();
+
+    for( const clause of stmt.clauses ) {
+      const predToken = readToken( clause );
+      const predIri = resolveToken( predToken?.value, prefixes );
+      const objectText = clause.slice( predToken?.end ?? 0 );
+
+      if( predIri === RDF_TYPE ) {
+        if( readObjectTokens( objectText ).some( (token) => SYSTEM_CLASSES.includes( resolveToken( token, prefixes ) ) ) ) {
+          isSystem = true;
+        }
+      } else if( predIri === RDFS_LABEL ) {
+        hasLabel = true;
+      } else if( SYSTEM_COMPONENT_PREDICATES.includes( predIri ) ) {
+        componentsByPredicate.set( predIri, readObjectTokens( objectText ) );
+      }
+    }
+
+    if( !isSystem || hasLabel ) {
+      continue;
+    }
+
+    const parts = [];
+    for( const predIri of SYSTEM_COMPONENT_PREDICATES ) {
+      for( const token of componentsByPredicate.get( predIri ) ?? [] ) {
+        const label = labelByKey.get( keyOf( token ) );
+        if( label ) {
+          parts.push( label );
+        }
+      }
+    }
+
+    if( parts.length < 1 ) {
+      continue;
+    }
+
+    patches.push({
+      at: stmt.range.start + stmt.terminalDotIndex,
+      text: `;\n    ${rdfsAlias}:label ${turtleLiteral( parts.join( ' ' ) )} `,
+    });
+  }
+
+  let updated = turtle;
+  for( const patch of patches.sort( (left, right) => right.at - left.at ) ) {
+    updated = updated.slice( 0, patch.at ) + patch.text + updated.slice( patch.at );
+  }
+  return updated;
+}
+
+
+/**
  * Enrich pasted/normal I-ADOPT Turtle with the metadata required for nanopublication, preserving
  * all unrelated content (prefixes, comments, blank nodes, labels, constraints, matrix, property,
  * numerator/denominator, and any other statements). Only the single iop:Variable subject is touched,
@@ -532,10 +829,17 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
   const creatorOrcidUri = normalizeOrcid( options.creatorOrcid );
   const orcidSuffix = creatorOrcidUri.slice( NS.orcid.length );
   const createdTimestamp = formatCreatedTimestamp( options.createdAt ?? new Date() );
-  const variableIdentifier = buildVariableIdentifier( createdTimestamp, options.randomSuffix );
 
   const { store, prefixes } = await parseRDF( turtle );
   const variableUri = getUniqueVariableUri( store );
+
+  // The published variable must carry a resolvable w3id URI. If the pasted subject already is one,
+  // keep it; otherwise mint `https://w3id.org/iadopt/variable/<datetime>-<NN>` and rename the old
+  // subject everywhere it occurs at the end of the transform.
+  const mintNewUri = !isResolvableVariableUri( variableUri );
+  const mintedVariableUri = mintNewUri
+    ? `${IADOPT_VARIABLE_BASE}${buildIdentifierSuffix( createdTimestamp, options.randomSuffix )}`
+    : variableUri;
 
   // Resolve (or register) the prefix aliases we need for the managed metadata.
   const prefixAdditions = {};
@@ -545,11 +849,13 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
     orcid: choosePrefix( prefixes, prefixAdditions, 'orcid', NS.orcid ),
     pav: choosePrefix( prefixes, prefixAdditions, 'pav', NS.pav ),
     prov: choosePrefix( prefixes, prefixAdditions, 'prov', NS.prov ),
+    rdfs: choosePrefix( prefixes, prefixAdditions, 'rdfs', NS.rdfs ),
     xsd: choosePrefix( prefixes, prefixAdditions, 'xsd', NS.xsd ),
   };
   const desiredObjects = {
     [TARGET_PREDICATES.conformsTo]: `<${options.conformsToUri}>`,
-    [TARGET_PREDICATES.identifier]: turtleLiteral( variableIdentifier ),
+    // The identifier is the resolvable variable IRI itself (matches the minted subject).
+    [TARGET_PREDICATES.identifier]: `<${mintedVariableUri}>`,
     [TARGET_PREDICATES.created]: `${turtleLiteral( createdTimestamp )}^^${aliases.xsd}:dateTime`,
     [TARGET_PREDICATES.creator]: `${aliases.orcid}:${orcidSuffix}`,
     [TARGET_PREDICATES.createdWith]: turtleLiteral( options.createdWithLabel ),
@@ -680,6 +986,21 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
   }
 
   updatedTurtle = insertPrefixDeclarations( updatedTurtle, prefixAdditions );
+
+  // Rename a non-resolvable subject to the minted resolvable URI everywhere it occurs (subject
+  // statements and any object references), so the whole graph points at the resolvable identifier.
+  if( mintNewUri ) {
+    updatedTurtle = rewriteTermOccurrences(
+      updatedTurtle,
+      prefixes,
+      variableUri,
+      `<${mintedVariableUri}>`
+    );
+  }
+
+  // Write a derived rdfs:label onto any system node that lacks one, so the published nanopub and
+  // the visualization (which reads the actual TTL) both carry the same first-part + second-part label.
+  updatedTurtle = applySystemLabels( updatedTurtle, prefixes, aliases.rdfs );
 
   // Self-check: the result must satisfy the same gate the publish flow uses.
   await validatePreNanopubTurtle( updatedTurtle, {

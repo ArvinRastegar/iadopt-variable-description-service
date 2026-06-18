@@ -1615,10 +1615,12 @@ def json_to_ttl_repo_style(
 
     def build_system_component(field: str, value: Dict[str, Any], role_name: str) -> Tuple[str, str]:
         system_key = "AsymmetricSystem" if "AsymmetricSystem" in value else "SymmetricSystem"
-        system_label = _normalize_text(value.get(system_key) or field)
         system_uri = wiki_to_entity(value.get(f"{system_key}URI"))
         system_ref = f"<{system_uri}>" if system_uri else local_resource_ref(field)
         component_lines: List[str] = []
+        # The system label is derived from its components in canonical order (first part + second
+        # part), so every system is labelled consistently rather than from a per-variable phrase.
+        component_labels: List[str] = []
         kind_key = "ooi_kind" if role_name == "object" else "matrix_kind" if role_name == "matrix" else f"{field}_kind"
 
         if system_key == "AsymmetricSystem":
@@ -1638,9 +1640,11 @@ def json_to_ttl_repo_style(
                 role_uri = wiki_to_entity(value.get(f"{key}URI"))
                 role_ref, clean_role_label = build_simple_component(suffix, role_label, "iop:Entity", role_uri)
                 component_lines.append(f"    iop:{key} {role_ref} ;")
+                component_labels.append(clean_role_label)
                 formula_context[role_name] = clean_role_label
                 register_target(role_ref, role_name, key, role_name, clean_role_label)
 
+            system_label = " ".join(component_labels) or _normalize_text(value.get(system_key) or field)
             add_block(system_ref, ["iop:Entity", "iop:AsymmetricSystem"], system_label, component_lines)
         else:
             formula_context[kind_key] = "symmetric"
@@ -1653,10 +1657,12 @@ def json_to_ttl_repo_style(
                 part_uri = wiki_to_entity(part_uris[idx - 1]) if idx - 1 < len(part_uris) else None
                 part_ref, _ = build_simple_component(f"{field}-part-{idx}", clean_part_label, "iop:Entity", part_uri)
                 part_refs.append(part_ref)
+                component_labels.append(clean_part_label)
                 register_target(part_ref, f"{field}_part", clean_part_label)
 
             if part_refs:
                 component_lines.append(f"    iop:hasPart {', '.join(part_refs)} ;")
+            system_label = " ".join(component_labels) or _normalize_text(value.get(system_key) or field)
             add_block(system_ref, ["iop:Entity", "iop:SymmetricSystem"], system_label, component_lines)
 
         return system_ref, system_label
@@ -1732,7 +1738,8 @@ def json_to_ttl_repo_style(
             f"    skos:altLabel {_ttl_quote(alt_label)} ;",
             f"    skos:definition {_ttl_quote(definition)} ;",
             f"    rdfs:comment {_ttl_quote(ttl_comment)} ;",
-            f"    dct:identifier {_ttl_quote(variable_identifier)} ;",
+            # The identifier is the resolvable variable IRI itself so the published id always resolves.
+            f"    dct:identifier <{variable_uri}> ;",
             f'    dct:created "{created_literal}"^^xsd:dateTime ;',
             f"    dct:creator orcid:{orcid_suffix} ;",
             f"    pav:createdWith {_ttl_quote(IADOPT_CREATED_WITH_LABEL)} ;",

@@ -69,7 +69,6 @@ describe( 'applyPreNanopubSettingsToTurtle', () => {
 
     // unrelated content is preserved verbatim
     assert.include( updated, '# The original comment must survive.' );
-    assert.include( updated, '<http://example.org/Salinity>' );
     assert.include( updated, '"""Salt in water (g/kg) or PSU"""' );
     assert.include( updated, 'iop:hasObjectOfInterest' );
     assert.include( updated, 'iop:hasMatrix' );
@@ -83,8 +82,18 @@ describe( 'applyPreNanopubSettingsToTurtle', () => {
     assert.include( updated, 'dct:creator orcid:0009-0006-1978-4302' );
     assert.include( updated, 'prov:wasAttributedTo orcid:0009-0006-1978-4302' );
     assert.include( updated, '"2026-06-18T09:47:20Z"^^xsd:dateTime' );
-    // identifier = date + time + two random digits, derived from the same created timestamp
-    assert.include( updated, 'dct:identifier "iadopt-variable-20260618T094720-86"' );
+
+    // the labelless asymmetric system gets a derived rdfs:label written into the TTL itself,
+    // as first part (numerator) + second part (denominator): "salt water"
+    assert.include( updated, 'rdfs:label "salt water"' );
+
+    // The non-resolvable example.org subject is minted into a resolvable w3id URI everywhere,
+    // and dct:identifier is that resolvable IRI (not a string literal).
+    const mintedUri = 'https://w3id.org/iadopt/variable/20260618T094720-86';
+    assert.include( updated, `<${mintedUri}>` );
+    assert.include( updated, `dct:identifier <${mintedUri}>` );
+    assert.notInclude( updated, '<http://example.org/Salinity>' );
+    assert.notInclude( updated, 'dct:identifier "iadopt-variable' );
 
     // each required prefix is declared exactly once
     for( const prefix of [ 'dct', 'fdof', 'orcid', 'pav', 'prov', 'xsd' ] ) {
@@ -95,48 +104,90 @@ describe( 'applyPreNanopubSettingsToTurtle', () => {
       );
     }
 
-    // the enriched Turtle still visualizes: variable + matrix survive extraction
+    // the enriched Turtle still visualizes: variable + matrix survive extraction (under the minted URI)
     const variables = await extract( updated );
     assert.equal( variables.length, 1 );
-    assert.equal( variables[0].getIri(), 'http://example.org/Salinity' );
+    assert.equal( variables[0].getIri(), mintedUri );
     assert.equal( variables[0].getMatrix().getLabel(), 'sea surface layer' );
 
     const validation = await validatePreNanopubTurtle( updated, OPTIONS );
-    assert.equal( validation.variableUri, 'http://example.org/Salinity' );
+    assert.equal( validation.variableUri, mintedUri );
   } );
 
-  test( 'updates existing managed metadata instead of adding duplicate predicates', async () => {
+  test( 'keeps an existing resolvable variable URI and updates metadata without duplicates', async () => {
+    const resolvableUri = 'https://w3id.org/iadopt/variable/20260618T112316-13';
     const enriched = `@prefix iop: <https://w3id.org/iadopt/ont/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix pav: <http://purl.org/pav/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix orcid: <https://orcid.org/> .
 @prefix fdof: <https://w3id.org/fdof/ontology#> .
-@prefix ex: <http://example.org/> .
 
-ex:Salinity
+<${resolvableUri}>
     a fdof:FAIRDigitalObject, iop:Variable ;
     dct:conformsTo <https://example.org/old-profile> ;
+    dct:identifier "iadopt-variable-20260618T112316-13" ;
     dct:created "2025-01-01T00:00:00Z"^^xsd:dateTime ;
     dct:creator orcid:0009-0006-1978-4302 ;
     pav:createdWith "Old generator" ;
     prov:wasAttributedTo orcid:0009-0006-1978-4302 ;
-    ex:unrelated "keep this value" .
+    rdfs:comment "keep this value" .
 `;
     const updated = await applyPreNanopubSettingsToTurtle( enriched, {
       ... OPTIONS,
       creatorOrcid: 'https://orcid.org/0000-0003-2195-3997',
     } );
 
-    assert.include( updated, 'ex:unrelated "keep this value"' );
+    // the already-resolvable subject is preserved (not re-minted)
+    assert.include( updated, `<${resolvableUri}>` );
+    assert.include( updated, 'rdfs:comment "keep this value"' );
     assert.notInclude( updated, 'https://example.org/old-profile' );
     assert.notInclude( updated, '"Old generator"' );
     assert.notInclude( updated, 'orcid:0009-0006-1978-4302' );
     assert.include( updated, 'orcid:0000-0003-2195-3997' );
+
+    // the string-literal identifier is upgraded to the resolvable IRI, exactly once
+    assert.include( updated, `dct:identifier <${resolvableUri}>` );
+    assert.notInclude( updated, 'dct:identifier "iadopt-variable-20260618T112316-13"' );
+    assert.equal( [... updated.matchAll( /dct:identifier\b/g )].length, 1 );
     assert.equal( [... updated.matchAll( /dct:creator\b/g )].length, 1 );
     assert.equal( [... updated.matchAll( /prov:wasAttributedTo\b/g )].length, 1 );
     assert.equal( [... updated.matchAll( /@prefix\s+dct:/g )].length, 1 );
+  } );
+
+  test( 'mints a resolvable URI and rewrites every reference to a non-resolvable subject', async () => {
+    const pasted = `@prefix iop: <https://w3id.org/iadopt/ont/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix fdof: <https://w3id.org/fdof/ontology#> .
+@prefix ex: <http://example.org/> .
+
+ex:Temperature
+    a fdof:FAIRDigitalObject, iop:Variable ;
+    rdfs:label "Air temperature" ;
+    iop:hasProperty ex:Prop .
+
+ex:Prop a iop:Property ; rdfs:label "temperature" .
+
+# A statement that references the variable as an object must also be rewritten:
+ex:Temperature rdfs:seeAlso ex:Temperature .
+`;
+    const mintedUri = 'https://w3id.org/iadopt/variable/20260618T094720-86';
+    const updated = await applyPreNanopubSettingsToTurtle( pasted, OPTIONS );
+
+    assert.notInclude( updated, 'ex:Temperature' );
+    assert.notInclude( updated, '<http://example.org/Temperature>' );
+    assert.include( updated, `<${mintedUri}>` );
+    assert.include( updated, `dct:identifier <${mintedUri}>` );
+    // unrelated example.org terms are untouched
+    assert.include( updated, 'ex:Prop' );
+    // both the subject occurrences and the object reference were renamed
+    assert.isAtLeast( [... updated.matchAll( new RegExp( `<${mintedUri}>`, 'g' ) )].length, 3 );
+
+    const variables = await extract( updated );
+    assert.equal( variables.length, 1 );
+    assert.equal( variables[0].getIri(), mintedUri );
   } );
 
   test( 'rejects invalid ORCIDs before changing Turtle', async () => {
@@ -168,20 +219,67 @@ ex:Salinity
     assert.include( NORMAL_TURTLE, '# The original comment must survive.' );
   } );
 
-  test( 'mints a date-time + two-digit random identifier when none is supplied', async () => {
+  test( 'mints a resolvable date-time + two-digit random URI when none is supplied', async () => {
     const updated = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, {
       ... OPTIONS,
       randomSuffix: undefined,
     } );
 
-    const match = updated.match( /dct:identifier "iadopt-variable-20260618T094720-(\d{2})"/ );
-    assert.isNotNull( match, 'identifier should follow iadopt-variable-<datetime>-NN' );
+    const match = updated.match(
+      /dct:identifier <https:\/\/w3id\.org\/iadopt\/variable\/20260618T094720-(\d{2})>/
+    );
+    assert.isNotNull( match, 'identifier should be a resolvable <.../variable/<datetime>-NN> IRI' );
   } );
 
   test( 'validatePreNanopubTurtle rejects un-enriched Turtle', async () => {
     await expect(
       validatePreNanopubTurtle( NORMAL_TURTLE, OPTIONS ),
     ).rejects.toThrow( /not ready for nanopublication/i );
+  } );
+
+  test( 'writes a symmetric system label from its parts in order', async () => {
+    const symmetric = `@prefix iop: <https://w3id.org/iadopt/ont/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://example.org/> .
+
+ex:Diff a iop:Variable ;
+    rdfs:label "Temperature difference" ;
+    iop:hasObjectOfInterest _:s ;
+    iop:hasProperty ex:Prop .
+
+_:s a iop:Entity, iop:SymmetricSystem ;
+    iop:hasPart ex:Air, ex:Sea .
+
+ex:Air a iop:Entity ; rdfs:label "air" .
+ex:Sea a iop:Entity ; rdfs:label "sea" .
+ex:Prop a iop:Property ; rdfs:label "temperature" .
+`;
+    const updated = await applyPreNanopubSettingsToTurtle( symmetric, OPTIONS );
+    assert.include( updated, 'rdfs:label "air sea"' );
+  } );
+
+  test( 'does not overwrite an existing system label', async () => {
+    const labelled = `@prefix iop: <https://w3id.org/iadopt/ont/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex: <http://example.org/> .
+
+ex:V a iop:Variable ;
+    rdfs:label "Some variable" ;
+    iop:hasObjectOfInterest _:s ;
+    iop:hasProperty ex:Prop .
+
+_:s a iop:Entity, iop:AsymmetricSystem ;
+    rdfs:label "custom system label" ;
+    iop:hasNumerator ex:N ;
+    iop:hasDenominator ex:D .
+
+ex:N a iop:Entity ; rdfs:label "numer" .
+ex:D a iop:Entity ; rdfs:label "denom" .
+ex:Prop a iop:Property ; rdfs:label "p" .
+`;
+    const updated = await applyPreNanopubSettingsToTurtle( labelled, OPTIONS );
+    assert.include( updated, 'rdfs:label "custom system label"' );
+    assert.notInclude( updated, 'rdfs:label "numer denom"' );
   } );
 
 } );
