@@ -53,7 +53,11 @@
           <div class="col-lg-6 text-start">
             <label for="creatorOrcidInput" class="form-label">Creator ORCID</label>
             <input id="creatorOrcidInput" type="text" class="form-control"
+              aria-describedby="creatorOrcidHelp"
               placeholder="Leave empty to use NANOPUB_ORCID_ID from .env" />
+            <div id="creatorOrcidHelp" class="form-text">
+              Used for generated Turtle, pasted-Turtle preparation, and nanopublication publication.
+            </div>
           </div>
         </div>
 
@@ -148,6 +152,10 @@ ex:Matrix_SysB
           <input type="hidden" value="POMSC" />
         </div>
 
+        <button id="applyPreNanopubSettings" class="btn btn-outline-primary" type="button">
+          Apply Pre-Nanopub Settings
+        </button>
+
         <button id="visualize" class="btn btn-primary" type="button">Visualize</button>
 
         <div class="dropdown invisible" id="export">
@@ -161,6 +169,7 @@ ex:Matrix_SysB
           </ul>
         </div>
       </div>
+      <div id="preNanopubStatus" class="mt-2 text-secondary" aria-live="polite"></div>
 
       <pre id="dev"></pre>
       <div class="container-lg" id="svg"></div>

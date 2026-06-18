@@ -269,6 +269,12 @@ class ModelOptionsResponse(BaseModel):
     providers: Dict[str, Dict[str, Any]]
 
 
+class NanopubPreparationOptionsResponse(BaseModel):
+    default_creator_orcid_id: Optional[str]
+    conforms_to_uri: str
+    created_with_label: str
+
+
 class PublishNanopubRequest(BaseModel):
     ttl: str = Field(..., min_length=1, description="TTL assertion payload currently shown in the frontend")
     creator_orcid_id: Optional[str] = Field(
@@ -2226,6 +2232,20 @@ def model_options() -> ModelOptionsResponse:
                 "model_names": PSNC_MODEL_NAMES,
             },
         },
+    )
+
+
+@app.get("/nanopub/preparation-options", response_model=NanopubPreparationOptionsResponse)
+def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
+    """Expose the metadata constants the frontend needs to enrich pasted Turtle for nanopublication.
+
+    These values are the single source of truth shared with the backend's own TTL generator, so
+    pasted-Turtle preparation and generated Turtle stay byte-for-byte aligned.
+    """
+    return NanopubPreparationOptionsResponse(
+        default_creator_orcid_id=_normalize_orcid(NANOPUB_ORCID_ID),
+        conforms_to_uri=IADOPT_VARIABLE_CONFORMS_TO,
+        created_with_label=IADOPT_CREATED_WITH_LABEL,
     )
 
 

@@ -9,6 +9,10 @@ import addEditor from './lib/addEditor.js';
 import triggerRedraw from './lib/triggerRedraw.js';
 import extract from './lib/extract.js';
 import { getCurrentTurtle, getSVGBlob, getPNGBlob, getTurtleBlob } from './lib/export.js';
+import {
+  applyPreNanopubSettingsToTurtle,
+  validatePreNanopubTurtle,
+} from './lib/applyPreNanopubSettingsToTurtle.js';
 
 import { showError } from './ui/showError.js';
 
@@ -35,6 +39,7 @@ const FALLBACK_PROVIDER_OPTIONS = {
 };
 
 let modelProviderOptions = FALLBACK_PROVIDER_OPTIONS;
+let nanopubPreparationOptions = null;
 
 function setDecomposeStatus(message, isError = false) {
   const el = document.querySelector('#decomposeStatus');
@@ -52,6 +57,16 @@ function setRetractStatus(message, isError = false) {
   el.textContent = message || '';
   el.classList.toggle('text-danger', isError);
   el.classList.toggle('text-secondary', !isError);
+}
+
+function setPreNanopubStatus(message, isError = false) {
+  const el = document.querySelector('#preNanopubStatus');
+  if (!el) return;
+
+  el.textContent = message || '';
+  el.classList.toggle('text-danger', isError);
+  el.classList.toggle('text-success', Boolean(message) && !isError);
+  el.classList.toggle('text-secondary', !message);
 }
 
 function escapeHtml(value) {
@@ -204,6 +219,7 @@ function setDecomposeButtonState(isLoading) {
   const modelSelect = document.querySelector('#modelSelect');
   const thinkingToggle = document.querySelector('#disableThinkingToggle');
   const creatorOrcidInput = document.querySelector('#creatorOrcidInput');
+  const applyPreNanopubButton = document.querySelector('#applyPreNanopubSettings');
   if (!button) return;
 
   button.disabled = isLoading;
@@ -213,6 +229,7 @@ function setDecomposeButtonState(isLoading) {
   if (modelSelect) modelSelect.disabled = isLoading;
   if (thinkingToggle) thinkingToggle.disabled = isLoading;
   if (creatorOrcidInput) creatorOrcidInput.disabled = isLoading;
+  if (applyPreNanopubButton) applyPreNanopubButton.disabled = isLoading || !nanopubPreparationOptions;
 }
 
 function appendRawOutputDelta(delta) {
@@ -227,6 +244,88 @@ function getCreatorMetadataOverrides() {
   return {
     creator_orcid_id: document.querySelector('#creatorOrcidInput')?.value?.trim() || undefined,
   };
+}
+
+function getEffectiveCreatorOrcid() {
+  // The typed ORCID wins; otherwise fall back to the backend-configured default (NANOPUB_ORCID_ID).
+  return (
+    document.querySelector('#creatorOrcidInput')?.value?.trim()
+    || nanopubPreparationOptions?.default_creator_orcid_id
+    || ''
+  );
+}
+
+function getCurrentPreparationSettings() {
+  if (!nanopubPreparationOptions) {
+    throw new Error('Nanopublication preparation settings could not be loaded from the backend.');
+  }
+
+  const creatorOrcid = getEffectiveCreatorOrcid();
+  if (!creatorOrcid) {
+    throw new Error('Enter a Creator ORCID or configure NANOPUB_ORCID_ID in the backend .env file.');
+  }
+
+  return {
+    creatorOrcid,
+    conformsToUri: nanopubPreparationOptions.conforms_to_uri,
+    createdWithLabel: nanopubPreparationOptions.created_with_label,
+  };
+}
+
+async function loadNanopubPreparationOptions() {
+  const applyButton = document.querySelector('#applyPreNanopubSettings');
+  if (applyButton) applyButton.disabled = true;
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/nanopub/preparation-options`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || 'Could not load nanopublication preparation settings.');
+    }
+
+    nanopubPreparationOptions = data;
+    if (applyButton) applyButton.disabled = false;
+  } catch (e) {
+    console.error(e);
+    nanopubPreparationOptions = null;
+    setPreNanopubStatus(e.message || 'Could not load nanopublication preparation settings.', true);
+  }
+}
+
+async function applyPreNanopubSettings() {
+  const input = document.querySelector('#input');
+  const applyButton = document.querySelector('#applyPreNanopubSettings');
+
+  if (!input) {
+    throw new Error('The visualizer Turtle input is unavailable.');
+  }
+
+  // Read everything from the live textarea so the input text stays the single source of truth.
+  const currentTurtle = input.value || '';
+  const settings = getCurrentPreparationSettings();
+
+  if (applyButton) {
+    applyButton.disabled = true;
+    applyButton.textContent = 'Applying...';
+  }
+  setPreNanopubStatus('Applying creator and pre-nanopublication metadata...');
+
+  try {
+    const updatedTurtle = await applyPreNanopubSettingsToTurtle(currentTurtle, settings);
+    input.value = updatedTurtle;
+    setPreNanopubStatus(
+      'Pre-nanopublication settings applied. Review the updated Turtle, then visualize or publish it.'
+    );
+  } catch (e) {
+    setPreNanopubStatus(e.message || 'Could not apply pre-nanopublication settings.', true);
+    throw e;
+  } finally {
+    if (applyButton) {
+      applyButton.disabled = !nanopubPreparationOptions;
+      applyButton.textContent = 'Apply Pre-Nanopub Settings';
+    }
+  }
 }
 
 function getRetractCreatorMetadataOverrides() {
@@ -479,15 +578,25 @@ async function decomposeDefinition() {
 }
 
 async function publishNanopub() {
-  // Open the tab before the network roundtrip so browsers keep the user-triggered popup allowance.
-  const publishTab = window.open('', '_blank', 'noopener,noreferrer');
+  // Always publish exactly the Turtle currently visible in the textarea (no stale state).
   const ttl = getCurrentTurtle().trim();
-  const creatorMetadata = getCreatorMetadataOverrides();
 
   if (!ttl) {
-    if (publishTab) publishTab.close();
     throw new Error('No Turtle available to publish.');
   }
+
+  // Gate the export: the visible Turtle must already carry the required nanopub metadata + ORCID.
+  let preparedMetadata;
+  try {
+    preparedMetadata = await validatePreNanopubTurtle(ttl, getCurrentPreparationSettings());
+  } catch (e) {
+    setPreNanopubStatus(e.message || 'The Turtle is not ready for nanopublication.', true);
+    throw e;
+  }
+
+  // Open the tab after local validation but before the network roundtrip to keep the popup allowance.
+  const publishTab = window.open('', '_blank', 'noopener,noreferrer');
+  const creatorMetadata = { creator_orcid_id: preparedMetadata.creatorOrcidUri };
 
   setDecomposeStatus('Publishing nanopublication...');
 
@@ -527,9 +636,11 @@ async function publishNanopub() {
     }
 
     setDecomposeStatus('Nanopublication published.');
+    setPreNanopubStatus('The currently visible Turtle was published successfully.');
   } catch (e) {
     if (publishTab) publishTab.close();
     setDecomposeStatus('Nanopublication publish failed.', true);
+    setPreNanopubStatus(e.message || 'Nanopublication publish failed.', true);
     throw e;
   }
 }
@@ -603,9 +714,29 @@ document.querySelector('#modelProviderSelect')
     renderModelOptions(e.target.value);
   });
 
+document.querySelector('#applyPreNanopubSettings')
+  ?.addEventListener('click', async () => {
+    try {
+      await applyPreNanopubSettings();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
 document.querySelector('#visualize')
   ?.addEventListener('click', async () => {
     await visualizeTTL();
+  });
+
+// Editing the Turtle or the ORCID invalidates the previous prepare/publish status message.
+document.querySelector('#input')
+  ?.addEventListener('input', () => {
+    setPreNanopubStatus('');
+  });
+
+document.querySelector('#creatorOrcidInput')
+  ?.addEventListener('input', () => {
+    setPreNanopubStatus('');
   });
 
 // ---- PRELOAD TTL FROM URL (optional) ----
@@ -623,6 +754,7 @@ if (initialTTL) {
 }
 
 loadModelOptions();
+loadNanopubPreparationOptions();
 renderRetractOptions();
 
 document.querySelector('#export')
