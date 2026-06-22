@@ -376,12 +376,19 @@ def _normalize_nanopub_key(value: Optional[str]) -> Optional[str]:
     if not normalized:
         return None
 
+    # python-dotenv strips surrounding quotes from `.env` values, but Portainer/Swarm pass environment
+    # values verbatim. Drop any quotes that were copied along with the key so the PEM armor below is
+    # still recognized (otherwise the markers stay glued to the base64 body and decoding fails).
+    normalized = normalized.strip()
+    while len(normalized) >= 2 and normalized[0] == normalized[-1] and normalized[0] in ("'", '"'):
+        normalized = normalized[1:-1].strip()
+
     lines = [line.strip() for line in normalized.splitlines() if line.strip()]
     if not lines:
         return None
 
-    if lines[0].startswith("-----BEGIN ") and lines[-1].startswith("-----END "):
-        lines = lines[1:-1]
+    # Strip PEM armor wherever it appears, tolerating stray characters left around the markers.
+    lines = [line for line in lines if "-----BEGIN " not in line and "-----END " not in line]
 
     return "".join(lines)
 
