@@ -1,0 +1,94 @@
+services:
+  backend:
+    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE}/iadopt-backend:${IMAGE_TAG:-prod}
+    networks:
+      - iadopt_internal
+    environment:
+      ENABLED_MODEL_PROVIDERS: ${ENABLED_MODEL_PROVIDERS:-psnc}
+      DEFAULT_MODEL_PROVIDER: ${DEFAULT_MODEL_PROVIDER:-psnc}
+      PSNC_API_KEY: ${PSNC_API_KEY}
+      PSNC_API_BASE_URL: ${PSNC_API_BASE_URL:-https://llm.hpc.psnc.pl}
+      PSNC_MODEL_NAME: ${PSNC_MODEL_NAME:-Qwen3.5-397B-A17B}
+      PSNC_MODEL_NAMES: ${PSNC_MODEL_NAMES:-Qwen3.5-397B-A17B,Qwen3-VL-235B-A22B-Instruct-FP8}
+      PSNC_RERANK_MODEL: ${PSNC_RERANK_MODEL:-bge-reranker-v2-m3}
+      ENABLE_WIKIDATA_LINKING: ${ENABLE_WIKIDATA_LINKING:-true}
+      RERANK_THRESHOLD: ${RERANK_THRESHOLD:-0.1}
+      NANOPUB_PRIVATE_KEY: ${NANOPUB_PRIVATE_KEY:-}
+      NANOPUB_PUBLIC_KEY: ${NANOPUB_PUBLIC_KEY:-}
+      NANOPUB_ORCID_ID: ${NANOPUB_ORCID_ID:-}
+      NANOPUB_AGENT_INTRO_URI: ${NANOPUB_AGENT_INTRO_URI:-}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/readyz', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    stop_grace_period: 15m
+    deploy:
+      replicas: 1
+      endpoint_mode: vip
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+        monitor: 30s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        reservations:
+          cpus: "0.10"
+          memory: 128M
+        limits:
+          cpus: "1.00"
+          memory: 1G
+
+  frontend:
+    image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE}/iadopt-frontend:${IMAGE_TAG:-prod}
+    networks:
+      - iadopt_internal
+    ports:
+      - target: 8080
+        published: ${PUBLIC_HTTP_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    deploy:
+      replicas: 1
+      endpoint_mode: vip
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+        monitor: 30s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        reservations:
+          cpus: "0.05"
+          memory: 32M
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+networks:
+  iadopt_internal:
+    driver: overlay

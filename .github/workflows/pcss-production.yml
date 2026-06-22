@@ -1,0 +1,91 @@
+name: Publish and deploy PCSS production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ${{ vars.PCSS_REGISTRY }}
+  IMAGE_NAMESPACE: ${{ vars.PCSS_IMAGE_NAMESPACE }}
+
+jobs:
+  verify:
+    if: ${{ github.ref == 'refs/heads/prod' }}
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: verify
+    strategy:
+      matrix:
+        component:
+          - backend
+          - frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PCSS registry configuration
+        run: |
+          test -n "$REGISTRY"
+          test -n "$IMAGE_NAMESPACE"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to PCSS registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.PCSS_REGISTRY_USERNAME }}
+          password: ${{ secrets.PCSS_REGISTRY_PASSWORD }}
+
+      - name: Build and push ${{ matrix.component }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.component }}
+          push: true
+          platforms: linux/amd64
+          cache-from: type=gha,scope=production-${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=production-${{ matrix.component }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/iadopt-${{ matrix.component }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/iadopt-${{ matrix.component }}:prod
+
+  deploy-compose:
+    if: ${{ vars.PCSS_DEPLOY_MODE == 'compose-ssh' }}
+    runs-on: ubuntu-latest
+    needs: publish
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PCSS_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PCSS_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload production Compose definition
+        run: |
+          ssh "${{ secrets.PCSS_SSH_USER }}@${{ secrets.PCSS_SSH_HOST }}" \
+            "mkdir -p '${{ vars.PCSS_DEPLOY_PATH }}'"
+          scp docker-compose.pcss.yml \
+            "${{ secrets.PCSS_SSH_USER }}@${{ secrets.PCSS_SSH_HOST }}:${{ vars.PCSS_DEPLOY_PATH }}/docker-compose.pcss.yml"
+
+      - name: Pull and restart production
+        run: |
+          ssh "${{ secrets.PCSS_SSH_USER }}@${{ secrets.PCSS_SSH_HOST }}" \
+            "cd '${{ vars.PCSS_DEPLOY_PATH }}' && \
+             IMAGE_TAG='${{ github.sha }}' \
+             docker compose --env-file .deploy.env -f docker-compose.pcss.yml pull && \
+             IMAGE_TAG='${{ github.sha }}' \
+             docker compose --env-file .deploy.env -f docker-compose.pcss.yml up -d --remove-orphans"

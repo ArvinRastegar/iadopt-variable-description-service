@@ -16,25 +16,28 @@ import {
 
 import { showError } from './ui/showError.js';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = '/api';
 const PUBLISHED_NANOPUBS_STORAGE_KEY = 'iadopt-published-nanopubs';
-const FALLBACK_MODEL_PROVIDER = 'openrouter';
-const FALLBACK_MODEL_NAME = 'qwen/qwen3.5-flash-02-23';
+const FALLBACK_MODEL_PROVIDER = 'psnc';
+const FALLBACK_MODEL_NAME = 'Qwen3.5-397B-A17B';
 const FALLBACK_MODEL_NAMES = [
-  'qwen/qwen3.5-flash-02-23',
-  'qwen/qwen3-32b',
-  'qwen/qwen3.5-397b-a17b',
+  'Qwen3.5-397B-A17B',
+  'Qwen3-VL-235B-A22B-Instruct-FP8',
 ];
 const FALLBACK_PROVIDER_OPTIONS = {
   openrouter: {
     label: 'OpenRouter',
-    default_model_name: FALLBACK_MODEL_NAME,
-    model_names: FALLBACK_MODEL_NAMES,
+    default_model_name: 'qwen/qwen3.5-flash-02-23',
+    model_names: [
+      'qwen/qwen3.5-flash-02-23',
+      'qwen/qwen3-32b',
+      'qwen/qwen3.5-397b-a17b',
+    ],
   },
   psnc: {
     label: 'PSNC',
-    default_model_name: 'Qwen3.5-397B-A17B',
-    model_names: ['Qwen3.5-397B-A17B', 'Qwen3-VL-235B-A22B-Instruct-FP8'],
+    default_model_name: FALLBACK_MODEL_NAME,
+    model_names: FALLBACK_MODEL_NAMES,
   },
 };
 
@@ -342,7 +345,7 @@ function getProviderOptions(providerId) {
   return (
     modelProviderOptions[providerId]
     || modelProviderOptions[FALLBACK_MODEL_PROVIDER]
-    || FALLBACK_PROVIDER_OPTIONS.openrouter
+    || FALLBACK_PROVIDER_OPTIONS.psnc
   );
 }
 
@@ -351,7 +354,7 @@ function normalizeProviderOptions(data = {}) {
     ? data.providers
     : {
         [FALLBACK_MODEL_PROVIDER]: {
-          label: 'OpenRouter',
+          label: 'PSNC',
           default_model_name: data.default_model_name || FALLBACK_MODEL_NAME,
           model_names: data.model_names || FALLBACK_MODEL_NAMES,
         },
@@ -396,6 +399,11 @@ function renderModelProviderOptions(defaultProvider = FALLBACK_MODEL_PROVIDER) {
     modelProviderSelect.appendChild(option);
   }
 
+  const providerSelectGroup = modelProviderSelect.closest('.provider-select-group');
+  if (providerSelectGroup) {
+    providerSelectGroup.hidden = providerIds.length <= 1;
+  }
+
   renderModelOptions(selectedProvider);
 }
 
@@ -404,7 +412,7 @@ function renderModelOptions(providerId = getSelectedModelProvider()) {
   if (!modelSelect) return;
 
   const providerOptions = getProviderOptions(providerId);
-  const fallbackOptions = FALLBACK_PROVIDER_OPTIONS[providerId] || FALLBACK_PROVIDER_OPTIONS.openrouter;
+  const fallbackOptions = FALLBACK_PROVIDER_OPTIONS[providerId] || FALLBACK_PROVIDER_OPTIONS.psnc;
   const uniqueModelNames = [...new Set((providerOptions.model_names || []).filter(Boolean))];
   const finalModelNames = uniqueModelNames.length ? uniqueModelNames : fallbackOptions.model_names;
   const defaultModelName = providerOptions.default_model_name || fallbackOptions.default_model_name;
@@ -472,7 +480,7 @@ async function decomposeDefinition() {
     const response = await fetch(`${BACKEND_URL}/decompose/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // The backend treats the absence of the override as normal thinking, so we only send a boolean flag here.
+      // The switch starts checked (thinking disabled); users can uncheck it to enable normal model thinking.
       body: JSON.stringify({
         definition,
         model_provider: modelProvider,
