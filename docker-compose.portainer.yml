@@ -60,7 +60,7 @@ services:
       - iadopt_internal
     ports:
       - target: 8080
-        published: ${PUBLIC_HTTP_PORT:-8080}
+        published: ${PUBLIC_HTTP_PORT:-8585}
         protocol: tcp
         mode: ingress
     deploy:
