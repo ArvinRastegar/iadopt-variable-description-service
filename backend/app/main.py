@@ -157,7 +157,7 @@ NANOPUB_ORCID_ID = os.getenv("NANOPUB_ORCID_ID")
 NANOPUB_AGENT_INTRO_URI = os.getenv("NANOPUB_AGENT_INTRO_URI")
 NANOPUB_PUBLISH_SERVER = os.getenv("NANOPUB_PUBLISH_SERVER", "https://registry.petapico.org/np/")
 NANOPUB_LICENSE_URI = os.getenv("NANOPUB_LICENSE_URI", "https://creativecommons.org/licenses/by/4.0/")
-NANOPUB_WAS_CREATED_AT = os.getenv("NANOPUB_WAS_CREATED_AT", "https://nanodash.knowledgepixels.com/")
+NANOPUB_WAS_CREATED_AT = os.getenv("NANOPUB_WAS_CREATED_AT", "https://nanodash.petapico.org/")
 NANOPUB_TEMPLATE_URI = os.getenv(
     "NANOPUB_TEMPLATE_URI", "https://w3id.org/np/RAkcfj9W_lJjlq26paIFmTY4mZoaY27BnZCjcsL34EPIA"
 )
@@ -176,7 +176,7 @@ NANOPUB_PUBINFO_TEMPLATE_URIS = [
 ]
 IADOPT_VARIABLE_CONFORMS_TO = os.getenv(
     "IADOPT_VARIABLE_CONFORMS_TO",
-    "https://nanodash.knowledgepixels.com/explore?id=RA5MTl9GFH-QuuBHYEA2hOtxOMOV4-jrhtdx5lOy9CAQE",
+    "https://w3id.org/np/RA5MTl9GFH-QuuBHYEA2hOtxOMOV4-jrhtdx5lOy9CAQE",
 )
 NANOPUB_RETRACT_TEMPLATE_URI = os.getenv(
     "NANOPUB_RETRACT_TEMPLATE_URI",
