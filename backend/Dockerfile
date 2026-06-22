@@ -6,19 +6,16 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# System packages that are commonly useful
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install Python dependencies first for better layer caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code and data
-COPY app ./app
-COPY data ./data
+RUN useradd --create-home --uid 10001 appuser
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser data ./data
+
+USER appuser
 
 EXPOSE 8000
 

@@ -5,7 +5,10 @@ import { promises as Fs } from 'node:fs';
 // fetch ttl files
 const ttlFiles = {};
 for await (const file of Fs.glob( '**/*.ttl' ) ) {
-  ttlFiles[ file ] = await Fs.readFile( file, 'utf8' );
+  const content = await Fs.readFile( file, 'utf8' );
+  ttlFiles[file] = content;
+  // Keep the historical Windows-style fixture keys working on Linux CI and macOS.
+  ttlFiles[file.replaceAll('/', '\\')] = content;
 }
 
 export default defineConfig({

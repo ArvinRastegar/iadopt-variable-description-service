@@ -16,14 +16,12 @@ from nanopub import Nanopub, NanopubConf, Profile
 from nanopub.namespaces import NPX, NTEMPLATE, PAV
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from jsonschema import Draft202012Validator
 from openai import APIStatusError, OpenAI, OpenAIError
 from pydantic import BaseModel, Field
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
-from sentence_transformers import CrossEncoder
 from contextlib import asynccontextmanager
 
 
@@ -33,13 +31,9 @@ from contextlib import asynccontextmanager
 def warmup_assets() -> None:
     global _schema_cache, _validator_cache, _prompt_version_cache, _examples_5_cache
 
-    # OpenRouter is only needed when the user selects the OpenRouter provider.
-    if OPENROUTER_API_KEY:
+    # OpenRouter is only initialized when it is enabled for this deployment.
+    if OPENROUTER_MODEL_PROVIDER in ENABLED_MODEL_PROVIDERS and OPENROUTER_API_KEY:
         get_openai_client()
-
-    # Heavy model load (do this at startup)
-    if ENABLE_WIKIDATA_LINKING:
-        get_reranker()
 
     # Cache schema validator
     _schema_cache = _patch_schema_for_pipeline(load_schema(SCHEMA_PATH))
@@ -67,25 +61,22 @@ I-ADOPT variable decomposition, Turtle generation, visualization support, and na
 
 There are two decomposition endpoints on purpose:
 
-- `POST /decompose/stream` is the endpoint used by the frontend. It streams raw LLM output while the model is
+- `POST /api/decompose/stream` is the endpoint used by the frontend. It streams raw LLM output while the model is
   responding, then emits the final parsed JSON, validation result, enriched JSON, and Turtle payload.
-- `POST /decompose` runs the same backend pipeline but returns only one final JSON response. It is kept for API
+- `POST /api/decompose` runs the same backend pipeline but returns only one final JSON response. It is kept for API
   clients, scripts, tests, and debugging tools that do not want to consume an NDJSON stream.
 """
+
+API_PREFIX = "/api"
 
 app = FastAPI(
     title="I-ADOPT Variable Decomposition API",
     version="0.1.0",
     description=API_DESCRIPTION,
     lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # for local development; tighten later
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    docs_url=f"{API_PREFIX}/docs",
+    redoc_url=f"{API_PREFIX}/redoc",
+    openapi_url=f"{API_PREFIX}/openapi.json",
 )
 
 
@@ -103,6 +94,40 @@ SCHEMA_PATH = DATA_DIR / "Json_schema.json"
 PROMPT_DIR = DATA_DIR / "prompts"
 FIVE_SHOT_DIR = DATA_DIR / "Json_preferred" / "five_shot"
 
+OPENROUTER_MODEL_PROVIDER = "openrouter"
+PSNC_MODEL_PROVIDER = "psnc"
+SUPPORTED_MODEL_PROVIDERS = (OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER)
+
+
+def _parse_enabled_model_providers(configured: Optional[str]) -> List[str]:
+    if configured is None or not configured.strip():
+        return list(SUPPORTED_MODEL_PROVIDERS)
+
+    providers: List[str] = []
+    for value in configured.split(","):
+        provider = value.strip().lower()
+        if provider and provider not in providers:
+            providers.append(provider)
+
+    unsupported = [provider for provider in providers if provider not in SUPPORTED_MODEL_PROVIDERS]
+    if unsupported:
+        raise RuntimeError(
+            "Unsupported ENABLED_MODEL_PROVIDERS value(s): "
+            f"{', '.join(unsupported)}. Supported providers: {', '.join(SUPPORTED_MODEL_PROVIDERS)}"
+        )
+    if not providers:
+        raise RuntimeError("ENABLED_MODEL_PROVIDERS must enable at least one provider.")
+    return providers
+
+
+ENABLED_MODEL_PROVIDERS = _parse_enabled_model_providers(os.getenv("ENABLED_MODEL_PROVIDERS"))
+configured_default_provider = os.getenv("DEFAULT_MODEL_PROVIDER", "").strip().lower()
+DEFAULT_MODEL_PROVIDER = (
+    configured_default_provider
+    if configured_default_provider in ENABLED_MODEL_PROVIDERS
+    else ENABLED_MODEL_PROVIDERS[0]
+)
+
 DEFAULT_MODEL_NAME = "qwen/qwen3.5-flash-02-23"
 DEFAULT_MODEL_NAMES = [
     "qwen/qwen3.5-flash-02-23",
@@ -110,8 +135,6 @@ DEFAULT_MODEL_NAMES = [
     "qwen/qwen3.5-397b-a17b",
     "google/gemini-3-flash-preview",
 ]
-DEFAULT_MODEL_PROVIDER = "openrouter"
-PSNC_MODEL_PROVIDER = "psnc"
 DEFAULT_PSNC_MODEL_NAME = "Qwen3.5-397B-A17B"
 DEFAULT_PSNC_MODEL_NAMES = [
     "Qwen3.5-397B-A17B",
@@ -127,6 +150,7 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", "0.5"))
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 PSNC_API_KEY = os.getenv("PSNC_API_KEY")
 PSNC_API_BASE_URL = os.getenv("PSNC_API_BASE_URL", "https://llm.hpc.psnc.pl")
+PSNC_RERANK_MODEL = os.getenv("PSNC_RERANK_MODEL", "bge-reranker-v2-m3")
 NANOPUB_PRIVATE_KEY = os.getenv("NANOPUB_PRIVATE_KEY")
 NANOPUB_PUBLIC_KEY = os.getenv("NANOPUB_PUBLIC_KEY")
 NANOPUB_ORCID_ID = os.getenv("NANOPUB_ORCID_ID")
@@ -176,9 +200,7 @@ IADOPT_CREATED_WITH_LABEL = os.getenv(
     "LLM-assisted I-ADOPT variable generation",
 )
 
-CROSS_ENCODER_ID = os.getenv("CROSS_ENCODER_ID", "tomaarsen/Qwen3-Reranker-0.6B-seq-cls")
-RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cpu")
-RERANK_THRESHOLD = float(os.getenv("RERANK_THRESHOLD", "0.8"))
+RERANK_THRESHOLD = float(os.getenv("RERANK_THRESHOLD", "0.10"))
 ENABLE_WIKIDATA_LINKING = os.getenv("ENABLE_WIKIDATA_LINKING", "true").lower() == "true"
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?", re.MULTILINE)
@@ -241,14 +263,16 @@ class DecomposeRequest(BaseModel):
     model_name: Optional[str] = Field(default=None, description="One of the backend-configured model names to use.")
     model_provider: str = Field(
         default=DEFAULT_MODEL_PROVIDER,
-        description="Model provider to use for decomposition. Supported values: openrouter, psnc.",
+        description=(
+            "Model provider to use for decomposition. Enabled values: " f"{', '.join(ENABLED_MODEL_PROVIDERS)}."
+        ),
     )
     creator_orcid_id: Optional[str] = Field(
         default=None,
         description="Optional ORCID override for TTL/provenance metadata; falls back to NANOPUB_ORCID_ID when omitted.",
     )
     disable_thinking: bool = Field(
-        default=False,
+        default=True,
         description="When true, request the model without reasoning effort by sending `reasoning.effort = none`.",
     )
 
@@ -311,7 +335,6 @@ class RetractNanopubResponse(BaseModel):
 # ======================================================================================
 
 _openai_client: Optional[OpenAI] = None
-_reranker: Optional[CrossEncoder] = None
 _nanopub_profile: Optional[Profile] = None
 _nanopub_agent_uri_cache: Optional[str] = None
 _nanopub_agent_label_cache: Optional[str] = None
@@ -331,16 +354,7 @@ def get_openai_client() -> OpenAI:
     return _openai_client
 
 
-def get_reranker() -> CrossEncoder:
-    global _reranker
-
-    if _reranker is None:
-        _reranker = CrossEncoder(CROSS_ENCODER_ID, device=RERANK_DEVICE)
-    return _reranker
-
-
 _openai_client: Optional[OpenAI] = None
-_reranker: Optional[CrossEncoder] = None
 _http_session: Optional[requests.Session] = None
 
 _schema_cache: Optional[Dict[str, Any]] = None
@@ -665,7 +679,7 @@ def build_prompt(definition: str, prompt_version: str, examples: Optional[List[D
 # ======================================================================================
 
 
-def call_model(model: str, prompt: str, temperature: float, disable_thinking: bool = False) -> str:
+def call_model(model: str, prompt: str, temperature: float, disable_thinking: bool = True) -> str:
     client = get_openai_client()
 
     for attempt in range(1, 4):
@@ -703,7 +717,7 @@ def _build_psnc_chat_payload(
     prompt: str,
     temperature: float,
     *,
-    disable_thinking: bool = False,
+    disable_thinking: bool = True,
     stream: bool = False,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
@@ -737,6 +751,43 @@ def _psnc_chat_completions_url() -> str:
     return f"{PSNC_API_BASE_URL.rstrip('/')}/v1/chat/completions"
 
 
+def _psnc_rerank_url() -> str:
+    return f"{PSNC_API_BASE_URL.rstrip('/')}/v1/rerank"
+
+
+def call_psnc_reranker(query: str, documents: List[str]) -> List[float]:
+    if not documents:
+        return []
+
+    response = get_http_session().post(
+        _psnc_rerank_url(),
+        headers=_psnc_chat_headers(),
+        json={
+            "model": PSNC_RERANK_MODEL,
+            "query": query,
+            "documents": documents,
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    raw_results = payload.get("results") if isinstance(payload, dict) else None
+
+    if not isinstance(raw_results, list) or len(raw_results) != len(documents):
+        raise RuntimeError("PSNC reranker response did not contain one score per document.")
+
+    scores = [0.0] * len(documents)
+    for result in raw_results:
+        if not isinstance(result, dict):
+            raise RuntimeError("PSNC reranker response contained an invalid result.")
+        index = int(result.get("index", -1))
+        if index < 0 or index >= len(documents):
+            raise RuntimeError("PSNC reranker response contained an invalid document index.")
+        scores[index] = float(result.get("relevance_score"))
+
+    return scores
+
+
 def _extract_chat_completion_text(data: Dict[str, Any]) -> str:
     choices = data.get("choices") if isinstance(data, dict) else None
     if not isinstance(choices, list) or not choices:
@@ -753,7 +804,7 @@ def _extract_chat_completion_text(data: Dict[str, Any]) -> str:
     return _flatten_text_fragments(first_choice.get("text"))
 
 
-def call_psnc_model(model: str, prompt: str, temperature: float, disable_thinking: bool = False) -> str:
+def call_psnc_model(model: str, prompt: str, temperature: float, disable_thinking: bool = True) -> str:
     url = _psnc_chat_completions_url()
     headers = _psnc_chat_headers()
 
@@ -828,8 +879,10 @@ def _resolve_model_provider(requested_provider: Optional[str]) -> str:
     if not provider:
         provider = DEFAULT_MODEL_PROVIDER
 
-    if provider not in {DEFAULT_MODEL_PROVIDER, PSNC_MODEL_PROVIDER}:
-        raise ValueError(f"Unsupported model provider '{provider}'. Allowed providers: openrouter, psnc")
+    if provider not in ENABLED_MODEL_PROVIDERS:
+        raise ValueError(
+            f"Model provider '{provider}' is not enabled. " f"Enabled providers: {', '.join(ENABLED_MODEL_PROVIDERS)}"
+        )
 
     return provider
 
@@ -853,7 +906,7 @@ def _build_chat_completion_request_kwargs(
     prompt: str,
     temperature: float,
     *,
-    disable_thinking: bool = False,
+    disable_thinking: bool = True,
     stream: bool = False,
 ) -> Dict[str, Any]:
     request_kwargs: Dict[str, Any] = {
@@ -973,7 +1026,7 @@ def _stream_psnc_model(
     prompt: str,
     temperature: float,
     *,
-    disable_thinking: bool = False,
+    disable_thinking: bool = True,
 ) -> Iterator[Tuple[str, str]]:
     response = get_http_session().post(
         _psnc_chat_completions_url(),
@@ -1019,7 +1072,7 @@ def call_llm_loose(
     prompt: str,
     definition: str,
     temperature: float,
-    disable_thinking: bool = False,
+    disable_thinking: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     last_raw = ""
 
@@ -1058,7 +1111,7 @@ def _finalize_pipeline_output(
 
     if ENABLE_WIKIDATA_LINKING:
         try:
-            enriched = enrich_with_uris_cross_encoder(pred, threshold=RERANK_THRESHOLD)
+            enriched = enrich_with_uris_reranker(pred, threshold=RERANK_THRESHOLD)
         except Exception as e:
             print(f"Wikidata enrichment failed: {e}")
             enriched = pred
@@ -1181,23 +1234,6 @@ def get_schema_validation_errors(
 # Wikidata linking
 # ======================================================================================
 
-QWEN3_RERANK_PREFIX = (
-    "<|im_start|>system\n"
-    " Judge whether the Document meets the requirements based on the Query and the Instruct provided. "
-    'Note that the answer can only be "yes" or "no".<|im_end|>\n'
-    "<|im_start|>user\n"
-)
-QWEN3_RERANK_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-DEFAULT_RERANK_TASK = "Given a web search query, retrieve relevant passages that answer the query"
-
-
-def format_queries(query: str, task: str = DEFAULT_RERANK_TASK) -> str:
-    return f"{QWEN3_RERANK_PREFIX}<Instruct>: {task}\n<Query>: {query}\n"
-
-
-def format_document(doc: str) -> str:
-    return f"<Document>: {doc}{QWEN3_RERANK_SUFFIX}"
-
 
 def _qid_from_uri_or_text(s: Optional[str]) -> Optional[str]:
     if not s:
@@ -1213,7 +1249,7 @@ def _to_wiki_url(uri: Optional[str]) -> Optional[str]:
     return f"https://www.wikidata.org/wiki/{q}" if q else uri.strip().replace("http://", "https://")
 
 
-def get_wikidata_entity_cross_encoder(
+def get_wikidata_entity_reranker(
     term: str,
     context: str = "",
     threshold: float = RERANK_THRESHOLD,
@@ -1237,8 +1273,7 @@ def get_wikidata_entity_cross_encoder(
     query = f'Definition of "{term}" in context: "{context}"'
     documents = [f'label: "{s.get("label", "")}", description: "{s.get("description", "")}"' for s in search]
 
-    pairs = [[format_queries(query, DEFAULT_RERANK_TASK), format_document(doc)] for doc in documents]
-    scores = get_reranker().predict(pairs, show_progress_bar=False)
+    scores = call_psnc_reranker(query, documents)
 
     ranked = sorted(zip(search, scores), key=lambda x: float(x[1]), reverse=True)
     best_s, best_score = ranked[0]
@@ -1246,12 +1281,12 @@ def get_wikidata_entity_cross_encoder(
     return _to_wiki_url(best_s["id"]) if float(best_score) >= float(threshold) else None
 
 
-def enrich_with_uris_cross_encoder(pred: Dict[str, Any], threshold: float = RERANK_THRESHOLD) -> Dict[str, Any]:
+def enrich_with_uris_reranker(pred: Dict[str, Any], threshold: float = RERANK_THRESHOLD) -> Dict[str, Any]:
     out = json.loads(json.dumps(pred))
 
     def add_uri_field(container: Dict[str, Any], key: str, label_value: Any):
         if isinstance(label_value, str) and label_value.strip():
-            uri = get_wikidata_entity_cross_encoder(
+            uri = get_wikidata_entity_reranker(
                 label_value,
                 context=pred.get("definition", ""),
                 threshold=threshold,
@@ -1271,7 +1306,7 @@ def enrich_with_uris_cross_encoder(pred: Dict[str, Any], threshold: float = RERA
                 # can emit readable labels and URIs for all formula variants.
                 for kk in ["AsymmetricSystem", "hasSource", "hasTarget", "hasNumerator", "hasDenominator"]:
                     if val.get(kk):
-                        uri = get_wikidata_entity_cross_encoder(
+                        uri = get_wikidata_entity_reranker(
                             val[kk],
                             context=pred.get("definition", ""),
                             threshold=threshold,
@@ -1281,7 +1316,7 @@ def enrich_with_uris_cross_encoder(pred: Dict[str, Any], threshold: float = RERA
 
             if "SymmetricSystem" in val:
                 if val.get("SymmetricSystem"):
-                    uri = get_wikidata_entity_cross_encoder(
+                    uri = get_wikidata_entity_reranker(
                         val["SymmetricSystem"],
                         context=pred.get("definition", ""),
                         threshold=threshold,
@@ -1294,7 +1329,7 @@ def enrich_with_uris_cross_encoder(pred: Dict[str, Any], threshold: float = RERA
                     part_uris = []
                     for part in parts:
                         if isinstance(part, str) and part.strip():
-                            uri = get_wikidata_entity_cross_encoder(
+                            uri = get_wikidata_entity_reranker(
                                 part,
                                 context=pred.get("definition", ""),
                                 threshold=threshold,
@@ -1361,7 +1396,9 @@ def _normalize_constraint_phrase_for_alt_label(label: str) -> str:
 
     if re.match(r"^location\s*:\s*", clean_label, re.IGNORECASE):
         clean_label = re.sub(r"^location\s*:\s*", "", clean_label, flags=re.IGNORECASE)
-        if clean_label and not re.match(r"^(at|in|on|near|above|below|under|over|within|outside|around)\b", clean_label, re.IGNORECASE):
+        if clean_label and not re.match(
+            r"^(at|in|on|near|above|below|under|over|within|outside|around)\b", clean_label, re.IGNORECASE
+        ):
             clean_label = f"at {clean_label}"
 
     return clean_label
@@ -1804,7 +1841,7 @@ def _prepare_pipeline_inputs(
 def stream_pipeline_events(
     definition: str,
     *,
-    disable_thinking: bool = False,
+    disable_thinking: bool = True,
     model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
     creator_orcid_id: Optional[str] = None,
@@ -1957,7 +1994,7 @@ def stream_pipeline_events(
 
 def run_pipeline(
     definition: str,
-    disable_thinking: bool = False,
+    disable_thinking: bool = True,
     model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
     creator_orcid_id: Optional[str] = None,
@@ -2206,43 +2243,63 @@ def _add_nanopub_metadata(
         nanopub.pubinfo.add((nanopub_uri, NTEMPLATE["wasCreatedFromPubinfoTemplate"], URIRef(template_uri)))
 
 
-@app.get("/health")
+@app.get(f"{API_PREFIX}/livez", include_in_schema=False)
+def liveness() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get(f"{API_PREFIX}/readyz", include_in_schema=False)
 def health() -> Dict[str, Any]:
-    return {
-        "status": "ok",
+    checks = {
         "schema_exists": SCHEMA_PATH.exists(),
         "prompt_dir_exists": PROMPT_DIR.exists(),
         "five_shot_dir_exists": FIVE_SHOT_DIR.exists(),
-        "openrouter_key_set": bool(OPENROUTER_API_KEY),
-        "psnc_key_set": bool(PSNC_API_KEY),
-        "nanopub_publish_ready": bool(NANOPUB_PRIVATE_KEY and NANOPUB_ORCID_ID),
-        "wikidata_linking_enabled": ENABLE_WIKIDATA_LINKING,
+        "enabled_provider_keys_set": all(
+            {
+                OPENROUTER_MODEL_PROVIDER: bool(OPENROUTER_API_KEY),
+                PSNC_MODEL_PROVIDER: bool(PSNC_API_KEY),
+            }[provider]
+            for provider in ENABLED_MODEL_PROVIDERS
+        ),
+        "wikidata_reranker_ready": not ENABLE_WIKIDATA_LINKING or bool(PSNC_API_KEY),
     }
+    if not all(checks.values()):
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
+    return {"status": "ready", "checks": checks}
 
 
-@app.get("/model-options", response_model=ModelOptionsResponse)
+@app.get(f"{API_PREFIX}/health", include_in_schema=False)
+def health_alias() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get(f"{API_PREFIX}/model-options", response_model=ModelOptionsResponse)
 def model_options() -> ModelOptionsResponse:
     """Expose the backend-managed list of allowed model names for the frontend dropdown."""
+    provider_configs: Dict[str, Dict[str, Any]] = {}
+    if OPENROUTER_MODEL_PROVIDER in ENABLED_MODEL_PROVIDERS:
+        provider_configs[OPENROUTER_MODEL_PROVIDER] = {
+            "label": "OpenRouter",
+            "default_model_name": MODEL_NAME,
+            "model_names": MODEL_NAMES,
+        }
+    if PSNC_MODEL_PROVIDER in ENABLED_MODEL_PROVIDERS:
+        provider_configs[PSNC_MODEL_PROVIDER] = {
+            "label": "PSNC",
+            "default_model_name": PSNC_MODEL_NAME,
+            "model_names": PSNC_MODEL_NAMES,
+        }
+
+    default_provider_config = provider_configs[DEFAULT_MODEL_PROVIDER]
     return ModelOptionsResponse(
         default_model_provider=DEFAULT_MODEL_PROVIDER,
-        default_model_name=MODEL_NAME,
-        model_names=MODEL_NAMES,
-        providers={
-            DEFAULT_MODEL_PROVIDER: {
-                "label": "OpenRouter",
-                "default_model_name": MODEL_NAME,
-                "model_names": MODEL_NAMES,
-            },
-            PSNC_MODEL_PROVIDER: {
-                "label": "PSNC",
-                "default_model_name": PSNC_MODEL_NAME,
-                "model_names": PSNC_MODEL_NAMES,
-            },
-        },
+        default_model_name=default_provider_config["default_model_name"],
+        model_names=default_provider_config["model_names"],
+        providers=provider_configs,
     )
 
 
-@app.get("/nanopub/preparation-options", response_model=NanopubPreparationOptionsResponse)
+@app.get(f"{API_PREFIX}/nanopub/preparation-options", response_model=NanopubPreparationOptionsResponse)
 def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
     """Expose the metadata constants the frontend needs to enrich pasted Turtle for nanopublication.
 
@@ -2257,7 +2314,7 @@ def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
 
 
 @app.post(
-    "/decompose/stream",
+    f"{API_PREFIX}/decompose/stream",
     summary="Decompose a variable with streamed raw LLM output",
     description=(
         "Frontend endpoint. Use this when the caller wants to show the raw LLM response while it is being "
@@ -2270,7 +2327,7 @@ def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
         200: {
             "description": (
                 "NDJSON stream. Event types: `raw_delta`, `final`, and `error`. "
-                "Use `/decompose` instead if you need a single JSON response."
+                "Use `/api/decompose` instead if you need a single JSON response."
             )
         }
     },
@@ -2290,7 +2347,7 @@ def decompose_stream(req: DecomposeRequest) -> StreamingResponse:
 
 
 @app.post(
-    "/decompose",
+    f"{API_PREFIX}/decompose",
     response_model=DecomposeResponse,
     summary="Decompose a variable with one final JSON response",
     description=(
@@ -2319,7 +2376,7 @@ def decompose(req: DecomposeRequest) -> DecomposeResponse:
         raise HTTPException(status_code=500, detail=f"Unexpected backend error: {e}") from e
 
 
-@app.post("/nanopub/publish", response_model=PublishNanopubResponse)
+@app.post(f"{API_PREFIX}/nanopub/publish", response_model=PublishNanopubResponse)
 def publish_nanopub(req: PublishNanopubRequest) -> PublishNanopubResponse:
     """Publish the exact TTL currently shown in the frontend as a signed nanopublication."""
     ttl = req.ttl.strip()
@@ -2379,7 +2436,7 @@ def publish_nanopub(req: PublishNanopubRequest) -> PublishNanopubResponse:
         raise HTTPException(status_code=500, detail=f"Nanopub publish failed: {e}") from e
 
 
-@app.post("/nanopub/retract", response_model=RetractNanopubResponse)
+@app.post(f"{API_PREFIX}/nanopub/retract", response_model=RetractNanopubResponse)
 def retract_nanopub(req: RetractNanopubRequest) -> RetractNanopubResponse:
     """Publish a signed nanopub retraction for a previously published nanopublication."""
     try:
