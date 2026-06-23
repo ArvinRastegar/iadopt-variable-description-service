@@ -252,6 +252,8 @@ async function triggerAction(e) {
  */
 async function saveForm(){
 
+  let syncVariableLabels = false;
+
   // add item
   if( STATE.sourceComp && !STATE.editComp ) {
 
@@ -344,6 +346,9 @@ async function saveForm(){
   // edit item
   if( !STATE.sourceComp && STATE.editComp ) {
 
+    syncVariableLabels = STATE.editComp instanceof Variable
+      && STATE.editComp.getLabel() !== ELEMENTS.editorLabel.value;
+
     // store all data
     STATE.editComp.setLabel( '', ELEMENTS.editorLabel.value );
     STATE.editComp.setIri( ELEMENTS.editorIRI.value );
@@ -408,7 +413,11 @@ async function saveForm(){
   clearForm();
 
   // update serialization
-  ELEMENTS.input.value = await mergeCurrentTurtle( ELEMENTS.input.value, STATE.variable );
+  ELEMENTS.input.value = await mergeCurrentTurtle(
+    ELEMENTS.input.value,
+    STATE.variable,
+    { syncVariableLabels }
+  );
 
   // trigger redraw
   triggerRedraw( STATE.variable );

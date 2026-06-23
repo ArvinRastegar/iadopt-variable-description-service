@@ -4,9 +4,12 @@ import { parseRDF } from './parse';
 import { NS } from './extract';
 
 const { DataFactory, Writer, Store } = N3;
-const { namedNode } = DataFactory;
+const { namedNode, quad } = DataFactory;
 
 const RDF_TYPE = namedNode( NS.rdf + 'type' );
+const RDFS_LABEL = namedNode( NS.rdfs + 'label' );
+const SKOS_PREF_LABEL = namedNode( NS.skos + 'prefLabel' );
+const SKOS_ALT_LABEL = namedNode( NS.skos + 'altLabel' );
 const VARIABLE_CLASS = NS.iop + 'Variable';
 
 const MANAGED_TYPE_IRIS = new Set([
@@ -100,7 +103,25 @@ function serializeStore( store, prefixes ) {
   } );
 }
 
-export default async function mergeCurrentTurtle( currentTurtle, variable ) {
+function synchronizeVariableSkosLabels( store, updatedStore, variableTerm ) {
+  for( const predicate of [ SKOS_PREF_LABEL, SKOS_ALT_LABEL ] ) {
+    store.removeQuads( store.getQuads( variableTerm, predicate, null, null ) );
+  }
+
+  const updatedLabel = updatedStore.getQuads( variableTerm, RDFS_LABEL, null, null )[0]?.object;
+  if( !updatedLabel ) {
+    return;
+  }
+
+  store.addQuad( quad( variableTerm, SKOS_PREF_LABEL, updatedLabel ) );
+  store.addQuad( quad( variableTerm, SKOS_ALT_LABEL, updatedLabel ) );
+}
+
+export default async function mergeCurrentTurtle(
+  currentTurtle,
+  variable,
+  { syncVariableLabels = false } = {}
+) {
   const currentContent = currentTurtle?.trim();
   if( !currentContent ) {
     return toTurtle( variable );
@@ -130,6 +151,17 @@ export default async function mergeCurrentTurtle( currentTurtle, variable ) {
       if( isManagedQuad( quad, updatedManagedSubjects ) ) {
         currentStore.addQuad( quad );
       }
+    }
+
+    // A manual edit of the Variable label is an explicit user override. Keep all three public
+    // label predicates aligned, while leaving formula-generated SKOS labels untouched for edits
+    // to components, constraints, descriptions, or IRIs.
+    if( syncVariableLabels ) {
+      synchronizeVariableSkosLabels(
+        currentStore,
+        updatedStore,
+        getFirstVariableTerm( updatedStore )
+      );
     }
 
     return await serializeStore( currentStore, {
