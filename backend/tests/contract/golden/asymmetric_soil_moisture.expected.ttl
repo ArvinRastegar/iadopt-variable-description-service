@@ -1,0 +1,51 @@
+@prefix iop: <https://w3id.org/iadopt/ont/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix pav: <http://purl.org/pav/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix orcid: <https://orcid.org/> .
+@prefix fdof: <https://w3id.org/fdof/ontology#> .
+
+
+<https://w3id.org/iadopt/variable/20260102T030405-07>
+    a fdof:FAIRDigitalObject ,
+      iop:Variable ;
+    dct:conformsTo <https://w3id.org/np/RA5MTl9GFH-QuuBHYEA2hOtxOMOV4-jrhtdx5lOy9CAQE> ;
+    rdfs:label "Moisture in upper soil portion" ;
+    skos:prefLabel "Moisture in upper soil portion" ;
+    skos:altLabel "surface density from water to soil layer: upper soil" ;
+    skos:definition "Moisture in upper soil portion measured in kg m-2" ;
+    rdfs:comment "Moisture in upper soil portion measured in kg m-2" ;
+    dct:identifier <https://w3id.org/iadopt/variable/20260102T030405-07> ;
+    dct:created "2026-01-02T03:04:05Z"^^xsd:dateTime ;
+    dct:creator orcid:0000-0003-2195-3997 ;
+    pav:createdWith "LLM-assisted I-ADOPT variable generation" ;
+    prov:wasAttributedTo orcid:0000-0003-2195-3997 ;
+    iop:hasObjectOfInterest <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest> ;
+    iop:hasProperty <https://w3id.org/iadopt/variable/20260102T030405-07#hasProperty> ;
+    iop:hasConstraint _:c1 .
+
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasProperty>
+    a iop:Property ;
+    rdfs:label "surface density" .
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest-source>
+    a iop:Entity ;
+    rdfs:label "water" .
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest-target>
+    a iop:Entity ;
+    rdfs:label "soil" .
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest>
+    a iop:Entity ,
+      iop:AsymmetricSystem ;
+    rdfs:label "water soil" ;
+    iop:hasSource <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest-source> ;
+    iop:hasTarget <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest-target> .
+_:c1
+    a iop:Constraint ;
+    rdfs:label "layer: upper soil" ;
+    iop:constrains <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest-target> .
+orcid:0000-0003-2195-3997
+    rdfs:label "Test Creator" .

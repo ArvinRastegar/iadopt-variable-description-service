@@ -1,0 +1,46 @@
+@prefix iop: <https://w3id.org/iadopt/ont/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix pav: <http://purl.org/pav/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix orcid: <https://orcid.org/> .
+@prefix fdof: <https://w3id.org/fdof/ontology#> .
+
+
+<https://w3id.org/iadopt/variable/20260102T030405-07>
+    a fdof:FAIRDigitalObject ,
+      iop:Variable ;
+    dct:conformsTo <https://w3id.org/np/RA5MTl9GFH-QuuBHYEA2hOtxOMOV4-jrhtdx5lOy9CAQE> ;
+    rdfs:label "Maximum air temperature" ;
+    skos:prefLabel "maximum air temperature" ;
+    skos:altLabel "maximum temperature of air at 2 meters" ;
+    skos:definition "Maximum daily air temperature at 2 meters" ;
+    rdfs:comment "max air temp" ;
+    dct:identifier <https://w3id.org/iadopt/variable/20260102T030405-07> ;
+    dct:created "2026-01-02T03:04:05Z"^^xsd:dateTime ;
+    dct:creator orcid:0000-0003-2195-3997 ;
+    pav:createdWith "LLM-assisted I-ADOPT variable generation" ;
+    prov:wasAttributedTo orcid:0000-0003-2195-3997 ;
+    iop:hasObjectOfInterest <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest> ;
+    iop:hasProperty <https://w3id.org/iadopt/variable/20260102T030405-07#hasProperty> ;
+    iop:hasStatisticalModifier <https://w3id.org/iadopt/variable/20260102T030405-07#hasStatisticalModifier> ;
+    iop:hasConstraint _:c1 .
+
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasProperty>
+    a iop:Property ;
+    rdfs:label "temperature" .
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasStatisticalModifier>
+    a iop:StatisticalModifier ;
+    rdfs:label "maximum" .
+<https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest>
+    a iop:Entity ;
+    rdfs:label "air" .
+_:c1
+    a iop:Constraint ;
+    rdfs:label "at 2 meters" ;
+    iop:constrains <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest> .
+orcid:0000-0003-2195-3997
+    rdfs:label "Test Creator" .

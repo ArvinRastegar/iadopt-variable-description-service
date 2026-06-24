@@ -21,12 +21,33 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse, StreamingResponse
 from jsonschema import Draft202012Validator
 from openai import APIStatusError, OpenAI, OpenAIError
-from pydantic import BaseModel, Field
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
 from contextlib import asynccontextmanager
 
 from .auth import AuthStore, env_bool
+from .core import config
+from .schemas import (
+    AdminCreateUserRequest,
+    AdminStatsResponse,
+    AdminUpdateUserRequest,
+    AuditResponse,
+    AuthUserResponse,
+    DecomposeRequest,
+    DecomposeResponse,
+    FrontendEventRequest,
+    LoginRequest,
+    ModelOptionsResponse,
+    NanopubPreparationOptionsResponse,
+    PublishNanopubRequest,
+    PublishNanopubResponse,
+    ReadyzResponse,
+    RetractNanopubRequest,
+    RetractNanopubResponse,
+    StatusOkResponse,
+    UserResponse,
+    UsersResponse,
+)
 
 
 # ======================================================================================
@@ -99,39 +120,14 @@ SCHEMA_PATH = DATA_DIR / "Json_schema.json"
 PROMPT_DIR = DATA_DIR / "prompts"
 FIVE_SHOT_DIR = DATA_DIR / "Json_preferred" / "five_shot"
 
-OPENROUTER_MODEL_PROVIDER = "openrouter"
-PSNC_MODEL_PROVIDER = "psnc"
-SUPPORTED_MODEL_PROVIDERS = (OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER)
-
-
-def _parse_enabled_model_providers(configured: Optional[str]) -> List[str]:
-    if configured is None or not configured.strip():
-        return list(SUPPORTED_MODEL_PROVIDERS)
-
-    providers: List[str] = []
-    for value in configured.split(","):
-        provider = value.strip().lower()
-        if provider and provider not in providers:
-            providers.append(provider)
-
-    unsupported = [provider for provider in providers if provider not in SUPPORTED_MODEL_PROVIDERS]
-    if unsupported:
-        raise RuntimeError(
-            "Unsupported ENABLED_MODEL_PROVIDERS value(s): "
-            f"{', '.join(unsupported)}. Supported providers: {', '.join(SUPPORTED_MODEL_PROVIDERS)}"
-        )
-    if not providers:
-        raise RuntimeError("ENABLED_MODEL_PROVIDERS must enable at least one provider.")
-    return providers
-
-
-ENABLED_MODEL_PROVIDERS = _parse_enabled_model_providers(os.getenv("ENABLED_MODEL_PROVIDERS"))
-configured_default_provider = os.getenv("DEFAULT_MODEL_PROVIDER", "").strip().lower()
-DEFAULT_MODEL_PROVIDER = (
-    configured_default_provider
-    if configured_default_provider in ENABLED_MODEL_PROVIDERS
-    else ENABLED_MODEL_PROVIDERS[0]
-)
+# Provider configuration is owned by the core.config leaf so that the schemas
+# package can read it without importing this module (avoids a circular import).
+# These module-level names are kept as thin aliases for the rest of main.py.
+OPENROUTER_MODEL_PROVIDER = config.OPENROUTER_MODEL_PROVIDER
+PSNC_MODEL_PROVIDER = config.PSNC_MODEL_PROVIDER
+SUPPORTED_MODEL_PROVIDERS = config.SUPPORTED_MODEL_PROVIDERS
+ENABLED_MODEL_PROVIDERS = config.settings.enabled_model_providers
+DEFAULT_MODEL_PROVIDER = config.settings.default_model_provider
 
 DEFAULT_MODEL_NAME = "qwen/qwen3.5-flash-02-23"
 DEFAULT_MODEL_NAMES = [
@@ -329,110 +325,9 @@ def _load_psnc_model_names() -> List[str]:
 PSNC_MODEL_NAMES = _load_psnc_model_names()
 
 
-# ======================================================================================
-# Request/response models
-# ======================================================================================
-
-
-class DecomposeRequest(BaseModel):
-    definition: str = Field(..., min_length=1, description="Variable definition in plain text")
-    model_name: Optional[str] = Field(default=None, description="One of the backend-configured model names to use.")
-    model_provider: str = Field(
-        default=DEFAULT_MODEL_PROVIDER,
-        description=(
-            "Model provider to use for decomposition. Enabled values: " f"{', '.join(ENABLED_MODEL_PROVIDERS)}."
-        ),
-    )
-    creator_orcid_id: Optional[str] = Field(
-        default=None,
-        description="Optional ORCID override for TTL/provenance metadata; falls back to NANOPUB_ORCID_ID when omitted.",
-    )
-    disable_thinking: bool = Field(
-        default=True,
-        description="When true, request the model without reasoning effort by sending `reasoning.effort = none`.",
-    )
-
-
-class DecomposeResponse(BaseModel):
-    raw_llm_output: str
-    parsed_json: Dict[str, Any]
-    schema_valid: bool
-    validation_errors: List[str]
-    enriched_json: Dict[str, Any]
-    ttl: str
-
-
-class ModelOptionsResponse(BaseModel):
-    default_model_provider: str
-    default_model_name: str
-    model_names: List[str]
-    providers: Dict[str, Dict[str, Any]]
-
-
-class NanopubPreparationOptionsResponse(BaseModel):
-    default_creator_orcid_id: Optional[str]
-    conforms_to_uri: str
-    created_with_label: str
-
-
-class PublishNanopubRequest(BaseModel):
-    ttl: str = Field(..., min_length=1, description="TTL assertion payload currently shown in the frontend")
-    creator_orcid_id: Optional[str] = Field(
-        default=None,
-        description="Optional ORCID override for provenance/pubinfo metadata; falls back to NANOPUB_ORCID_ID when omitted.",
-    )
-
-
-class PublishNanopubResponse(BaseModel):
-    nanopub_url: str
-    published_to: str
-    variable_identifier: str
-    variable_uri: str
-
-
-class RetractNanopubRequest(BaseModel):
-    nanopub_uri: str = Field(
-        ..., min_length=1, description="The published nanopub URI or Nanodash explore URL to retract"
-    )
-    creator_orcid_id: Optional[str] = Field(
-        default=None,
-        description="Optional ORCID override for retraction provenance/pubinfo metadata; falls back to NANOPUB_ORCID_ID when omitted.",
-    )
-
-
-class RetractNanopubResponse(BaseModel):
-    retraction_url: str
-    published_to: str
-    retracted_nanopub_url: str
-
-
-class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
-
-
-class FrontendEventRequest(BaseModel):
-    action: str = Field(..., min_length=1, max_length=120)
-    payload: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-
-class AdminCreateUserRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=120)
-    password: str = Field(..., min_length=8)
-    display_name: str = ""
-    email: str = ""
-    roles: List[str] = Field(default_factory=lambda: ["user"])
-    is_active: bool = True
-
-
-class AdminUpdateUserRequest(BaseModel):
-    username: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    password: Optional[str] = Field(default=None, min_length=8)
-    display_name: Optional[str] = None
-    email: Optional[str] = None
-    roles: Optional[List[str]] = None
-    is_active: Optional[bool] = None
+# Request/response models now live in app.schemas (imported at the top of this
+# module). They are the single source of truth for the API contract and feed the
+# OpenAPI schema; see app/schemas/ and docs/CONTRACTS.md.
 
 
 # ======================================================================================
@@ -2371,7 +2266,7 @@ def readiness_checks() -> Dict[str, bool]:
     }
 
 
-@app.post(f"{API_PREFIX}/auth/login", include_in_schema=False)
+@app.post(f"{API_PREFIX}/auth/login", response_model=AuthUserResponse, tags=["Auth"])
 def login(req: LoginRequest, request: Request) -> JSONResponse:
     start = time.perf_counter()
     user = auth_store.authenticate(req.username, req.password) if auth_store.enabled else auth_store.user_from_request(request)
@@ -2401,7 +2296,7 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
     return response
 
 
-@app.get(f"{API_PREFIX}/auth/verify", include_in_schema=False)
+@app.get(f"{API_PREFIX}/auth/verify", status_code=204, tags=["Auth"])
 def verify_auth(request: Request) -> Response:
     user = auth_store.user_from_request(request)
     if not user:
@@ -2409,12 +2304,12 @@ def verify_auth(request: Request) -> Response:
     return Response(status_code=204)
 
 
-@app.get(f"{API_PREFIX}/auth/me", include_in_schema=False)
+@app.get(f"{API_PREFIX}/auth/me", response_model=AuthUserResponse, tags=["Auth"])
 def current_user(user: Dict[str, Any] = Depends(require_current_user)) -> Dict[str, Any]:
     return {"user": _public_user(user), "auth_enabled": auth_store.enabled}
 
 
-@app.post(f"{API_PREFIX}/auth/logout", include_in_schema=False)
+@app.post(f"{API_PREFIX}/auth/logout", response_model=StatusOkResponse, tags=["Auth"])
 def logout(request: Request, user: Dict[str, Any] = Depends(require_current_user)) -> JSONResponse:
     auth_store.delete_session(request)
     response = JSONResponse({"status": "ok"})
@@ -2438,7 +2333,7 @@ def protected_openapi(_: Dict[str, Any] = Depends(require_current_user)):
     return app.openapi()
 
 
-@app.post(f"{API_PREFIX}/events", include_in_schema=False)
+@app.post(f"{API_PREFIX}/events", response_model=StatusOkResponse, tags=["System"])
 def record_frontend_event(
     req: FrontendEventRequest,
     request: Request,
@@ -2455,7 +2350,7 @@ def record_frontend_event(
     return {"status": "ok"}
 
 
-@app.get(f"{API_PREFIX}/admin/stats", include_in_schema=False)
+@app.get(f"{API_PREFIX}/admin/stats", response_model=AdminStatsResponse, tags=["Admin"])
 def admin_stats(_: Dict[str, Any] = Depends(require_admin_user)) -> Dict[str, Any]:
     checks = readiness_checks()
     stats = auth_store.stats()
@@ -2466,7 +2361,7 @@ def admin_stats(_: Dict[str, Any] = Depends(require_admin_user)) -> Dict[str, An
     return stats
 
 
-@app.get(f"{API_PREFIX}/admin/audit", include_in_schema=False)
+@app.get(f"{API_PREFIX}/admin/audit", response_model=AuditResponse, tags=["Admin"])
 def admin_audit(
     limit: int = 100,
     offset: int = 0,
@@ -2475,12 +2370,12 @@ def admin_audit(
     return {"events": auth_store.get_audit_events(limit=limit, offset=offset)}
 
 
-@app.get(f"{API_PREFIX}/admin/users", include_in_schema=False)
+@app.get(f"{API_PREFIX}/admin/users", response_model=UsersResponse, tags=["Admin"])
 def admin_users(_: Dict[str, Any] = Depends(require_admin_user)) -> Dict[str, Any]:
     return {"users": [_public_user(user) for user in auth_store.list_users()]}
 
 
-@app.post(f"{API_PREFIX}/admin/users", include_in_schema=False)
+@app.post(f"{API_PREFIX}/admin/users", response_model=UserResponse, tags=["Admin"])
 def admin_create_user(
     req: AdminCreateUserRequest,
     request: Request,
@@ -2501,7 +2396,7 @@ def admin_create_user(
     return {"user": _public_user(user)}
 
 
-@app.patch(f"{API_PREFIX}/admin/users/{{user_id}}", include_in_schema=False)
+@app.patch(f"{API_PREFIX}/admin/users/{{user_id}}", response_model=UserResponse, tags=["Admin"])
 def admin_update_user(
     user_id: int,
     req: AdminUpdateUserRequest,
@@ -2527,12 +2422,12 @@ def admin_update_user(
     return {"user": _public_user(user)}
 
 
-@app.get(f"{API_PREFIX}/livez", include_in_schema=False)
+@app.get(f"{API_PREFIX}/livez", response_model=StatusOkResponse, tags=["System"])
 def liveness() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get(f"{API_PREFIX}/readyz", include_in_schema=False)
+@app.get(f"{API_PREFIX}/readyz", response_model=ReadyzResponse, tags=["System"])
 def health() -> Dict[str, Any]:
     checks = readiness_checks()
     if not all(checks.values()):
@@ -2540,12 +2435,12 @@ def health() -> Dict[str, Any]:
     return {"status": "ready", "checks": checks}
 
 
-@app.get(f"{API_PREFIX}/health", include_in_schema=False)
+@app.get(f"{API_PREFIX}/health", response_model=StatusOkResponse, tags=["System"])
 def health_alias() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get(f"{API_PREFIX}/model-options", response_model=ModelOptionsResponse)
+@app.get(f"{API_PREFIX}/model-options", response_model=ModelOptionsResponse, tags=["Decomposition"])
 def model_options() -> ModelOptionsResponse:
     """Expose the backend-managed list of allowed model names for the frontend dropdown."""
     provider_configs: Dict[str, Dict[str, Any]] = {}
@@ -2571,7 +2466,11 @@ def model_options() -> ModelOptionsResponse:
     )
 
 
-@app.get(f"{API_PREFIX}/nanopub/preparation-options", response_model=NanopubPreparationOptionsResponse)
+@app.get(
+    f"{API_PREFIX}/nanopub/preparation-options",
+    response_model=NanopubPreparationOptionsResponse,
+    tags=["Nanopub"],
+)
 def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
     """Expose the metadata constants the frontend needs to enrich pasted Turtle for nanopublication.
 
@@ -2741,7 +2640,7 @@ def decompose(
         raise HTTPException(status_code=500, detail=f"Unexpected backend error: {e}") from e
 
 
-@app.post(f"{API_PREFIX}/nanopub/publish", response_model=PublishNanopubResponse)
+@app.post(f"{API_PREFIX}/nanopub/publish", response_model=PublishNanopubResponse, tags=["Nanopub"])
 def publish_nanopub(
     req: PublishNanopubRequest,
     request: Request,
@@ -2853,7 +2752,7 @@ def publish_nanopub(
         raise HTTPException(status_code=500, detail=f"Nanopub publish failed: {e}") from e
 
 
-@app.post(f"{API_PREFIX}/nanopub/retract", response_model=RetractNanopubResponse)
+@app.post(f"{API_PREFIX}/nanopub/retract", response_model=RetractNanopubResponse, tags=["Nanopub"])
 def retract_nanopub(
     req: RetractNanopubRequest,
     request: Request,

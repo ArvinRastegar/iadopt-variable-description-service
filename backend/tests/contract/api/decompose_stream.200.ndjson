@@ -1,0 +1,152 @@
+{"type": "raw_delta", "delta": "{"}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "label"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "Maximum"}
+{"type": "raw_delta", "delta": " daily"}
+{"type": "raw_delta", "delta": " air"}
+{"type": "raw_delta", "delta": " temperature"}
+{"type": "raw_delta", "delta": " at"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": "2"}
+{"type": "raw_delta", "delta": " meters"}
+{"type": "raw_delta", "delta": " above"}
+{"type": "raw_delta", "delta": " ground"}
+{"type": "raw_delta", "delta": " level"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "definition"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "Maximum"}
+{"type": "raw_delta", "delta": " daily"}
+{"type": "raw_delta", "delta": " air"}
+{"type": "raw_delta", "delta": " temperature"}
+{"type": "raw_delta", "delta": " at"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": "2"}
+{"type": "raw_delta", "delta": " meters"}
+{"type": "raw_delta", "delta": " above"}
+{"type": "raw_delta", "delta": " ground"}
+{"type": "raw_delta", "delta": " level"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "comment"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "Maximum"}
+{"type": "raw_delta", "delta": " daily"}
+{"type": "raw_delta", "delta": " air"}
+{"type": "raw_delta", "delta": " temperature"}
+{"type": "raw_delta", "delta": " at"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": "2"}
+{"type": "raw_delta", "delta": " meters"}
+{"type": "raw_delta", "delta": " above"}
+{"type": "raw_delta", "delta": " ground"}
+{"type": "raw_delta", "delta": " level"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "has"}
+{"type": "raw_delta", "delta": "Property"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "temperature"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "has"}
+{"type": "raw_delta", "delta": "Stat"}
+{"type": "raw_delta", "delta": "istical"}
+{"type": "raw_delta", "delta": "Modifier"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "maximum"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "has"}
+{"type": "raw_delta", "delta": "Object"}
+{"type": "raw_delta", "delta": "Of"}
+{"type": "raw_delta", "delta": "Interest"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "air"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "has"}
+{"type": "raw_delta", "delta": "Constraint"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " ["}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "   "}
+{"type": "raw_delta", "delta": " {"}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "     "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "label"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "interval"}
+{"type": "raw_delta", "delta": ":"}
+{"type": "raw_delta", "delta": " daily"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "     "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "on"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "maximum"}
+{"type": "raw_delta", "delta": "\""}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "   "}
+{"type": "raw_delta", "delta": " },"}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "   "}
+{"type": "raw_delta", "delta": " {"}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "     "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "label"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "location"}
+{"type": "raw_delta", "delta": ":"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": "2"}
+{"type": "raw_delta", "delta": " meters"}
+{"type": "raw_delta", "delta": " above"}
+{"type": "raw_delta", "delta": " ground"}
+{"type": "raw_delta", "delta": " level"}
+{"type": "raw_delta", "delta": "\","}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "     "}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "on"}
+{"type": "raw_delta", "delta": "\":"}
+{"type": "raw_delta", "delta": " \""}
+{"type": "raw_delta", "delta": "air"}
+{"type": "raw_delta", "delta": "\""}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "   "}
+{"type": "raw_delta", "delta": " }"}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": " "}
+{"type": "raw_delta", "delta": " ]"}
+{"type": "raw_delta", "delta": "\n"}
+{"type": "raw_delta", "delta": "}"}
+{"type": "final", "data": {"raw_llm_output": "{\n  \"label\": \"Maximum daily air temperature at 2 meters above ground level\",\n  \"definition\": \"Maximum daily air temperature at 2 meters above ground level\",\n  \"comment\": \"Maximum daily air temperature at 2 meters above ground level\",\n  \"hasProperty\": \"temperature\",\n  \"hasStatisticalModifier\": \"maximum\",\n  \"hasObjectOfInterest\": \"air\",\n  \"hasConstraint\": [\n    {\n      \"label\": \"interval: daily\",\n      \"on\": \"maximum\"\n    },\n    {\n      \"label\": \"location: 2 meters above ground level\",\n      \"on\": \"air\"\n    }\n  ]\n}", "parsed_json": {"label": "Maximum daily air temperature at 2 meters above ground level", "definition": "Maximum daily air temperature at 2 meters above ground level", "comment": "Maximum daily air temperature at 2 meters above ground level", "hasProperty": "temperature", "hasStatisticalModifier": "maximum", "hasObjectOfInterest": "air", "hasConstraint": [{"label": "interval: daily", "on": "maximum"}, {"label": "location: 2 meters above ground level", "on": "air"}], "hasMatrix": "", "hasContextObject": ""}, "schema_valid": true, "validation_errors": [], "enriched_json": {"label": "Maximum daily air temperature at 2 meters above ground level", "definition": "Maximum daily air temperature at 2 meters above ground level", "comment": "Maximum daily air temperature at 2 meters above ground level", "hasProperty": "temperature", "hasStatisticalModifier": "maximum", "hasObjectOfInterest": "air", "hasConstraint": [{"label": "interval: daily", "on": "maximum"}, {"label": "location: 2 meters above ground level", "on": "air"}], "hasMatrix": "", "hasContextObject": "", "hasPropertyURI": "https://www.wikidata.org/wiki/Q2547964", "hasObjectOfInterestURI": "https://www.wikidata.org/wiki/Q7391292", "hasStatisticalModifierURI": "https://www.wikidata.org/wiki/Q10578722"}, "ttl": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix skos: <http://www.w3.org/2004/02/skos/core#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix orcid: <https://orcid.org/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n\n\n<https://w3id.org/iadopt/variable/20260624T125257-29>\n    a fdof:FAIRDigitalObject ,\n      iop:Variable ;\n    dct:conformsTo <https://w3id.org/np/RA5MTl9GFH-QuuBHYEA2hOtxOMOV4-jrhtdx5lOy9CAQE> ;\n    rdfs:label \"Maximum daily air temperature at 2 meters above ground level\" ;\n    skos:prefLabel \"Maximum daily air temperature at 2 meters above ground level\" ;\n    skos:altLabel \"interval: daily maximum temperature of air at 2 meters above ground level\" ;\n    skos:definition \"Maximum daily air temperature at 2 meters above ground level\" ;\n    rdfs:comment \"Maximum daily air temperature at 2 meters above ground level\" ;\n    dct:identifier <https://w3id.org/iadopt/variable/20260624T125257-29> ;\n    dct:created \"2026-06-24T12:52:57Z\"^^xsd:dateTime ;\n    dct:creator orcid:0000-0003-2195-3997 ;\n    pav:createdWith \"LLM-assisted I-ADOPT variable generation\" ;\n    prov:wasAttributedTo orcid:0000-0003-2195-3997 ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q7391292> ;\n    iop:hasProperty <https://www.wikidata.org/entity/Q2547964> ;\n    iop:hasStatisticalModifier <https://www.wikidata.org/entity/Q10578722> ;\n    iop:hasConstraint _:c1, _:c2 .\n\n<https://www.wikidata.org/entity/Q2547964>\n    a iop:Property ;\n    rdfs:label \"temperature\" .\n<https://www.wikidata.org/entity/Q10578722>\n    a iop:StatisticalModifier ;\n    rdfs:label \"maximum\" .\n<https://www.wikidata.org/entity/Q7391292>\n    a iop:Entity ;\n    rdfs:label \"air\" .\n_:c1\n    a iop:Constraint ;\n    rdfs:label \"interval: daily\" ;\n    iop:constrains <https://www.wikidata.org/entity/Q10578722> .\n_:c2\n    a iop:Constraint ;\n    rdfs:label \"location: 2 meters above ground level\" ;\n    iop:constrains <https://www.wikidata.org/entity/Q7391292> .\norcid:0000-0003-2195-3997\n    rdfs:label \"Barbara Magagna\" .\n"}}

@@ -8,22 +8,24 @@ from fastapi.testclient import TestClient
 
 from app.auth import AuthStore, utc_iso, utc_now
 from app import main
+from app.core import config as core_config
 
 
 class ProviderConfigurationTests(unittest.TestCase):
+    # Provider parsing moved to the app.core.config leaf in Phase 1 (refactor).
     def test_missing_allowlist_enables_both_providers(self):
         self.assertEqual(
-            main._parse_enabled_model_providers(None),
+            core_config._parse_enabled_model_providers(None),
             ["openrouter", "psnc"],
         )
 
     def test_single_provider_is_supported(self):
-        self.assertEqual(main._parse_enabled_model_providers("psnc"), ["psnc"])
-        self.assertEqual(main._parse_enabled_model_providers("openrouter"), ["openrouter"])
+        self.assertEqual(core_config._parse_enabled_model_providers("psnc"), ["psnc"])
+        self.assertEqual(core_config._parse_enabled_model_providers("openrouter"), ["openrouter"])
 
     def test_invalid_provider_is_rejected(self):
         with self.assertRaises(RuntimeError):
-            main._parse_enabled_model_providers("psnc,unknown")
+            core_config._parse_enabled_model_providers("psnc,unknown")
 
 
 class PsncRerankerTests(unittest.TestCase):

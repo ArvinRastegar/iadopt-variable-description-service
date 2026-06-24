@@ -1,0 +1,11 @@
+{
+  "schema_valid": false,
+  "validation_errors": [
+    "Schema validation failed for variable: Moisture in upper soil portion",
+    "---------------------------------------------------------------------",
+    "01) Path: $.hasObjectOfInterest",
+    "    Error: {'AsymmetricSystem': 'system', 'hasSource': 'water', 'hasTarget': 'soil'} is not valid under any of the given schemas",
+    "    Offending value: {\"AsymmetricSystem\": \"system\", \"hasSource\": \"water\", \"hasTarget\": \"soil\"}",
+    "    Hint: This error is inside an entityOrSystem field (string vs AsymmetricSystem vs SymmetricSystem)."
+  ]
+}
