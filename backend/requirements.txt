@@ -9,3 +9,5 @@ pydantic-settings==2.14.2
 python-dotenv==1.2.2
 rdflib==7.6.0
 nanopub==2.2.0
+pytest==9.1.1
+mypy==2.1.0
