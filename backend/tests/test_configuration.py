@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from app.auth import AuthStore, utc_iso, utc_now
 from app import main
 from app.core import config as core_config
+from app.core import dependencies as core_deps
+from app.routers import decompose as decompose_router
 from app.services import reranker as reranker_service
 
 
@@ -47,7 +49,7 @@ class PsncRerankerTests(unittest.TestCase):
 
         self.assertEqual(scores, [0.9, 0.2])
         request = get_http_session.return_value.post.call_args
-        self.assertEqual(request.kwargs["json"]["model"], main.PSNC_RERANK_MODEL)
+        self.assertEqual(request.kwargs["json"]["model"], core_config.settings.psnc_rerank_model)
         self.assertEqual(request.kwargs["json"]["documents"], ["first", "second"])
 
 
@@ -63,21 +65,26 @@ class AuthApiTests(unittest.TestCase):
             },
         )
         self.env_patcher.start()
-        self.original_store = main.auth_store
-        self.store = AuthStore(
-            db_path=pathlib.Path(self.temp_dir.name) / "iadopt.sqlite3",
-            enabled=True,
-            session_secret="test-secret",
-            cookie_secure=False,
-            audit_retention_days=30,
-            audit_max_payload_bytes=1000000,
-        )
+        # Routers bind the canonical auth_store singleton (app.core.dependencies)
+        # at import time, so we reconfigure that object in place rather than
+        # swapping a module attribute, then restore it in tearDown.
+        self.store = core_deps.auth_store
+        self._saved = {
+            "db_path": self.store.db_path,
+            "enabled": self.store.enabled,
+            "session_secret": self.store.session_secret,
+            "cookie_secure": self.store.cookie_secure,
+        }
+        self.store.db_path = pathlib.Path(self.temp_dir.name) / "iadopt.sqlite3"
+        self.store.enabled = True
+        self.store.session_secret = "test-secret"
+        self.store.cookie_secure = False
         self.store.init()
-        main.auth_store = self.store
         self.client = TestClient(main.app)
 
     def tearDown(self):
-        main.auth_store = self.original_store
+        for attr, value in self._saved.items():
+            setattr(self.store, attr, value)
         self.env_patcher.stop()
         self.temp_dir.cleanup()
 
@@ -172,7 +179,7 @@ class AuthApiTests(unittest.TestCase):
     def test_decompose_and_nanopub_failures_are_audited(self):
         self.login()
 
-        with patch.object(main, "run_pipeline") as run_pipeline:
+        with patch.object(decompose_router, "run_pipeline") as run_pipeline:
             run_pipeline.return_value = {
                 "raw_llm_output": "{}",
                 "parsed_json": {"definition": "air temperature"},
