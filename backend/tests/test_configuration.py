@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.auth import AuthStore, utc_iso, utc_now
 from app import main
 from app.core import config as core_config
+from app.services import reranker as reranker_service
 
 
 class ProviderConfigurationTests(unittest.TestCase):
@@ -29,7 +30,8 @@ class ProviderConfigurationTests(unittest.TestCase):
 
 
 class PsncRerankerTests(unittest.TestCase):
-    @patch.object(main, "get_http_session")
+    # The reranker moved to app.services.reranker in Phase 2; patch its session there.
+    @patch.object(reranker_service, "get_http_session")
     def test_scores_are_returned_in_document_order(self, get_http_session):
         response = Mock()
         response.json.return_value = {
@@ -41,7 +43,7 @@ class PsncRerankerTests(unittest.TestCase):
         response.raise_for_status.return_value = None
         get_http_session.return_value.post.return_value = response
 
-        scores = main.call_psnc_reranker("query", ["first", "second"])
+        scores = reranker_service.call_psnc_reranker("query", ["first", "second"])
 
         self.assertEqual(scores, [0.9, 0.2])
         request = get_http_session.return_value.post.call_args
