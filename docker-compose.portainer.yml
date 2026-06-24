@@ -2,7 +2,9 @@ services:
   backend:
     image: ${IMAGE_REGISTRY:-ghcr.io}/${IMAGE_NAMESPACE}/iadopt-backend:${IMAGE_TAG:-prod}
     networks:
-      - iadopt_internal
+      iadopt_internal:
+        aliases:
+          - backend
     environment:
       ENABLED_MODEL_PROVIDERS: ${ENABLED_MODEL_PROVIDERS:-psnc}
       DEFAULT_MODEL_PROVIDER: ${DEFAULT_MODEL_PROVIDER:-psnc}
