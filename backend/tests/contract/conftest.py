@@ -65,9 +65,18 @@ def auth_cookies(base_url: str):
     return resp.cookies
 
 
-# Fields whose *contents* are free-form (arbitrary, caller-supplied JSON). We
-# assert these are the right container type but do not recurse into their keys.
-FREEFORM_KEYS = {"metadata_json", "payload", "metadata"}
+# Fields whose *contents* are free-form (arbitrary, caller-supplied JSON), or
+# whose KEY SET is data-dependent (histograms keyed by whatever actions/models
+# happened to be recorded). We assert these are the right container type but do
+# not recurse into or compare their keys.
+FREEFORM_KEYS = {
+    "metadata_json",
+    "payload",
+    "metadata",
+    # Dynamic-key histograms in /admin/stats: keys depend on runtime usage.
+    "events_by_action_30d",
+    "model_usage_30d",
+}
 
 
 def assert_same_shape(observed: Any, expected: Any, path: str = "$") -> None:

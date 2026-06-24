@@ -11,7 +11,6 @@ import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from dotenv import load_dotenv
 import httpx
 from nanopub import Nanopub, NanopubConf, Profile
 from nanopub.namespaces import NPX, NTEMPLATE, PAV
@@ -25,8 +24,11 @@ from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
 from contextlib import asynccontextmanager
 
-from .auth import AuthStore, env_bool
+from .auth import AuthStore
 from .core import config
+from .core.config import settings
+from .core.state import app_state
+from .core.text import lookup_key, normalize_text, ttl_quote
 from .schemas import (
     AdminCreateUserRequest,
     AdminStatsResponse,
@@ -54,22 +56,21 @@ from .schemas import (
 # App setup
 # ======================================================================================
 def warmup_assets() -> None:
-    global _schema_cache, _validator_cache, _prompt_version_cache, _examples_5_cache
-
     # OpenRouter is only initialized when it is enabled for this deployment.
     if OPENROUTER_MODEL_PROVIDER in ENABLED_MODEL_PROVIDERS and OPENROUTER_API_KEY:
         get_openai_client()
 
-    # Cache schema validator
-    _schema_cache = _patch_schema_for_pipeline(load_schema(SCHEMA_PATH))
-    _validator_cache = Draft202012Validator(_schema_cache)
+    # Cache schema validator (shared via app.core.state so services can read it
+    # without importing this module).
+    app_state.schema_cache = _patch_schema_for_pipeline(load_schema(SCHEMA_PATH))
+    app_state.validator_cache = Draft202012Validator(app_state.schema_cache)
 
     # Cache prompt version + examples
     versions = list_prompt_versions(PROMPT_DIR)
     if not versions:
         raise RuntimeError(f"No prompt files found in: {PROMPT_DIR}")
-    _prompt_version_cache = versions[0]
-    _examples_5_cache = load_examples(FIVE_SHOT_DIR, 5)
+    app_state.prompt_version_cache = versions[0]
+    app_state.examples_5_cache = load_examples(FIVE_SHOT_DIR, 5)
 
     # Prime HTTP session
     get_http_session()
@@ -110,108 +111,61 @@ app = FastAPI(
 # Paths & configuration
 # ======================================================================================
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
+# Paths come from Settings (app.core.config also runs load_dotenv on import).
+BASE_DIR = settings.base_dir
+DATA_DIR = settings.data_dir
+SCHEMA_PATH = settings.schema_path
+PROMPT_DIR = settings.prompt_dir
+FIVE_SHOT_DIR = settings.five_shot_dir
 
-load_dotenv(ROOT_DIR / ".env")
-
-DATA_DIR = BASE_DIR / "data"
-SCHEMA_PATH = DATA_DIR / "Json_schema.json"
-PROMPT_DIR = DATA_DIR / "prompts"
-FIVE_SHOT_DIR = DATA_DIR / "Json_preferred" / "five_shot"
-
-# Provider configuration is owned by the core.config leaf so that the schemas
-# package can read it without importing this module (avoids a circular import).
-# These module-level names are kept as thin aliases for the rest of main.py.
+# All configuration now lives in the typed app.core.config.Settings singleton.
+# These module-level names are thin aliases kept so the rest of main.py (and the
+# incremental Phase-2 extraction) reads unchanged. Defaults/coercion are verified
+# identical to the original os.getenv logic by tests/test_settings_parity.py.
 OPENROUTER_MODEL_PROVIDER = config.OPENROUTER_MODEL_PROVIDER
 PSNC_MODEL_PROVIDER = config.PSNC_MODEL_PROVIDER
 SUPPORTED_MODEL_PROVIDERS = config.SUPPORTED_MODEL_PROVIDERS
-ENABLED_MODEL_PROVIDERS = config.settings.enabled_model_providers
-DEFAULT_MODEL_PROVIDER = config.settings.default_model_provider
+ENABLED_MODEL_PROVIDERS = settings.enabled_model_providers
+DEFAULT_MODEL_PROVIDER = settings.default_model_provider
 
-DEFAULT_MODEL_NAME = "qwen/qwen3.5-flash-02-23"
-DEFAULT_MODEL_NAMES = [
-    "qwen/qwen3.5-flash-02-23",
-    "qwen/qwen3-32b",
-    "qwen/qwen3.5-397b-a17b",
-    "google/gemini-3-flash-preview",
-]
-DEFAULT_PSNC_MODEL_NAME = "Qwen3.5-397B-A17B"
-DEFAULT_PSNC_MODEL_NAMES = [
-    "Qwen3.5-397B-A17B",
-    "Qwen3-VL-235B-A22B-Instruct-FP8",
-]
+DEFAULT_MODEL_NAME = config.DEFAULT_MODEL_NAME
+DEFAULT_MODEL_NAMES = config.DEFAULT_MODEL_NAMES
+DEFAULT_PSNC_MODEL_NAME = config.DEFAULT_PSNC_MODEL_NAME
+DEFAULT_PSNC_MODEL_NAMES = config.DEFAULT_PSNC_MODEL_NAMES
 
-# MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3.5-397b-a17b")
-MODEL_NAME = os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
-# MODEL_NAME = os.getenv("MODEL_NAME", "qwen/qwen3-32b")
-# MODEL_NAME = os.getenv("MODEL_NAME", "google/gemini-3-flash-preview")
+MODEL_NAME = settings.model_name
+TEMPERATURE = settings.temperature
+OPENROUTER_API_KEY = settings.openrouter_api_key
+PSNC_API_KEY = settings.psnc_api_key
+PSNC_API_BASE_URL = settings.psnc_api_base_url
+PSNC_RERANK_MODEL = settings.psnc_rerank_model
+NANOPUB_PRIVATE_KEY = settings.nanopub_private_key
+NANOPUB_PUBLIC_KEY = settings.nanopub_public_key
+NANOPUB_ORCID_ID = settings.nanopub_orcid_id
+NANOPUB_AGENT_INTRO_URI = settings.nanopub_agent_intro_uri
+NANOPUB_PUBLISH_SERVER = settings.nanopub_publish_server
+NANOPUB_LICENSE_URI = settings.nanopub_license_uri
+NANOPUB_WAS_CREATED_AT = settings.nanopub_was_created_at
+NANOPUB_TEMPLATE_URI = settings.nanopub_template_uri
+NANOPUB_PROVENANCE_TEMPLATE_URI = settings.nanopub_provenance_template_uri
+NANOPUB_PUBINFO_TEMPLATE_URIS = settings.nanopub_pubinfo_template_uris
+IADOPT_VARIABLE_CONFORMS_TO = settings.iadopt_variable_conforms_to
+NANOPUB_RETRACT_TEMPLATE_URI = settings.nanopub_retract_template_uri
+NANOPUB_RETRACT_PROVENANCE_TEMPLATE_URI = settings.nanopub_retract_provenance_template_uri
+NANOPUB_RETRACT_PUBINFO_TEMPLATE_URIS = settings.nanopub_retract_pubinfo_template_uris
+IADOPT_CREATED_WITH_LABEL = settings.iadopt_created_with_label
 
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0.5"))
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-PSNC_API_KEY = os.getenv("PSNC_API_KEY")
-PSNC_API_BASE_URL = os.getenv("PSNC_API_BASE_URL", "https://llm.hpc.psnc.pl")
-PSNC_RERANK_MODEL = os.getenv("PSNC_RERANK_MODEL", "bge-reranker-v2-m3")
-NANOPUB_PRIVATE_KEY = os.getenv("NANOPUB_PRIVATE_KEY")
-NANOPUB_PUBLIC_KEY = os.getenv("NANOPUB_PUBLIC_KEY")
-NANOPUB_ORCID_ID = os.getenv("NANOPUB_ORCID_ID")
-NANOPUB_AGENT_INTRO_URI = os.getenv("NANOPUB_AGENT_INTRO_URI")
-NANOPUB_PUBLISH_SERVER = os.getenv("NANOPUB_PUBLISH_SERVER", "https://registry.petapico.org/np/")
-NANOPUB_LICENSE_URI = os.getenv("NANOPUB_LICENSE_URI", "https://creativecommons.org/licenses/by/4.0/")
-NANOPUB_WAS_CREATED_AT = os.getenv("NANOPUB_WAS_CREATED_AT", "https://nanodash.petapico.org/")
-NANOPUB_TEMPLATE_URI = os.getenv(
-    "NANOPUB_TEMPLATE_URI", "https://w3id.org/np/RAkcfj9W_lJjlq26paIFmTY4mZoaY27BnZCjcsL34EPIA"
-)
-NANOPUB_PROVENANCE_TEMPLATE_URI = os.getenv(
-    "NANOPUB_PROVENANCE_TEMPLATE_URI", "https://w3id.org/np/RANwQa4ICWS5SOjw7gp99nBpXBasapwtZF1fIM3H2gYTM"
-)
-NANOPUB_PUBINFO_TEMPLATE_URIS = [
-    uri.strip()
-    for uri in os.getenv(
-        "NANOPUB_PUBINFO_TEMPLATE_URIS",
-        "https://w3id.org/np/RAA2MfqdBCzmz9yVWjKLXNbyfBNcwsMmOqcNUxkk1maIM,"
-        "https://w3id.org/np/RA0J4vUn_dekg-U1kK3AOEt02p9mT2WO03uGxLDec1jLw,"
-        "https://w3id.org/np/RAukAcWHRDlkqxk7H2XNSegc1WnHI569INvNr-xdptDGI",
-    ).split(",")
-    if uri.strip()
-]
-IADOPT_VARIABLE_CONFORMS_TO = os.getenv(
-    "IADOPT_VARIABLE_CONFORMS_TO",
-    "https://w3id.org/np/RA5MTl9GFH-QuuBHYEA2hOtxOMOV4-jrhtdx5lOy9CAQE",
-)
-NANOPUB_RETRACT_TEMPLATE_URI = os.getenv(
-    "NANOPUB_RETRACT_TEMPLATE_URI",
-    "https://w3id.org/np/RAQP3NJvnLA2Z-2DrYAN0nTC-RFp67td1t4-pQqQ_ZKmo",
-)
-NANOPUB_RETRACT_PROVENANCE_TEMPLATE_URI = os.getenv(
-    "NANOPUB_RETRACT_PROVENANCE_TEMPLATE_URI",
-    "https://w3id.org/np/RA7lSq6MuK_TIC6JMSHvLtee3lpLoZDOqLJCLXevnrPoU",
-)
-NANOPUB_RETRACT_PUBINFO_TEMPLATE_URIS = [
-    uri.strip()
-    for uri in os.getenv(
-        "NANOPUB_RETRACT_PUBINFO_TEMPLATE_URIS",
-        "https://w3id.org/np/RA0J4vUn_dekg-U1kK3AOEt02p9mT2WO03uGxLDec1jLw,"
-        "https://w3id.org/np/RAukAcWHRDlkqxk7H2XNSegc1WnHI569INvNr-xdptDGI",
-    ).split(",")
-    if uri.strip()
-]
-IADOPT_CREATED_WITH_LABEL = os.getenv(
-    "IADOPT_CREATED_WITH_LABEL",
-    "LLM-assisted I-ADOPT variable generation",
-)
+RERANK_THRESHOLD = settings.rerank_threshold
+ENABLE_WIKIDATA_LINKING = settings.enable_wikidata_linking
 
-RERANK_THRESHOLD = float(os.getenv("RERANK_THRESHOLD", "0.10"))
-ENABLE_WIKIDATA_LINKING = os.getenv("ENABLE_WIKIDATA_LINKING", "true").lower() == "true"
-
-AUTH_ENABLED = env_bool("IADOPT_AUTH_ENABLED", False)
-AUTH_STATE_DIR = pathlib.Path(os.getenv("IADOPT_STATE_DIR", str(BASE_DIR / "state")))
-AUTH_DB_PATH = pathlib.Path(os.getenv("IADOPT_DB_PATH", str(AUTH_STATE_DIR / "iadopt.sqlite3")))
-AUTH_SESSION_SECRET = os.getenv("IADOPT_SESSION_SECRET", "")
-AUTH_COOKIE_SECURE = env_bool("IADOPT_COOKIE_SECURE", False)
-AUTH_SESSION_TTL_HOURS = int(os.getenv("IADOPT_SESSION_TTL_HOURS", "12"))
-AUDIT_RETENTION_DAYS = int(os.getenv("IADOPT_AUDIT_RETENTION_DAYS", "30"))
-AUDIT_MAX_PAYLOAD_BYTES = int(os.getenv("IADOPT_AUDIT_MAX_PAYLOAD_BYTES", "1000000"))
+AUTH_ENABLED = settings.auth_enabled
+AUTH_STATE_DIR = settings.auth_state_dir
+AUTH_DB_PATH = settings.auth_db_path
+AUTH_SESSION_SECRET = settings.session_secret
+AUTH_COOKIE_SECURE = settings.cookie_secure
+AUTH_SESSION_TTL_HOURS = settings.session_ttl_hours
+AUDIT_RETENTION_DAYS = settings.audit_retention_days
+AUDIT_MAX_PAYLOAD_BYTES = settings.audit_max_payload_bytes
 
 auth_store = AuthStore(
     db_path=AUTH_DB_PATH,
@@ -288,41 +242,10 @@ ONTO_KEYS = [
 ]
 
 
-def _dedupe_preserve_order(values: List[str]) -> List[str]:
-    seen = set()
-    ordered: List[str] = []
-
-    for value in values:
-        clean_value = value.strip()
-        if not clean_value or clean_value in seen:
-            continue
-        seen.add(clean_value)
-        ordered.append(clean_value)
-
-    return ordered
-
-
-def _load_model_names() -> List[str]:
-    configured = os.getenv("MODEL_NAMES", "")
-    configured_models = [value.strip() for value in configured.split(",") if value.strip()]
-
-    # When MODEL_NAMES is not provided, keep the small built-in fallback list available in the UI.
-    base_models = configured_models or DEFAULT_MODEL_NAMES
-    return _dedupe_preserve_order([MODEL_NAME, *base_models])
-
-
-MODEL_NAMES = _load_model_names()
-PSNC_MODEL_NAME = os.getenv("PSNC_MODEL_NAME", DEFAULT_PSNC_MODEL_NAME)
-
-
-def _load_psnc_model_names() -> List[str]:
-    configured = os.getenv("PSNC_MODEL_NAMES", "")
-    configured_models = [value.strip() for value in configured.split(",") if value.strip()]
-    base_models = configured_models or DEFAULT_PSNC_MODEL_NAMES
-    return _dedupe_preserve_order([PSNC_MODEL_NAME, *base_models])
-
-
-PSNC_MODEL_NAMES = _load_psnc_model_names()
+# Allowed model-name lists are computed by Settings (see app.core.config).
+MODEL_NAMES = settings.model_names
+PSNC_MODEL_NAME = settings.psnc_model_name
+PSNC_MODEL_NAMES = settings.psnc_model_names
 
 
 # Request/response models now live in app.schemas (imported at the top of this
@@ -357,10 +280,7 @@ def get_openai_client() -> OpenAI:
 _openai_client: Optional[OpenAI] = None
 _http_session: Optional[requests.Session] = None
 
-_schema_cache: Optional[Dict[str, Any]] = None
-_validator_cache: Optional[Draft202012Validator] = None
-_prompt_version_cache: Optional[str] = None
-_examples_5_cache: Optional[List[Dict[str, Any]]] = None
+# Warmup caches now live in app.core.state.app_state (shared leaf); see warmup_assets.
 
 
 def _normalize_env_multiline(value: Optional[str]) -> Optional[str]:
@@ -1195,8 +1115,8 @@ def get_schema_validation_errors(
 ) -> List[str]:
     if schema is not None:
         validator = Draft202012Validator(_patch_schema_for_pipeline(schema))
-    elif _validator_cache is not None:
-        validator = _validator_cache
+    elif app_state.validator_cache is not None:
+        validator = app_state.validator_cache
     else:
         schema = _patch_schema_for_pipeline(load_schema(schema_path))
         validator = Draft202012Validator(schema)
@@ -1382,19 +1302,12 @@ def wiki_to_entity(uri: Optional[str]) -> Optional[str]:
     return WIKIDATA_ENTITY + m.group(1)
 
 
-def _ttl_quote(text: str) -> str:
-    """Escape arbitrary text once so labels, comments, and definitions stay valid Turtle literals."""
-    return json.dumps((text or "").strip(), ensure_ascii=False)
-
-
-def _normalize_text(text: str) -> str:
-    """Collapse repeated whitespace so generated labels read naturally and consistently."""
-    return re.sub(r"\s+", " ", (text or "").strip())
-
-
-def _lookup_key(text: str) -> str:
-    """Normalize label lookups so constraints can resolve targets by human-readable names."""
-    return _normalize_text(text).lower()
+# Text helpers moved to app.core.text (a dependency-free leaf shared by the orcid,
+# nanopub, rdf_ttl, and validation services). Aliased here so existing call sites
+# in this module keep working during the incremental Phase-2 split.
+_ttl_quote = ttl_quote
+_normalize_text = normalize_text
+_lookup_key = lookup_key
 
 
 def _normalize_constraint_phrase_for_alt_label(label: str) -> str:
@@ -1830,14 +1743,16 @@ def _prepare_pipeline_inputs(
     if not definition:
         raise ValueError("Definition must not be empty.")
 
-    prompt_version = _prompt_version_cache
+    prompt_version = app_state.prompt_version_cache
     if not prompt_version:
         prompt_versions = list_prompt_versions(PROMPT_DIR)
         if not prompt_versions:
             raise RuntimeError(f"No prompt files found in: {PROMPT_DIR}")
         prompt_version = prompt_versions[0]
 
-    examples_5 = _examples_5_cache if _examples_5_cache is not None else load_examples(FIVE_SHOT_DIR, 5)
+    examples_5 = (
+        app_state.examples_5_cache if app_state.examples_5_cache is not None else load_examples(FIVE_SHOT_DIR, 5)
+    )
     prompt = build_prompt(definition, prompt_version=prompt_version, examples=examples_5)
     selected_model_provider = _resolve_model_provider(model_provider)
     selected_model_name = _resolve_model_name(model_name, model_provider=selected_model_provider)
