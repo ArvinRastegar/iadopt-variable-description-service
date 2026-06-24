@@ -1,89 +1,22 @@
 from __future__ import annotations
 
-import copy
 import json
-import os
-import pathlib
-import random
-import re
 import time
-import urllib.parse
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional
 
-import httpx
-from nanopub import Nanopub, NanopubConf, Profile
-from nanopub.namespaces import NPX, NTEMPLATE, PAV
-import requests
+from nanopub import Nanopub, NanopubConf
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse, StreamingResponse
-from jsonschema import Draft202012Validator
-from openai import APIStatusError, OpenAI, OpenAIError
-from rdflib import BNode, Graph, Literal, URIRef
-from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
+from rdflib import Graph, Literal
+from rdflib.namespace import RDFS
 from contextlib import asynccontextmanager
 
 from .auth import AuthStore
-from .clients.http import get_http_session
-from .clients.openai_client import get_openai_client
-from .clients.psnc_client import (
-    build_psnc_chat_payload,
-    psnc_chat_completions_url,
-    psnc_chat_headers,
-    psnc_rerank_url,
-)
 from .core import config
 from .core.config import settings
-from .core.state import app_state
-from .core.text import lookup_key, normalize_text, ttl_quote
 from .services.orcid import (
-    extract_orcid_display_name,
-    lookup_orcid_display_name,
     normalize_orcid,
-    orcid_suffix,
-    resolve_creator_metadata,
-)
-from .services.prompts import (
-    build_prompt,
-    format_example_block,
-    list_prompt_versions,
-    load_examples,
-    load_prompt_instructions,
-    strip_all_uri_fields,
-)
-from .services.rdf_ttl import (
-    build_alt_label,
-    format_main_label,
-    json_to_ttl_repo_style,
-    literal_join,
-    make_comment,
-    make_variable_identity,
-    normalize_constraint_phrase_for_alt_label,
-    phrase_for_role,
-    wiki_to_entity,
-)
-from .services.llm import (
-    build_chat_completion_request_kwargs,
-    call_llm_loose,
-    call_model,
-    call_psnc_model,
-    coerce_prediction,
-    extract_stream_text_deltas,
-    extract_stream_text_deltas_from_dict,
-    flatten_text_fragments,
-    parse_llm_json,
-    resolve_model_name,
-    resolve_model_provider,
-    stream_event,
-    stream_psnc_model,
-)
-from .services.reranker import call_psnc_reranker
-from .services.enrichment import (
-    enrich_with_uris_reranker,
-    get_wikidata_entity_reranker,
-    qid_from_uri_or_text,
-    to_wiki_url,
 )
 from .services.nanopub_service import (
     add_nanopub_metadata,
@@ -92,23 +25,12 @@ from .services.nanopub_service import (
     extract_assertion_label,
     extract_variable_identifier,
     extract_variable_uri,
-    get_nanopub_agent_label,
     get_nanopub_agent_uri,
     get_nanopub_profile,
     nanopub_created_literal,
-    normalize_env_multiline,
-    normalize_nanopub_key,
     normalize_target_nanopub_uri,
 )
-from .services.validation import (
-    collect_constraint_target_keys,
-    format_path,
-    get_constraint_semantic_validation_errors,
-    get_schema_validation_errors,
-    load_schema,
-    patch_schema_for_pipeline,
-    safe_preview,
-)
+from .pipeline import run_pipeline, stream_pipeline_events, warmup_assets
 from .schemas import (
     AdminCreateUserRequest,
     AdminStatsResponse,
@@ -133,34 +55,9 @@ from .schemas import (
 
 # Private-name aliases for client helpers moved to app.clients, kept so existing
 # call sites in this module read unchanged during the incremental Phase-2 split.
-_build_psnc_chat_payload = build_psnc_chat_payload
-_psnc_chat_headers = psnc_chat_headers
-_psnc_chat_completions_url = psnc_chat_completions_url
-_psnc_rerank_url = psnc_rerank_url
 
 # Aliases for ORCID + validation helpers moved to app.services.{orcid,validation}.
 _normalize_orcid = normalize_orcid
-_orcid_suffix = orcid_suffix
-_extract_orcid_display_name = extract_orcid_display_name
-_lookup_orcid_display_name = lookup_orcid_display_name
-_resolve_creator_metadata = resolve_creator_metadata
-_format_path = format_path
-_safe_preview = safe_preview
-_patch_schema_for_pipeline = patch_schema_for_pipeline
-_collect_constraint_target_keys = collect_constraint_target_keys
-_get_constraint_semantic_validation_errors = get_constraint_semantic_validation_errors
-_build_chat_completion_request_kwargs = build_chat_completion_request_kwargs
-_flatten_text_fragments = flatten_text_fragments
-_extract_stream_text_deltas = extract_stream_text_deltas
-_extract_stream_text_deltas_from_dict = extract_stream_text_deltas_from_dict
-_stream_psnc_model = stream_psnc_model
-_stream_event = stream_event
-_resolve_model_provider = resolve_model_provider
-_resolve_model_name = resolve_model_name
-_qid_from_uri_or_text = qid_from_uri_or_text
-_to_wiki_url = to_wiki_url
-_normalize_env_multiline = normalize_env_multiline
-_normalize_nanopub_key = normalize_nanopub_key
 _nanopub_created_literal = nanopub_created_literal
 _extract_variable_uri = extract_variable_uri
 _extract_assertion_label = extract_assertion_label
@@ -174,27 +71,6 @@ _add_nanopub_metadata = add_nanopub_metadata
 # ======================================================================================
 # App setup
 # ======================================================================================
-def warmup_assets() -> None:
-    # OpenRouter is only initialized when it is enabled for this deployment.
-    if OPENROUTER_MODEL_PROVIDER in ENABLED_MODEL_PROVIDERS and OPENROUTER_API_KEY:
-        get_openai_client()
-
-    # Cache schema validator (shared via app.core.state so services can read it
-    # without importing this module).
-    app_state.schema_cache = _patch_schema_for_pipeline(load_schema(SCHEMA_PATH))
-    app_state.validator_cache = Draft202012Validator(app_state.schema_cache)
-
-    # Cache prompt version + examples
-    versions = list_prompt_versions(PROMPT_DIR)
-    if not versions:
-        raise RuntimeError(f"No prompt files found in: {PROMPT_DIR}")
-    app_state.prompt_version_cache = versions[0]
-    app_state.examples_5_cache = load_examples(FIVE_SHOT_DIR, 5)
-
-    # Prime HTTP session
-    get_http_session()
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     auth_store.init()
@@ -371,43 +247,6 @@ PSNC_MODEL_NAMES = settings.psnc_model_names
 # (all imported above)
 
 
-def _finalize_pipeline_output(
-    raw_llm_output: str,
-    pred: Dict[str, Any],
-    *,
-    creator_orcid_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    if not pred:
-        raise RuntimeError("Could not extract valid JSON from the model output.")
-
-    validation_errors = get_schema_validation_errors(pred, label_for_logs=pred.get("label"))
-    validation_errors.extend(_get_constraint_semantic_validation_errors(pred))
-    schema_valid = len(validation_errors) == 0
-
-    if ENABLE_WIKIDATA_LINKING:
-        try:
-            enriched = enrich_with_uris_reranker(pred, threshold=RERANK_THRESHOLD)
-        except Exception as e:
-            print(f"Wikidata enrichment failed: {e}")
-            enriched = pred
-    else:
-        enriched = pred
-
-    ttl = json_to_ttl_repo_style(
-        enriched,
-        creator_orcid_id=creator_orcid_id,
-    )
-
-    return {
-        "raw_llm_output": raw_llm_output,
-        "parsed_json": pred,
-        "schema_valid": schema_valid,
-        "validation_errors": validation_errors,
-        "enriched_json": enriched,
-        "ttl": ttl,
-    }
-
-
 # ======================================================================================
 # JSON Schema validation
 # ======================================================================================
@@ -424,9 +263,6 @@ def _finalize_pipeline_output(
 # Text helpers moved to app.core.text (a dependency-free leaf shared by the orcid,
 # nanopub, rdf_ttl, and validation services). Aliased here so existing call sites
 # in this module keep working during the incremental Phase-2 split.
-_ttl_quote = ttl_quote
-_normalize_text = normalize_text
-_lookup_key = lookup_key
 
 
 # JSON -> TTL generation moved to app.services.rdf_ttl (imported above).
@@ -435,213 +271,8 @@ _lookup_key = lookup_key
 # ======================================================================================
 
 
-def _prepare_pipeline_inputs(
-    definition: str,
-    model_name: Optional[str] = None,
-    model_provider: Optional[str] = None,
-) -> Tuple[str, str, str]:
-    definition = definition.strip()
-    if not definition:
-        raise ValueError("Definition must not be empty.")
-
-    prompt_version = app_state.prompt_version_cache
-    if not prompt_version:
-        prompt_versions = list_prompt_versions(PROMPT_DIR)
-        if not prompt_versions:
-            raise RuntimeError(f"No prompt files found in: {PROMPT_DIR}")
-        prompt_version = prompt_versions[0]
-
-    examples_5 = (
-        app_state.examples_5_cache if app_state.examples_5_cache is not None else load_examples(FIVE_SHOT_DIR, 5)
-    )
-    prompt = build_prompt(definition, prompt_version=prompt_version, examples=examples_5)
-    selected_model_provider = _resolve_model_provider(model_provider)
-    selected_model_name = _resolve_model_name(model_name, model_provider=selected_model_provider)
-
-    return prompt, selected_model_provider, selected_model_name
-
-
-def stream_pipeline_events(
-    definition: str,
-    *,
-    disable_thinking: bool = True,
-    model_provider: Optional[str] = None,
-    model_name: Optional[str] = None,
-    creator_orcid_id: Optional[str] = None,
-) -> Iterator[str]:
-    try:
-        definition = definition.strip()
-        prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(
-            definition,
-            model_name=model_name,
-            model_provider=model_provider,
-        )
-        all_display_parts: List[str] = []
-        last_error_message = "Could not extract valid JSON from the model output."
-
-        for attempt in range(1, 4):
-            attempt_display_parts: List[str] = []
-            attempt_content_parts: List[str] = []
-            saw_reasoning = False
-            started_content = False
-            streamed_any_chunk = False
-
-            if attempt > 1:
-                retry_note = "\n\n[Retrying after the previous streamed response did not yield valid JSON.]\n\n"
-                all_display_parts.append(retry_note)
-                yield _stream_event("raw_delta", delta=retry_note)
-
-            try:
-                if selected_model_provider == PSNC_MODEL_PROVIDER:
-                    stream = _stream_psnc_model(
-                        selected_model_name,
-                        prompt,
-                        TEMPERATURE,
-                        disable_thinking=disable_thinking,
-                    )
-                else:
-                    client = get_openai_client()
-                    stream = (
-                        _extract_stream_text_deltas(chunk)
-                        for chunk in client.chat.completions.create(
-                            **_build_chat_completion_request_kwargs(
-                                selected_model_name,
-                                prompt,
-                                TEMPERATURE,
-                                disable_thinking=disable_thinking,
-                                stream=True,
-                            )
-                        )
-                    )
-
-                for reasoning_delta, content_delta in stream:
-                    if reasoning_delta:
-                        streamed_any_chunk = True
-                        saw_reasoning = True
-                        attempt_display_parts.append(reasoning_delta)
-                        yield _stream_event("raw_delta", delta=reasoning_delta)
-
-                    if content_delta:
-                        streamed_any_chunk = True
-                        if saw_reasoning and not started_content:
-                            separator = "\n\n"
-                            attempt_display_parts.append(separator)
-                            yield _stream_event("raw_delta", delta=separator)
-                        started_content = True
-                        attempt_display_parts.append(content_delta)
-                        attempt_content_parts.append(content_delta)
-                        yield _stream_event("raw_delta", delta=content_delta)
-
-                attempt_display = "".join(attempt_display_parts)
-                attempt_content = "".join(attempt_content_parts)
-
-                if attempt_display:
-                    all_display_parts.append(attempt_display)
-
-                stripped_content = attempt_content.strip()
-                if stripped_content.startswith("<!DOCTYPE html") or stripped_content.startswith("<html"):
-                    last_error_message = "The model returned HTML instead of JSON."
-                    continue
-                if not stripped_content:
-                    last_error_message = "The streamed model response was empty."
-                    continue
-
-                try:
-                    pred = parse_llm_json(attempt_content, definition)
-                except Exception as e:
-                    last_error_message = str(e)
-                    print(f"LLM parse attempt {attempt} failed: {e}")
-                    continue
-
-                final_payload = _finalize_pipeline_output(
-                    "".join(all_display_parts),
-                    pred,
-                    creator_orcid_id=creator_orcid_id,
-                )
-                yield _stream_event("final", data=final_payload)
-                return
-
-            except APIStatusError as e:
-                last_error_message = str(e)
-                print(f"APIStatusError attempt {attempt}: {e}")
-            except (OpenAIError, httpx.HTTPError) as e:
-                last_error_message = str(e)
-                print(f"Transport error attempt {attempt}: {e}")
-            except Exception as e:
-                last_error_message = str(e)
-                print(f"Unexpected streaming error attempt {attempt}: {e}")
-
-            if not streamed_any_chunk:
-                fallback_raw = (
-                    call_psnc_model(
-                        selected_model_name,
-                        prompt,
-                        TEMPERATURE,
-                        disable_thinking=disable_thinking,
-                    )
-                    if selected_model_provider == PSNC_MODEL_PROVIDER
-                    else call_model(
-                        selected_model_name,
-                        prompt,
-                        TEMPERATURE,
-                        disable_thinking=disable_thinking,
-                    )
-                )
-                fallback_display = fallback_raw or ""
-                if fallback_display:
-                    all_display_parts.append(fallback_display)
-                    yield _stream_event("raw_delta", delta=fallback_display)
-                    try:
-                        pred = parse_llm_json(fallback_raw, definition)
-                        final_payload = _finalize_pipeline_output(
-                            "".join(all_display_parts),
-                            pred,
-                            creator_orcid_id=creator_orcid_id,
-                        )
-                        yield _stream_event("final", data=final_payload)
-                        return
-                    except Exception as e:
-                        last_error_message = str(e)
-                        print(f"Fallback parse attempt {attempt} failed: {e}")
-
-        yield _stream_event(
-            "error", detail=f"Could not extract valid JSON from the model output. Last error: {last_error_message}"
-        )
-    except ValueError as e:
-        yield _stream_event("error", detail=str(e))
-    except RuntimeError as e:
-        yield _stream_event("error", detail=str(e))
-    except Exception as e:
-        yield _stream_event("error", detail=f"Unexpected backend error: {e}")
-
-
-def run_pipeline(
-    definition: str,
-    disable_thinking: bool = True,
-    model_provider: Optional[str] = None,
-    model_name: Optional[str] = None,
-    creator_orcid_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    definition = definition.strip()
-    prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(
-        definition,
-        model_name=model_name,
-        model_provider=model_provider,
-    )
-
-    raw_llm_output, pred = call_llm_loose(
-        selected_model_provider,
-        selected_model_name,
-        prompt,
-        definition=definition,
-        temperature=TEMPERATURE,
-        disable_thinking=disable_thinking,
-    )
-    return _finalize_pipeline_output(
-        raw_llm_output,
-        pred,
-        creator_orcid_id=creator_orcid_id,
-    )
+# Pipeline orchestration (run_pipeline, stream_pipeline_events, warmup_assets)
+# moved to app.pipeline (imported above).
 
 
 # ======================================================================================

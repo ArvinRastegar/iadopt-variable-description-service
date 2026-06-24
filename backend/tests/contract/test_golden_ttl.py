@@ -23,7 +23,8 @@ import pathlib
 
 import pytest
 
-import app.main as m  # type: ignore[import-not-found]
+import app.services.rdf_ttl as rdf_ttl  # type: ignore[import-not-found]
+import app.services.validation as validation  # type: ignore[import-not-found]
 
 from conftest import GOLDEN_DIR, load_json
 
@@ -60,7 +61,7 @@ def test_ttl_matches_golden(case: str):
     pred = load_json(GOLDEN_DIR / f"{case}.input.json")
     expected_ttl = (GOLDEN_DIR / f"{case}.expected.ttl").read_text(encoding="utf-8")
 
-    ttl = m.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
+    ttl = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
 
     assert ttl == expected_ttl
 
@@ -69,8 +70,8 @@ def test_ttl_matches_golden(case: str):
 def test_ttl_is_deterministic(case: str):
     """Regenerating with frozen clock/RNG yields identical output."""
     pred = load_json(GOLDEN_DIR / f"{case}.input.json")
-    first = m.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
-    second = m.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
+    first = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
+    second = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
     assert first == second
 
 
@@ -80,8 +81,8 @@ def test_validation_matches_golden(case: str):
     pred = load_json(GOLDEN_DIR / f"{case}.input.json")
     expected = load_json(GOLDEN_DIR / f"{case}.validation.json")
 
-    errors = m.get_schema_validation_errors(pred, label_for_logs=pred.get("label"))
-    errors = errors + m._get_constraint_semantic_validation_errors(pred)
+    errors = validation.get_schema_validation_errors(pred, label_for_logs=pred.get("label"))
+    errors = errors + validation.get_constraint_semantic_validation_errors(pred)
 
     assert (len(errors) == 0) == expected["schema_valid"]
     assert errors == expected["validation_errors"]
