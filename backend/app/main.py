@@ -25,6 +25,14 @@ from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
 from contextlib import asynccontextmanager
 
 from .auth import AuthStore
+from .clients.http import get_http_session
+from .clients.openai_client import get_openai_client
+from .clients.psnc_client import (
+    build_psnc_chat_payload,
+    psnc_chat_completions_url,
+    psnc_chat_headers,
+    psnc_rerank_url,
+)
 from .core import config
 from .core.config import settings
 from .core.state import app_state
@@ -50,6 +58,13 @@ from .schemas import (
     UserResponse,
     UsersResponse,
 )
+
+# Private-name aliases for client helpers moved to app.clients, kept so existing
+# call sites in this module read unchanged during the incremental Phase-2 split.
+_build_psnc_chat_payload = build_psnc_chat_payload
+_psnc_chat_headers = psnc_chat_headers
+_psnc_chat_completions_url = psnc_chat_completions_url
+_psnc_rerank_url = psnc_rerank_url
 
 
 # ======================================================================================
@@ -257,30 +272,13 @@ PSNC_MODEL_NAMES = settings.psnc_model_names
 # Lazy-loaded clients/models
 # ======================================================================================
 
-_openai_client: Optional[OpenAI] = None
 _nanopub_profile: Optional[Profile] = None
 _nanopub_agent_uri_cache: Optional[str] = None
 _nanopub_agent_label_cache: Optional[str] = None
 _orcid_name_cache: Dict[str, Optional[str]] = {}
 
-
-def get_openai_client() -> OpenAI:
-    global _openai_client
-
-    if _openai_client is None:
-        if not OPENROUTER_API_KEY:
-            raise RuntimeError("OPENROUTER_API_KEY is not set.")
-        _openai_client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=OPENROUTER_API_KEY,
-        )
-    return _openai_client
-
-
-_openai_client: Optional[OpenAI] = None
-_http_session: Optional[requests.Session] = None
-
-# Warmup caches now live in app.core.state.app_state (shared leaf); see warmup_assets.
+# HTTP clients moved to app.clients (http/openai_client/psnc_client). Warmup caches
+# moved to app.core.state.app_state. Both imported at the top of this module.
 
 
 def _normalize_env_multiline(value: Optional[str]) -> Optional[str]:
@@ -516,14 +514,6 @@ def get_nanopub_agent_label() -> Optional[str]:
     return _normalize_text(slug.replace("_", " ").replace("-", " "))
 
 
-def get_http_session() -> requests.Session:
-    global _http_session
-    if _http_session is None:
-        _http_session = requests.Session()
-        _http_session.headers.update({"User-Agent": "IADOPT-Linker/1.0 (+fastapi)"})
-    return _http_session
-
-
 # ======================================================================================
 # Prompt building
 # ======================================================================================
@@ -637,49 +627,6 @@ def call_model(model: str, prompt: str, temperature: float, disable_thinking: bo
             print(f"Unexpected error attempt {attempt}: {e}")
 
     return ""
-
-
-def _build_psnc_chat_payload(
-    model: str,
-    prompt: str,
-    temperature: float,
-    *,
-    disable_thinking: bool = True,
-    stream: bool = False,
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "model": model,
-        "temperature": temperature,
-        "messages": [{"role": "user", "content": prompt}],
-        "stream": stream,
-    }
-
-    if disable_thinking:
-        # PSNC is LiteLLM-compatible, but Qwen3.5 thinking is controlled by the model chat template.
-        # Send both known request-level switches used by Qwen-compatible providers:
-        # DashScope-style `enable_thinking` and vLLM-style `chat_template_kwargs`.
-        payload["enable_thinking"] = False
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
-
-    return payload
-
-
-def _psnc_chat_headers() -> Dict[str, str]:
-    if not PSNC_API_KEY:
-        raise RuntimeError("PSNC_API_KEY is not set.")
-
-    return {
-        "Authorization": f"Bearer {PSNC_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-
-def _psnc_chat_completions_url() -> str:
-    return f"{PSNC_API_BASE_URL.rstrip('/')}/v1/chat/completions"
-
-
-def _psnc_rerank_url() -> str:
-    return f"{PSNC_API_BASE_URL.rstrip('/')}/v1/rerank"
 
 
 def call_psnc_reranker(query: str, documents: List[str]) -> List[float]:
