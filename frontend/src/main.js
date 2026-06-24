@@ -43,6 +43,61 @@ const FALLBACK_PROVIDER_OPTIONS = {
 
 let modelProviderOptions = FALLBACK_PROVIDER_OPTIONS;
 let nanopubPreparationOptions = null;
+let currentUser = null;
+
+async function authenticatedFetch(...args) {
+  const response = await fetch(...args);
+  if (response.status === 401) {
+    const redirect = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/login.html?redirect=${redirect}`;
+    throw new Error('Authentication required.');
+  }
+  return response;
+}
+
+function renderCurrentUser() {
+  const userEl = document.querySelector('#currentUser');
+  const adminLink = document.querySelector('#adminLink');
+  if (userEl) {
+    userEl.textContent = currentUser
+      ? `Signed in as ${currentUser.display_name || currentUser.username}`
+      : '';
+  }
+  if (adminLink) {
+    adminLink.classList.toggle('d-none', !currentUser?.roles?.includes('admin'));
+  }
+}
+
+async function loadCurrentUser() {
+  try {
+    const response = await authenticatedFetch(`${BACKEND_URL}/auth/me`);
+    const data = await response.json();
+    currentUser = data.user || null;
+    renderCurrentUser();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function logout() {
+  try {
+    await fetch(`${BACKEND_URL}/auth/logout`, { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  } finally {
+    window.location.href = '/login.html';
+  }
+}
+
+function logFrontendEvent(action, payload = {}, metadata = {}) {
+  authenticatedFetch(`${BACKEND_URL}/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, payload, metadata }),
+  }).catch((e) => {
+    console.error(e);
+  });
+}
 
 function setDecomposeStatus(message, isError = false) {
   const el = document.querySelector('#decomposeStatus');
@@ -207,9 +262,11 @@ async function visualizeTTL() {
     await addEditor();
     document.querySelector('#export').classList.remove('invisible');
     document.querySelector('#publishNanopubButton')?.classList.remove('invisible');
+    logFrontendEvent('visualize', { ttl: raw });
 
   } catch (e) {
     console.error(e);
+    logFrontendEvent('visualize_failed', { ttl: raw }, { error: e.message || String(e) });
     showError('#svg', e, 'Rendering', raw);
   }
 }
@@ -280,7 +337,7 @@ async function loadNanopubPreparationOptions() {
   if (applyButton) applyButton.disabled = true;
 
   try {
-    const response = await fetch(`${BACKEND_URL}/nanopub/preparation-options`);
+    const response = await authenticatedFetch(`${BACKEND_URL}/nanopub/preparation-options`);
     const data = await response.json();
 
     if (!response.ok) {
@@ -320,8 +377,17 @@ async function applyPreNanopubSettings() {
     setPreNanopubStatus(
       'Pre-nanopublication settings applied. Review the updated Turtle, then visualize or publish it.'
     );
+    logFrontendEvent('apply_pre_nanopub_settings', {
+      input_turtle: currentTurtle,
+      output_turtle: updatedTurtle,
+      settings,
+    });
   } catch (e) {
     setPreNanopubStatus(e.message || 'Could not apply pre-nanopublication settings.', true);
+    logFrontendEvent('apply_pre_nanopub_settings_failed', {
+      input_turtle: currentTurtle,
+      settings,
+    }, { error: e.message || String(e) });
     throw e;
   } finally {
     if (applyButton) {
@@ -431,7 +497,7 @@ function renderModelOptions(providerId = getSelectedModelProvider()) {
 
 async function loadModelOptions() {
   try {
-    const response = await fetch(`${BACKEND_URL}/model-options`);
+    const response = await authenticatedFetch(`${BACKEND_URL}/model-options`);
     const data = await response.json();
 
     if (!response.ok) {
@@ -477,7 +543,7 @@ async function decomposeDefinition() {
   try {
     isDecomposing = true;
     setDecomposeButtonState(true);
-    const response = await fetch(`${BACKEND_URL}/decompose/stream`, {
+    const response = await authenticatedFetch(`${BACKEND_URL}/decompose/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // The switch starts checked (thinking disabled); users can uncheck it to enable normal model thinking.
@@ -609,7 +675,7 @@ async function publishNanopub() {
   setDecomposeStatus('Publishing nanopublication...');
 
   try {
-    const response = await fetch(`${BACKEND_URL}/nanopub/publish`, {
+    const response = await authenticatedFetch(`${BACKEND_URL}/nanopub/publish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ttl, ...creatorMetadata }),
@@ -670,7 +736,7 @@ async function retractNanopub() {
   setRetractStatus(`Retracting ${targetLabel}...`);
 
   try {
-    const response = await fetch(`${BACKEND_URL}/nanopub/retract`, {
+    const response = await authenticatedFetch(`${BACKEND_URL}/nanopub/retract`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nanopub_uri: targetReference, ...retractCreatorMetadata }),
@@ -761,6 +827,7 @@ if (initialTTL) {
   document.querySelector('#visualize')?.click();
 }
 
+loadCurrentUser();
 loadModelOptions();
 loadNanopubPreparationOptions();
 renderRetractOptions();
@@ -807,9 +874,15 @@ document.querySelector('#export')
       document.body.appendChild(downloadLink);
       downloadLink.click();
       document.body.removeChild(downloadLink);
+      logFrontendEvent('export', {
+        format: ext,
+        filename,
+        ttl: getCurrentTurtle(),
+      });
 
     } catch (e) {
       console.error(e);
+      logFrontendEvent('export_failed', {}, { error: e.message || String(e) });
     }
   });
 
@@ -841,6 +914,11 @@ document.querySelector('#retractButton')
     } catch (e) {
       console.error(e);
     }
+  });
+
+document.querySelector('#logoutButton')
+  ?.addEventListener('click', async () => {
+    await logout();
   });
 
 /* XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX ORDER XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX */

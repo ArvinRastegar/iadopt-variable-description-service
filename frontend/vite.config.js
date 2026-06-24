@@ -16,6 +16,8 @@ export default defineConfig({
       input: {
         appRemote: fileURLToPath(new URL('./remote.html', import.meta.url)),
         appMain:   fileURLToPath(new URL('./index.html', import.meta.url)),
+        appLogin:  fileURLToPath(new URL('./login.html', import.meta.url)),
+        appAdmin:  fileURLToPath(new URL('./admin.html', import.meta.url)),
       },
     },
   },

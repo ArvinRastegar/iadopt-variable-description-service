@@ -6,6 +6,7 @@ import os
 import pathlib
 import random
 import re
+import time
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -15,14 +16,17 @@ import httpx
 from nanopub import Nanopub, NanopubConf, Profile
 from nanopub.namespaces import NPX, NTEMPLATE, PAV
 import requests
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import JSONResponse, StreamingResponse
 from jsonschema import Draft202012Validator
 from openai import APIStatusError, OpenAI, OpenAIError
 from pydantic import BaseModel, Field
 from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
 from contextlib import asynccontextmanager
+
+from .auth import AuthStore, env_bool
 
 
 # ======================================================================================
@@ -52,6 +56,7 @@ def warmup_assets() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    auth_store.init()
     warmup_assets()
     yield
 
@@ -74,9 +79,9 @@ app = FastAPI(
     version="0.1.0",
     description=API_DESCRIPTION,
     lifespan=lifespan,
-    docs_url=f"{API_PREFIX}/docs",
-    redoc_url=f"{API_PREFIX}/redoc",
-    openapi_url=f"{API_PREFIX}/openapi.json",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 
@@ -203,6 +208,77 @@ IADOPT_CREATED_WITH_LABEL = os.getenv(
 RERANK_THRESHOLD = float(os.getenv("RERANK_THRESHOLD", "0.10"))
 ENABLE_WIKIDATA_LINKING = os.getenv("ENABLE_WIKIDATA_LINKING", "true").lower() == "true"
 
+AUTH_ENABLED = env_bool("IADOPT_AUTH_ENABLED", False)
+AUTH_STATE_DIR = pathlib.Path(os.getenv("IADOPT_STATE_DIR", str(BASE_DIR / "state")))
+AUTH_DB_PATH = pathlib.Path(os.getenv("IADOPT_DB_PATH", str(AUTH_STATE_DIR / "iadopt.sqlite3")))
+AUTH_SESSION_SECRET = os.getenv("IADOPT_SESSION_SECRET", "")
+AUTH_COOKIE_SECURE = env_bool("IADOPT_COOKIE_SECURE", False)
+AUTH_SESSION_TTL_HOURS = int(os.getenv("IADOPT_SESSION_TTL_HOURS", "12"))
+AUDIT_RETENTION_DAYS = int(os.getenv("IADOPT_AUDIT_RETENTION_DAYS", "30"))
+AUDIT_MAX_PAYLOAD_BYTES = int(os.getenv("IADOPT_AUDIT_MAX_PAYLOAD_BYTES", "1000000"))
+
+auth_store = AuthStore(
+    db_path=AUTH_DB_PATH,
+    enabled=AUTH_ENABLED,
+    session_secret=AUTH_SESSION_SECRET,
+    cookie_secure=AUTH_COOKIE_SECURE,
+    session_ttl_hours=AUTH_SESSION_TTL_HOURS,
+    audit_retention_days=AUDIT_RETENTION_DAYS,
+    audit_max_payload_bytes=AUDIT_MAX_PAYLOAD_BYTES,
+)
+
+PUBLIC_API_PATHS = {
+    f"{API_PREFIX}/auth/login",
+    f"{API_PREFIX}/auth/verify",
+    f"{API_PREFIX}/livez",
+    f"{API_PREFIX}/readyz",
+    f"{API_PREFIX}/health",
+}
+
+
+def _is_public_api_path(path: str) -> bool:
+    return path in PUBLIC_API_PATHS
+
+
+def _public_user(user: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "display_name": user.get("display_name") or user["username"],
+        "email": user.get("email") or "",
+        "roles": user.get("roles", []),
+        "is_active": user.get("is_active", True),
+        "auth_provider": user.get("auth_provider", "local"),
+        "external_subject": user.get("external_subject"),
+    }
+
+
+def require_current_user(request: Request) -> Dict[str, Any]:
+    return auth_store.require_user(request)
+
+
+def require_admin_user(request: Request) -> Dict[str, Any]:
+    return auth_store.require_admin(request)
+
+
+@app.middleware("http")
+async def authentication_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    if auth_store.enabled and path.startswith(API_PREFIX) and not _is_public_api_path(path):
+        user = auth_store.user_from_request(request)
+        if not user:
+            return JSONResponse({"detail": "Authentication required."}, status_code=401)
+        request.state.current_user = user
+    elif path.startswith(API_PREFIX):
+        user = auth_store.user_from_request(request)
+        if user:
+            request.state.current_user = user
+
+    return await call_next(request)
+
 _JSON_FENCE_RE = re.compile(r"```(?:json)?", re.MULTILINE)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -328,6 +404,35 @@ class RetractNanopubResponse(BaseModel):
     retraction_url: str
     published_to: str
     retracted_nanopub_url: str
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class FrontendEventRequest(BaseModel):
+    action: str = Field(..., min_length=1, max_length=120)
+    payload: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class AdminCreateUserRequest(BaseModel):
+    username: str = Field(..., min_length=1, max_length=120)
+    password: str = Field(..., min_length=8)
+    display_name: str = ""
+    email: str = ""
+    roles: List[str] = Field(default_factory=lambda: ["user"])
+    is_active: bool = True
+
+
+class AdminUpdateUserRequest(BaseModel):
+    username: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    password: Optional[str] = Field(default=None, min_length=8)
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    roles: Optional[List[str]] = None
+    is_active: Optional[bool] = None
 
 
 # ======================================================================================
@@ -2250,14 +2355,8 @@ def _add_nanopub_metadata(
         nanopub.pubinfo.add((nanopub_uri, NTEMPLATE["wasCreatedFromPubinfoTemplate"], URIRef(template_uri)))
 
 
-@app.get(f"{API_PREFIX}/livez", include_in_schema=False)
-def liveness() -> Dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get(f"{API_PREFIX}/readyz", include_in_schema=False)
-def health() -> Dict[str, Any]:
-    checks = {
+def readiness_checks() -> Dict[str, bool]:
+    return {
         "schema_exists": SCHEMA_PATH.exists(),
         "prompt_dir_exists": PROMPT_DIR.exists(),
         "five_shot_dir_exists": FIVE_SHOT_DIR.exists(),
@@ -2270,6 +2369,172 @@ def health() -> Dict[str, Any]:
         ),
         "wikidata_reranker_ready": not ENABLE_WIKIDATA_LINKING or bool(PSNC_API_KEY),
     }
+
+
+@app.post(f"{API_PREFIX}/auth/login", include_in_schema=False)
+def login(req: LoginRequest, request: Request) -> JSONResponse:
+    start = time.perf_counter()
+    user = auth_store.authenticate(req.username, req.password) if auth_store.enabled else auth_store.user_from_request(request)
+    if not user:
+        auth_store.audit_event(
+            action="auth.login_failed",
+            request=request,
+            status_code=401,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload={"username": req.username},
+            error="Invalid username or password.",
+        )
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    response = JSONResponse({"user": _public_user(user), "auth_enabled": auth_store.enabled})
+    if auth_store.enabled:
+        auth_store.set_session_cookie(response, auth_store.create_session(user["id"], request))
+    auth_store.audit_event(
+        action="auth.login",
+        user=user,
+        request=request,
+        status_code=200,
+        latency_ms=round((time.perf_counter() - start) * 1000),
+        request_payload={"username": req.username},
+        response_payload={"user": _public_user(user)},
+    )
+    return response
+
+
+@app.get(f"{API_PREFIX}/auth/verify", include_in_schema=False)
+def verify_auth(request: Request) -> Response:
+    user = auth_store.user_from_request(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return Response(status_code=204)
+
+
+@app.get(f"{API_PREFIX}/auth/me", include_in_schema=False)
+def current_user(user: Dict[str, Any] = Depends(require_current_user)) -> Dict[str, Any]:
+    return {"user": _public_user(user), "auth_enabled": auth_store.enabled}
+
+
+@app.post(f"{API_PREFIX}/auth/logout", include_in_schema=False)
+def logout(request: Request, user: Dict[str, Any] = Depends(require_current_user)) -> JSONResponse:
+    auth_store.delete_session(request)
+    response = JSONResponse({"status": "ok"})
+    auth_store.clear_session_cookie(response)
+    auth_store.audit_event(action="auth.logout", user=user, request=request, status_code=200)
+    return response
+
+
+@app.get(f"{API_PREFIX}/docs", include_in_schema=False)
+def protected_docs(_: Dict[str, Any] = Depends(require_current_user)):
+    return get_swagger_ui_html(openapi_url=f"{API_PREFIX}/openapi.json", title=f"{app.title} - Swagger UI")
+
+
+@app.get(f"{API_PREFIX}/redoc", include_in_schema=False)
+def protected_redoc(_: Dict[str, Any] = Depends(require_current_user)):
+    return get_redoc_html(openapi_url=f"{API_PREFIX}/openapi.json", title=f"{app.title} - ReDoc")
+
+
+@app.get(f"{API_PREFIX}/openapi.json", include_in_schema=False)
+def protected_openapi(_: Dict[str, Any] = Depends(require_current_user)):
+    return app.openapi()
+
+
+@app.post(f"{API_PREFIX}/events", include_in_schema=False)
+def record_frontend_event(
+    req: FrontendEventRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_current_user),
+) -> Dict[str, str]:
+    auth_store.audit_event(
+        action=f"frontend.{req.action}",
+        user=user,
+        request=request,
+        status_code=200,
+        request_payload=req.payload or {},
+        metadata=req.metadata or {},
+    )
+    return {"status": "ok"}
+
+
+@app.get(f"{API_PREFIX}/admin/stats", include_in_schema=False)
+def admin_stats(_: Dict[str, Any] = Depends(require_admin_user)) -> Dict[str, Any]:
+    checks = readiness_checks()
+    stats = auth_store.stats()
+    stats["readiness"] = {
+        "status": "ready" if all(checks.values()) else "not_ready",
+        "checks": checks,
+    }
+    return stats
+
+
+@app.get(f"{API_PREFIX}/admin/audit", include_in_schema=False)
+def admin_audit(
+    limit: int = 100,
+    offset: int = 0,
+    _: Dict[str, Any] = Depends(require_admin_user),
+) -> Dict[str, Any]:
+    return {"events": auth_store.get_audit_events(limit=limit, offset=offset)}
+
+
+@app.get(f"{API_PREFIX}/admin/users", include_in_schema=False)
+def admin_users(_: Dict[str, Any] = Depends(require_admin_user)) -> Dict[str, Any]:
+    return {"users": [_public_user(user) for user in auth_store.list_users()]}
+
+
+@app.post(f"{API_PREFIX}/admin/users", include_in_schema=False)
+def admin_create_user(
+    req: AdminCreateUserRequest,
+    request: Request,
+    admin: Dict[str, Any] = Depends(require_admin_user),
+) -> Dict[str, Any]:
+    try:
+        user = auth_store.create_user(**req.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    auth_store.audit_event(
+        action="admin.user_created",
+        user=admin,
+        request=request,
+        status_code=200,
+        request_payload={**req.model_dump(exclude={"password"}), "password": "[redacted]"},
+        response_payload={"user": _public_user(user)},
+    )
+    return {"user": _public_user(user)}
+
+
+@app.patch(f"{API_PREFIX}/admin/users/{{user_id}}", include_in_schema=False)
+def admin_update_user(
+    user_id: int,
+    req: AdminUpdateUserRequest,
+    request: Request,
+    admin: Dict[str, Any] = Depends(require_admin_user),
+) -> Dict[str, Any]:
+    updates = req.model_dump(exclude_unset=True)
+    try:
+        user = auth_store.update_user(user_id, updates)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_payload = dict(updates)
+    if "password" in audit_payload:
+        audit_payload["password"] = "[redacted]"
+    auth_store.audit_event(
+        action="admin.user_updated",
+        user=admin,
+        request=request,
+        status_code=200,
+        request_payload={"user_id": user_id, "updates": audit_payload},
+        response_payload={"user": _public_user(user)},
+    )
+    return {"user": _public_user(user)}
+
+
+@app.get(f"{API_PREFIX}/livez", include_in_schema=False)
+def liveness() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get(f"{API_PREFIX}/readyz", include_in_schema=False)
+def health() -> Dict[str, Any]:
+    checks = readiness_checks()
     if not all(checks.values()):
         raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})
     return {"status": "ready", "checks": checks}
@@ -2339,16 +2604,60 @@ def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
         }
     },
 )
-def decompose_stream(req: DecomposeRequest) -> StreamingResponse:
+def decompose_stream(
+    req: DecomposeRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_current_user),
+) -> StreamingResponse:
     """Stream raw LLM output chunks first, then emit the final structured decompose payload."""
+    start = time.perf_counter()
+    request_payload = req.model_dump()
+
+    def audited_events() -> Iterator[str]:
+        final_payload: Optional[Dict[str, Any]] = None
+        error_detail: Optional[str] = None
+        status_code = 200
+        try:
+            for line in stream_pipeline_events(
+                req.definition,
+                disable_thinking=req.disable_thinking,
+                model_provider=req.model_provider,
+                model_name=req.model_name,
+                creator_orcid_id=req.creator_orcid_id,
+            ):
+                try:
+                    event = json.loads(line)
+                    if event.get("type") == "final":
+                        final_payload = event.get("data")
+                    elif event.get("type") == "error":
+                        error_detail = event.get("detail") or "Streaming backend error."
+                        status_code = 500
+                except Exception:
+                    pass
+                yield line
+        except Exception as e:
+            error_detail = str(e)
+            status_code = 500
+            raise
+        finally:
+            auth_store.audit_event(
+                action="decompose.stream",
+                user=user,
+                request=request,
+                status_code=status_code,
+                latency_ms=round((time.perf_counter() - start) * 1000),
+                request_payload=request_payload,
+                response_payload=final_payload,
+                metadata={
+                    "model_provider": req.model_provider,
+                    "model_name": req.model_name,
+                    "disable_thinking": req.disable_thinking,
+                },
+                error=error_detail,
+            )
+
     return StreamingResponse(
-        stream_pipeline_events(
-            req.definition,
-            disable_thinking=req.disable_thinking,
-            model_provider=req.model_provider,
-            model_name=req.model_name,
-            creator_orcid_id=req.creator_orcid_id,
-        ),
+        audited_events(),
         media_type="application/x-ndjson",
     )
 
@@ -2365,7 +2674,12 @@ def decompose_stream(req: DecomposeRequest) -> StreamingResponse:
     ),
     tags=["Decomposition"],
 )
-def decompose(req: DecomposeRequest) -> DecomposeResponse:
+def decompose(
+    req: DecomposeRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_current_user),
+) -> DecomposeResponse:
+    start = time.perf_counter()
     try:
         result = run_pipeline(
             req.definition,
@@ -2374,26 +2688,93 @@ def decompose(req: DecomposeRequest) -> DecomposeResponse:
             model_name=req.model_name,
             creator_orcid_id=req.creator_orcid_id,
         )
+        auth_store.audit_event(
+            action="decompose",
+            user=user,
+            request=request,
+            status_code=200,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            response_payload=result,
+            metadata={
+                "model_provider": req.model_provider,
+                "model_name": req.model_name,
+                "disable_thinking": req.disable_thinking,
+            },
+        )
         return DecomposeResponse(**result)
     except ValueError as e:
+        auth_store.audit_event(
+            action="decompose",
+            user=user,
+            request=request,
+            status_code=400,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            metadata={"model_provider": req.model_provider, "model_name": req.model_name},
+            error=str(e),
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
+        auth_store.audit_event(
+            action="decompose",
+            user=user,
+            request=request,
+            status_code=500,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            metadata={"model_provider": req.model_provider, "model_name": req.model_name},
+            error=str(e),
+        )
         raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
+        auth_store.audit_event(
+            action="decompose",
+            user=user,
+            request=request,
+            status_code=500,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            metadata={"model_provider": req.model_provider, "model_name": req.model_name},
+            error=f"Unexpected backend error: {e}",
+        )
         raise HTTPException(status_code=500, detail=f"Unexpected backend error: {e}") from e
 
 
 @app.post(f"{API_PREFIX}/nanopub/publish", response_model=PublishNanopubResponse)
-def publish_nanopub(req: PublishNanopubRequest) -> PublishNanopubResponse:
+def publish_nanopub(
+    req: PublishNanopubRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_current_user),
+) -> PublishNanopubResponse:
     """Publish the exact TTL currently shown in the frontend as a signed nanopublication."""
+    start = time.perf_counter()
     ttl = req.ttl.strip()
     if not ttl:
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=400,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            error="TTL payload is empty.",
+        )
         raise HTTPException(status_code=400, detail="TTL payload is empty.")
 
     assertion_graph = Graph()
     try:
         assertion_graph.parse(data=ttl, format="turtle")
     except Exception as e:
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=400,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            error=f"Could not parse Turtle payload: {e}",
+        )
         raise HTTPException(status_code=400, detail=f"Could not parse Turtle payload: {e}") from e
 
     try:
@@ -2429,23 +2810,57 @@ def publish_nanopub(req: PublishNanopubRequest) -> PublishNanopubResponse:
         nanopub_url = str(publish_result[0])
         published_to = str(publish_result[1])
 
-        return PublishNanopubResponse(
+        response_payload = PublishNanopubResponse(
             nanopub_url=nanopub_url,
             published_to=published_to,
             variable_identifier=variable_identifier,
             variable_uri=str(variable_uri),
         )
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=200,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            response_payload=response_payload.model_dump(),
+            metadata={"variable_identifier": variable_identifier, "variable_uri": str(variable_uri)},
+        )
+        return response_payload
     except HTTPException:
         raise
     except RuntimeError as e:
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=500,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            error=str(e),
+        )
         raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=500,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            error=f"Nanopub publish failed: {e}",
+        )
         raise HTTPException(status_code=500, detail=f"Nanopub publish failed: {e}") from e
 
 
 @app.post(f"{API_PREFIX}/nanopub/retract", response_model=RetractNanopubResponse)
-def retract_nanopub(req: RetractNanopubRequest) -> RetractNanopubResponse:
+def retract_nanopub(
+    req: RetractNanopubRequest,
+    request: Request,
+    user: Dict[str, Any] = Depends(require_current_user),
+) -> RetractNanopubResponse:
     """Publish a signed nanopub retraction for a previously published nanopublication."""
+    start = time.perf_counter()
     try:
         target_nanopub_uri = _normalize_target_nanopub_uri(req.nanopub_uri)
         profile = get_nanopub_profile()
@@ -2458,12 +2873,41 @@ def retract_nanopub(req: RetractNanopubRequest) -> RetractNanopubResponse:
 
         # Publishing the custom retraction nanopub creates a new nanopub whose assertion retracts the target URI.
         publish_result = retraction.publish()
-        return RetractNanopubResponse(
+        response_payload = RetractNanopubResponse(
             retraction_url=str(publish_result[0]),
             published_to=str(publish_result[1]),
             retracted_nanopub_url=target_nanopub_uri,
         )
+        auth_store.audit_event(
+            action="nanopub.retract",
+            user=user,
+            request=request,
+            status_code=200,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            response_payload=response_payload.model_dump(),
+            metadata={"target_nanopub_uri": target_nanopub_uri},
+        )
+        return response_payload
     except RuntimeError as e:
+        auth_store.audit_event(
+            action="nanopub.retract",
+            user=user,
+            request=request,
+            status_code=400,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            error=str(e),
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
+        auth_store.audit_event(
+            action="nanopub.retract",
+            user=user,
+            request=request,
+            status_code=500,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=req.model_dump(),
+            error=f"Nanopub retract failed: {e}",
+        )
         raise HTTPException(status_code=500, detail=f"Nanopub retract failed: {e}") from e

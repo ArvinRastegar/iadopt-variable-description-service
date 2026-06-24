@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - I-ADOPT Variable Description Service</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #12161b;
+      --panel: #1e252d;
+      --panel-2: #171d24;
+      --border: #3a4552;
+      --text: #f4f7fb;
+      --muted: #aab6c4;
+      --accent: #66b3ff;
+      --danger: #ff7a7a;
+      --ok: #8ee6a1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px clamp(16px, 3vw, 36px);
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 1.45rem;
+    }
+
+    h2 {
+      font-size: 1.05rem;
+      margin-bottom: 14px;
+    }
+
+    a,
+    button {
+      color: var(--text);
+    }
+
+    .top-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .button,
+    button {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-2);
+      padding: 8px 12px;
+      font: inherit;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .primary {
+      background: var(--accent);
+      color: #06101d;
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+
+    main {
+      padding: 24px clamp(16px, 3vw, 36px) 44px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 22px;
+    }
+
+    .card,
+    section {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .card {
+      padding: 16px;
+    }
+
+    .metric {
+      display: block;
+      margin-top: 6px;
+      font-size: 1.55rem;
+      font-weight: 700;
+    }
+
+    section {
+      margin-top: 18px;
+      padding: 18px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .ok {
+      color: var(--ok);
+    }
+
+    .danger {
+      color: var(--danger);
+    }
+
+    form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 4px;
+    }
+
+    input,
+    select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #10151b;
+      color: var(--text);
+      padding: 8px 10px;
+      font: inherit;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--border);
+      padding: 9px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    td.actions {
+      min-width: 220px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    pre {
+      max-width: min(900px, 80vw);
+      max-height: 260px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+    }
+
+    #status {
+      min-height: 1.4em;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>Admin Dashboard</h1>
+      <div id="signedIn" class="muted"></div>
+    </div>
+    <div class="top-actions">
+      <a class="button" href="./index.html">App</a>
+      <button id="refreshButton" type="button">Refresh</button>
+      <button id="logoutButton" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="status" class="muted" role="status" aria-live="polite"></div>
+
+    <div class="grid" id="statsGrid"></div>
+
+    <section>
+      <h2>Create User</h2>
+      <form id="createUserForm">
+        <div>
+          <label for="newUsername">Username</label>
+          <input id="newUsername" required />
+        </div>
+        <div>
+          <label for="newPassword">Password</label>
+          <input id="newPassword" type="password" minlength="8" required />
+        </div>
+        <div>
+          <label for="newDisplayName">Display name</label>
+          <input id="newDisplayName" />
+        </div>
+        <div>
+          <label for="newEmail">Email</label>
+          <input id="newEmail" type="email" />
+        </div>
+        <div>
+          <label for="newRole">Role</label>
+          <select id="newRole">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <button class="primary" type="submit">Create</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Users</h2>
+      <div id="usersTable"></div>
+    </section>
+
+    <section>
+      <h2>Recent Audit Events</h2>
+      <div id="auditTable"></div>
+    </section>
+  </main>
+
+  <script>
+    const statusEl = document.querySelector('#status');
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message || '';
+      statusEl.className = isError ? 'danger' : 'muted';
+    }
+
+    async function fetchJSON(url, options = {}) {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+      });
+      if (response.status === 401) {
+        window.location.href = `/login.html?redirect=${encodeURIComponent(window.location.pathname)}`;
+        throw new Error('Authentication required.');
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || 'Request failed.');
+      }
+      return data;
+    }
+
+    function renderStats(stats) {
+      const readiness = stats.readiness?.status || 'unknown';
+      const grid = document.querySelector('#statsGrid');
+      const metricCards = [
+        ['Readiness', readiness, readiness === 'ready' ? 'ok' : 'danger'],
+        ['Active users', stats.active_users ?? 0],
+        ['Events in retention window', stats.event_count_30d ?? 0],
+        ['Failures', stats.failures_30d ?? 0, stats.failures_30d ? 'danger' : 'ok'],
+        ['Average latency', `${stats.average_latency_ms_30d ?? 0} ms`],
+      ];
+
+      grid.innerHTML = metricCards.map(([label, value, className = '']) => `
+        <div class="card">
+          <span class="muted">${escapeHtml(label)}</span>
+          <span class="metric ${className}">${escapeHtml(value)}</span>
+        </div>
+      `).join('');
+    }
+
+    function roleValue(user) {
+      return user.roles?.includes('admin') ? 'admin' : 'user';
+    }
+
+    function renderUsers(users) {
+      const container = document.querySelector('#usersTable');
+      if (!users.length) {
+        container.innerHTML = '<p class="muted">No users yet.</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Display</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Last login</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${users.map((user) => `
+              <tr data-user-id="${user.id}">
+                <td><input data-field="username" value="${escapeHtml(user.username)}" /></td>
+                <td><input data-field="display_name" value="${escapeHtml(user.display_name || '')}" /></td>
+                <td><input data-field="email" value="${escapeHtml(user.email || '')}" /></td>
+                <td>
+                  <select data-field="role">
+                    <option value="user" ${roleValue(user) === 'user' ? 'selected' : ''}>User</option>
+                    <option value="admin" ${roleValue(user) === 'admin' ? 'selected' : ''}>Admin</option>
+                  </select>
+                </td>
+                <td class="${user.is_active ? 'ok' : 'danger'}">${user.is_active ? 'Active' : 'Disabled'}</td>
+                <td>${escapeHtml(user.last_login_at || '')}</td>
+                <td class="actions">
+                  <button data-action="save">Save</button>
+                  <button data-action="toggle">${user.is_active ? 'Disable' : 'Enable'}</button>
+                  <button data-action="reset">Reset password</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderAudit(events) {
+      const container = document.querySelector('#auditTable');
+      if (!events.length) {
+        container.innerHTML = '<p class="muted">No audit events yet.</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${events.map((event) => `
+              <tr>
+                <td>${escapeHtml(event.created_at)}</td>
+                <td>${escapeHtml(event.username)}</td>
+                <td>${escapeHtml(event.action)}</td>
+                <td>${escapeHtml(event.status_code || '')}</td>
+                <td>${escapeHtml(event.latency_ms ? `${event.latency_ms} ms` : '')}</td>
+                <td>
+                  <details>
+                    <summary>View</summary>
+                    <pre>${escapeHtml(JSON.stringify({
+                      path: event.path,
+                      error: event.error,
+                      metadata: event.metadata_json,
+                      request_payload: event.request_payload,
+                      response_payload: event.response_payload,
+                    }, null, 2))}</pre>
+                  </details>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function loadDashboard() {
+      setStatus('Loading...');
+      const me = await fetchJSON('/api/auth/me');
+      if (!me.user?.roles?.includes('admin')) {
+        setStatus('Admin access required.', true);
+        return;
+      }
+      document.querySelector('#signedIn').textContent = `Signed in as ${me.user.display_name || me.user.username}`;
+
+      const [stats, users, audit] = await Promise.all([
+        fetchJSON('/api/admin/stats'),
+        fetchJSON('/api/admin/users'),
+        fetchJSON('/api/admin/audit?limit=100'),
+      ]);
+
+      renderStats(stats);
+      renderUsers(users.users || []);
+      renderAudit(audit.events || []);
+      setStatus('');
+    }
+
+    async function updateUser(row, updates) {
+      const userId = row.dataset.userId;
+      await fetchJSON(`/api/admin/users/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates),
+      });
+      await loadDashboard();
+    }
+
+    document.querySelector('#createUserForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await fetchJSON('/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify({
+            username: document.querySelector('#newUsername').value.trim(),
+            password: document.querySelector('#newPassword').value,
+            display_name: document.querySelector('#newDisplayName').value.trim(),
+            email: document.querySelector('#newEmail').value.trim(),
+            roles: document.querySelector('#newRole').value === 'admin' ? ['admin', 'user'] : ['user'],
+            is_active: true,
+          }),
+        });
+        event.target.reset();
+        await loadDashboard();
+      } catch (error) {
+        setStatus(error.message || 'Could not create user.', true);
+      }
+    });
+
+    document.querySelector('#usersTable').addEventListener('click', async (event) => {
+      const button = event.target.closest('button[data-action]');
+      if (!button) return;
+
+      const row = button.closest('tr[data-user-id]');
+      const action = button.dataset.action;
+      const fields = Object.fromEntries(
+        Array.from(row.querySelectorAll('[data-field]')).map((input) => [input.dataset.field, input.value])
+      );
+
+      try {
+        if (action === 'save') {
+          await updateUser(row, {
+            username: fields.username,
+            display_name: fields.display_name,
+            email: fields.email,
+            roles: fields.role === 'admin' ? ['admin', 'user'] : ['user'],
+          });
+        } else if (action === 'toggle') {
+          await updateUser(row, { is_active: button.textContent === 'Enable' });
+        } else if (action === 'reset') {
+          const password = window.prompt('New password, at least 8 characters:');
+          if (password) {
+            await updateUser(row, { password });
+          }
+        }
+      } catch (error) {
+        setStatus(error.message || 'Could not update user.', true);
+      }
+    });
+
+    document.querySelector('#refreshButton').addEventListener('click', () => {
+      loadDashboard().catch((error) => setStatus(error.message || 'Could not refresh.', true));
+    });
+
+    document.querySelector('#logoutButton').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      window.location.href = '/login.html';
+    });
+
+    loadDashboard().catch((error) => setStatus(error.message || 'Could not load dashboard.', true));
+  </script>
+</body>
+
+</html>

@@ -1,6 +1,12 @@
+import os
+import pathlib
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from fastapi.testclient import TestClient
+
+from app.auth import AuthStore, utc_iso, utc_now
 from app import main
 
 
@@ -39,6 +45,177 @@ class PsncRerankerTests(unittest.TestCase):
         request = get_http_session.return_value.post.call_args
         self.assertEqual(request.kwargs["json"]["model"], main.PSNC_RERANK_MODEL)
         self.assertEqual(request.kwargs["json"]["documents"], ["first", "second"])
+
+
+class AuthApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.env_patcher = patch.dict(
+            os.environ,
+            {
+                "IADOPT_BOOTSTRAP_ADMIN_USERNAME": "admin",
+                "IADOPT_BOOTSTRAP_ADMIN_PASSWORD": "admin-password",
+                "IADOPT_BOOTSTRAP_ADMIN_DISPLAY_NAME": "Admin User",
+            },
+        )
+        self.env_patcher.start()
+        self.original_store = main.auth_store
+        self.store = AuthStore(
+            db_path=pathlib.Path(self.temp_dir.name) / "iadopt.sqlite3",
+            enabled=True,
+            session_secret="test-secret",
+            cookie_secure=False,
+            audit_retention_days=30,
+            audit_max_payload_bytes=1000000,
+        )
+        self.store.init()
+        main.auth_store = self.store
+        self.client = TestClient(main.app)
+
+    def tearDown(self):
+        main.auth_store = self.original_store
+        self.env_patcher.stop()
+        self.temp_dir.cleanup()
+
+    def login(self, username="admin", password="admin-password"):
+        response = self.client.post(
+            "/api/auth/login",
+            json={"username": username, "password": password},
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_protected_route_requires_login(self):
+        response = self.client.get("/api/model-options")
+        self.assertEqual(response.status_code, 401)
+
+        health = self.client.get("/api/health")
+        self.assertEqual(health.status_code, 200)
+
+    def test_login_succeeds_and_fails(self):
+        failed = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "wrong"},
+        )
+        self.assertEqual(failed.status_code, 401)
+
+        success = self.client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin-password"},
+        )
+        self.assertEqual(success.status_code, 200)
+        self.assertIn("iadopt_session", success.cookies)
+
+    def test_inactive_user_cannot_login(self):
+        user = self.store.create_user(username="disabled", password="password-123")
+        self.store.update_user(user["id"], {"is_active": False})
+
+        response = self.client.post(
+            "/api/auth/login",
+            json={"username": "disabled", "password": "password-123"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_admin_can_create_disable_and_reset_user(self):
+        self.login()
+        created = self.client.post(
+            "/api/admin/users",
+            json={
+                "username": "alice",
+                "password": "password-123",
+                "display_name": "Alice",
+                "email": "alice@example.org",
+                "roles": ["user"],
+                "is_active": True,
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        user_id = created.json()["user"]["id"]
+
+        disabled = self.client.patch(
+            f"/api/admin/users/{user_id}",
+            json={"is_active": False, "password": "new-password-123"},
+        )
+        self.assertEqual(disabled.status_code, 200)
+        self.assertFalse(disabled.json()["user"]["is_active"])
+
+        login = self.client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "new-password-123"},
+        )
+        self.assertEqual(login.status_code, 401)
+
+    def test_normal_user_cannot_access_admin_endpoints(self):
+        self.store.create_user(username="bob", password="password-123")
+        self.login("bob", "password-123")
+
+        response = self.client.get("/api/admin/users")
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_last_active_admin_cannot_be_disabled(self):
+        self.login()
+        admin = next(user for user in self.store.list_users() if user["username"] == "admin")
+
+        response = self.client.patch(
+            f"/api/admin/users/{admin['id']}",
+            json={"is_active": False},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("last active admin", response.json()["detail"])
+
+    def test_decompose_and_nanopub_failures_are_audited(self):
+        self.login()
+
+        with patch.object(main, "run_pipeline") as run_pipeline:
+            run_pipeline.return_value = {
+                "raw_llm_output": "{}",
+                "parsed_json": {"definition": "air temperature"},
+                "schema_valid": True,
+                "validation_errors": [],
+                "enriched_json": {},
+                "ttl": "@prefix ex: <http://example.org/> .",
+            }
+            response = self.client.post(
+                "/api/decompose",
+                json={"definition": "air temperature"},
+            )
+        self.assertEqual(response.status_code, 200)
+
+        publish = self.client.post(
+            "/api/nanopub/publish",
+            json={"ttl": "not turtle"},
+        )
+        self.assertEqual(publish.status_code, 400)
+
+        retract = self.client.post(
+            "/api/nanopub/retract",
+            json={"nanopub_uri": "not-a-nanopub"},
+        )
+        self.assertEqual(retract.status_code, 400)
+
+        actions = [event["action"] for event in self.store.get_audit_events(limit=20)]
+        self.assertIn("decompose", actions)
+        self.assertIn("nanopub.publish", actions)
+        self.assertIn("nanopub.retract", actions)
+
+    def test_retention_cleanup_removes_old_audit_rows(self):
+        self.store.audit_event(action="recent")
+        with self.store._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_events (created_at, action)
+                VALUES (?, ?)
+                """,
+                (utc_iso(utc_now().replace(year=2000)), "old"),
+            )
+
+        self.store.cleanup_old_audit(force=True)
+        actions = [event["action"] for event in self.store.get_audit_events(limit=20)]
+
+        self.assertIn("recent", actions)
+        self.assertNotIn("old", actions)
 
 
 if __name__ == "__main__":

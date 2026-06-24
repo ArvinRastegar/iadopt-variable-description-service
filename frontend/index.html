@@ -9,6 +9,11 @@
 
 <body data-bs-theme="dark">
   <header class="page-header">
+    <div class="account-bar">
+      <span id="currentUser" class="text-secondary"></span>
+      <a id="adminLink" class="btn btn-outline-light btn-sm d-none" href="./admin.html">Admin</a>
+      <button id="logoutButton" class="btn btn-outline-light btn-sm" type="button">Logout</button>
+    </div>
     <h1>I-ADOPT Variable Description Service</h1>
     <p class="subtitle">
       Enter a variable definition, decompose it with the backend pipeline, inspect the output, and visualize the
