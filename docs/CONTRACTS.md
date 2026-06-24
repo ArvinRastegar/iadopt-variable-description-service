@@ -7,6 +7,25 @@
 > Regression fixtures live under [`backend/tests/contract/`](../backend/tests/contract/)
 > and must stay green at every later gate.
 
+> **Phase 2 changes (no runtime behavior change — Gate 2 verified):** the
+> 2,913-line `main.py` monolith is decomposed into the layered structure below.
+> `main.py` is now an ~80-line app factory (`create_app()`). Layers, all behavior-
+> preserving (move, not rewrite), each verified against the contract suite:
+> - `core/`: `config.py` (typed `Settings`), `text.py`, `state.py`, `dependencies.py`
+>   (auth_store + deps + middleware), `logging.py`.
+> - `clients/`: `http.py`, `openai_client.py`, `psnc_client.py`.
+> - `services/`: `orcid.py`, `prompts.py`, `validation.py`, `rdf_ttl.py`, `llm.py`,
+>   `reranker.py`, `enrichment.py`, `nanopub_service.py`.
+> - `pipeline.py`: orchestration + startup warmup.
+> - `routers/`: `auth.py`, `system.py`, `admin.py`, `decompose.py`, `nanopub.py`
+>   (one `APIRouter` each, mounted by the factory in original order).
+> Dependency direction is acyclic: `routers → services → clients → core/schemas`.
+> `mypy` is configured strict on `core`/`clients`/`services`/`routers`/`pipeline`/
+> `schemas` (`backend/mypy.ini`) and passes on all 34 app modules. New dep:
+> `pydantic-settings==2.14.2` (pinned). **Gate 2:** 45 backend tests pass including
+> 25 live contract tests (real LLM decompose + NDJSON stream); RDF/TTL goldens
+> byte-identical; OpenAPI unchanged (18 paths / 25 schemas).
+
 > **Phase 1 changes (no runtime behavior change to existing clients):**
 > - All request/response models moved from inline `main.py` definitions into the
 >   [`app/schemas/`](../backend/app/schemas/) package (single source of truth);
