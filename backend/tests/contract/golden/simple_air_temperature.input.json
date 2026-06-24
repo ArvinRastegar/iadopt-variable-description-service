@@ -1,0 +1,16 @@
+{
+  "label": "maximum air temperature",
+  "definition": "Maximum daily air temperature at 2 meters",
+  "comment": "max air temp",
+  "hasProperty": "temperature",
+  "hasStatisticalModifier": "maximum",
+  "hasObjectOfInterest": "air",
+  "hasConstraint": [
+    {
+      "label": "at 2 meters",
+      "on": "air"
+    }
+  ],
+  "hasMatrix": "",
+  "hasContextObject": ""
+}

@@ -1,0 +1,18 @@
+{
+    "default_model_provider": "psnc",
+    "default_model_name": "Qwen3.5-397B-A17B",
+    "model_names": [
+        "Qwen3.5-397B-A17B",
+        "Qwen3-VL-235B-A22B-Instruct-FP8"
+    ],
+    "providers": {
+        "psnc": {
+            "label": "PSNC",
+            "default_model_name": "Qwen3.5-397B-A17B",
+            "model_names": [
+                "Qwen3.5-397B-A17B",
+                "Qwen3-VL-235B-A22B-Instruct-FP8"
+            ]
+        }
+    }
+}

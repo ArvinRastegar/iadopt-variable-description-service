@@ -1,0 +1,1 @@
+{"status":"ready","checks":{"schema_exists":true,"prompt_dir_exists":true,"five_shot_dir_exists":true,"enabled_provider_keys_set":true,"wikidata_reranker_ready":true}}

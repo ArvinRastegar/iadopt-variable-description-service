@@ -1,0 +1,1 @@
+{"user":{"id":1,"username":"admin","display_name":"admin","email":"REDACTED@example.org","roles":["admin","user"],"is_active":true,"auth_provider":"local","external_subject":"admin"},"auth_enabled":true}

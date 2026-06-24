@@ -1,0 +1,20 @@
+{
+  "label": "Moisture in upper soil portion",
+  "definition": "Moisture in upper soil portion measured in kg m-2",
+  "comment": "Moisture in upper soil portion measured in kg m-2",
+  "hasProperty": "surface density",
+  "hasObjectOfInterest": {
+    "AsymmetricSystem": "system",
+    "hasSource": "water",
+    "hasTarget": "soil"
+  },
+  "hasConstraint": [
+    {
+      "label": "layer: upper soil",
+      "on": "soil"
+    }
+  ],
+  "hasStatisticalModifier": "",
+  "hasMatrix": "",
+  "hasContextObject": ""
+}
