@@ -5,8 +5,18 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      IADOPT_AUTH_ENABLED: ${IADOPT_AUTH_ENABLED:-true}
+      IADOPT_SESSION_SECRET: ${IADOPT_SESSION_SECRET}
+      IADOPT_BOOTSTRAP_ADMIN_USERNAME: ${IADOPT_BOOTSTRAP_ADMIN_USERNAME}
+      IADOPT_BOOTSTRAP_ADMIN_PASSWORD: ${IADOPT_BOOTSTRAP_ADMIN_PASSWORD}
+      IADOPT_COOKIE_SECURE: ${IADOPT_COOKIE_SECURE:-false}
+      IADOPT_AUDIT_RETENTION_DAYS: ${IADOPT_AUDIT_RETENTION_DAYS:-30}
+      IADOPT_AUDIT_MAX_PAYLOAD_BYTES: ${IADOPT_AUDIT_MAX_PAYLOAD_BYTES:-1000000}
     expose:
       - "8000"
+    volumes:
+      - backend_state:/app/state
     healthcheck:
       test:
         - CMD
@@ -18,7 +28,6 @@ services:
       retries: 6
       start_period: 10s
     restart: unless-stopped
-
   frontend:
     build:
       context: ./frontend
@@ -29,3 +38,6 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  backend_state:
