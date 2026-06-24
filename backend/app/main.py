@@ -37,6 +37,30 @@ from .core import config
 from .core.config import settings
 from .core.state import app_state
 from .core.text import lookup_key, normalize_text, ttl_quote
+from .services.orcid import (
+    extract_orcid_display_name,
+    lookup_orcid_display_name,
+    normalize_orcid,
+    orcid_suffix,
+    resolve_creator_metadata,
+)
+from .services.prompts import (
+    build_prompt,
+    format_example_block,
+    list_prompt_versions,
+    load_examples,
+    load_prompt_instructions,
+    strip_all_uri_fields,
+)
+from .services.validation import (
+    collect_constraint_target_keys,
+    format_path,
+    get_constraint_semantic_validation_errors,
+    get_schema_validation_errors,
+    load_schema,
+    patch_schema_for_pipeline,
+    safe_preview,
+)
 from .schemas import (
     AdminCreateUserRequest,
     AdminStatsResponse,
@@ -65,6 +89,18 @@ _build_psnc_chat_payload = build_psnc_chat_payload
 _psnc_chat_headers = psnc_chat_headers
 _psnc_chat_completions_url = psnc_chat_completions_url
 _psnc_rerank_url = psnc_rerank_url
+
+# Aliases for ORCID + validation helpers moved to app.services.{orcid,validation}.
+_normalize_orcid = normalize_orcid
+_orcid_suffix = orcid_suffix
+_extract_orcid_display_name = extract_orcid_display_name
+_lookup_orcid_display_name = lookup_orcid_display_name
+_resolve_creator_metadata = resolve_creator_metadata
+_format_path = format_path
+_safe_preview = safe_preview
+_patch_schema_for_pipeline = patch_schema_for_pipeline
+_collect_constraint_target_keys = collect_constraint_target_keys
+_get_constraint_semantic_validation_errors = get_constraint_semantic_validation_errors
 
 
 # ======================================================================================
@@ -275,7 +311,6 @@ PSNC_MODEL_NAMES = settings.psnc_model_names
 _nanopub_profile: Optional[Profile] = None
 _nanopub_agent_uri_cache: Optional[str] = None
 _nanopub_agent_label_cache: Optional[str] = None
-_orcid_name_cache: Dict[str, Optional[str]] = {}
 
 # HTTP clients moved to app.clients (http/openai_client/psnc_client). Warmup caches
 # moved to app.core.state.app_state. Both imported at the top of this module.
@@ -309,136 +344,6 @@ def _normalize_nanopub_key(value: Optional[str]) -> Optional[str]:
     lines = [line for line in lines if "-----BEGIN " not in line and "-----END " not in line]
 
     return "".join(lines)
-
-
-def _normalize_orcid(orcid_id: Optional[str]) -> Optional[str]:
-    if not orcid_id:
-        return None
-    if orcid_id.startswith("http://") or orcid_id.startswith("https://"):
-        return orcid_id
-    return f"https://orcid.org/{orcid_id}"
-
-
-def _orcid_suffix(orcid_id: Optional[str]) -> Optional[str]:
-    """Keep the prefix form stable in TTL by extracting the bare ORCID identifier from a full URI."""
-    normalized = _normalize_orcid(orcid_id)
-    if not normalized:
-        return None
-    return normalized.rstrip("/").rsplit("/", 1)[-1]
-
-
-def _extract_orcid_display_name(payload: Any) -> Optional[str]:
-    """Pull a human-readable name from either ORCID's public JSON-LD or record-style JSON payloads."""
-    if not isinstance(payload, dict):
-        return None
-
-    direct_name = _normalize_text(payload.get("name") if isinstance(payload.get("name"), str) else "")
-    if direct_name:
-        return direct_name
-
-    name_node = payload.get("name")
-    if isinstance(name_node, dict):
-        credit_name = name_node.get("credit-name")
-        if isinstance(credit_name, dict):
-            value = _normalize_text(credit_name.get("value") or "")
-            if value:
-                return value
-        elif isinstance(credit_name, str):
-            value = _normalize_text(credit_name)
-            if value:
-                return value
-
-        given_names = name_node.get("given-names")
-        family_name = name_node.get("family-name")
-        given_value = _normalize_text(given_names.get("value") if isinstance(given_names, dict) else given_names or "")
-        family_value = _normalize_text(family_name.get("value") if isinstance(family_name, dict) else family_name or "")
-        combined = _normalize_text(f"{given_value} {family_value}")
-        if combined:
-            return combined
-
-    given_name = payload.get("givenName")
-    family_name = payload.get("familyName")
-    given_value = _normalize_text(given_name.get("name") if isinstance(given_name, dict) else given_name or "")
-    family_value = _normalize_text(family_name.get("name") if isinstance(family_name, dict) else family_name or "")
-    combined = _normalize_text(f"{given_value} {family_value}")
-    if combined:
-        return combined
-
-    return None
-
-
-def _lookup_orcid_display_name(orcid_id: Optional[str]) -> Optional[str]:
-    """Resolve the public display name for an ORCID by using ORCID's content-negotiated public record."""
-    normalized_orcid = _normalize_orcid(orcid_id)
-    if not normalized_orcid:
-        return None
-
-    if normalized_orcid in _orcid_name_cache:
-        return _orcid_name_cache[normalized_orcid]
-
-    try:
-        response = get_http_session().get(
-            normalized_orcid,
-            headers={
-                # ORCID documents content negotiation on the registry URL itself, so prefer machine-readable forms.
-                "Accept": "application/ld+json, application/json;q=0.9, text/html;q=0.8",
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-    except Exception:
-        _orcid_name_cache[normalized_orcid] = None
-        return None
-
-    resolved_name: Optional[str] = None
-    body = response.text
-    content_type = response.headers.get("Content-Type", "").lower()
-
-    if "json" in content_type or body.lstrip().startswith("{"):
-        try:
-            resolved_name = _extract_orcid_display_name(response.json())
-        except Exception:
-            resolved_name = None
-
-    if not resolved_name and "<script" in body:
-        for match in re.finditer(
-            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-            body,
-            re.IGNORECASE | re.DOTALL,
-        ):
-            try:
-                resolved_name = _extract_orcid_display_name(json.loads(match.group(1).strip()))
-            except Exception:
-                resolved_name = None
-            if resolved_name:
-                break
-
-    if not resolved_name:
-        meta_match = re.search(
-            r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
-            body,
-            re.IGNORECASE,
-        )
-        if meta_match:
-            resolved_name = _normalize_text(meta_match.group(1))
-
-    _orcid_name_cache[normalized_orcid] = resolved_name
-    return resolved_name
-
-
-def _resolve_creator_metadata(creator_orcid_id: Optional[str] = None) -> Tuple[str, str]:
-    resolved_orcid = _normalize_orcid(creator_orcid_id) or _normalize_orcid(NANOPUB_ORCID_ID)
-    resolved_profile_name = _lookup_orcid_display_name(resolved_orcid)
-
-    if not resolved_orcid:
-        raise RuntimeError("No creator ORCID is configured. Provide it in the request or set NANOPUB_ORCID_ID.")
-
-    if not resolved_profile_name:
-        raise RuntimeError(
-            "No public creator name could be resolved from the selected ORCID. Use an ORCID with a public name."
-        )
-
-    return resolved_orcid, resolved_profile_name
 
 
 def get_nanopub_profile() -> Profile:
@@ -518,77 +423,7 @@ def get_nanopub_agent_label() -> Optional[str]:
 # Prompt building
 # ======================================================================================
 
-_EXAMPLE_HDR = "\n\n### Examples (valid against the same schema)\n"
-_USER_HDR = "\n\n### Variable's definition to decompose\n"
-_EXPECTED_HDR = "\n\n### Expected output\n*(only the JSON object)*"
-
-
-def list_prompt_versions(prompt_dir: pathlib.Path) -> List[str]:
-    if not prompt_dir.exists():
-        return []
-    return sorted(p.stem for p in prompt_dir.glob("*.txt"))
-
-
-def load_prompt_instructions(prompt_dir: pathlib.Path, prompt_version: str) -> str:
-    versions = list_prompt_versions(prompt_dir)
-    if not versions:
-        raise RuntimeError(f"No prompt templates found in {prompt_dir}")
-
-    if not prompt_version or prompt_version not in versions:
-        prompt_version = versions[0]
-
-    return (prompt_dir / f"{prompt_version}.txt").read_text(encoding="utf-8").strip()
-
-
-def strip_all_uri_fields(obj: Any) -> Any:
-    if isinstance(obj, dict):
-        out = {}
-        for k, v in obj.items():
-            if "URI" in k:
-                continue
-            if k.startswith("__"):
-                continue
-            out[k] = strip_all_uri_fields(v)
-        return out
-    if isinstance(obj, list):
-        return [strip_all_uri_fields(x) for x in obj]
-    return obj
-
-
-def format_example_block(ex: Dict[str, Any], idx: int) -> str:
-    definition = ex.get("definition") or ex.get("comment") or ""
-    ex_no_uris = strip_all_uri_fields(ex)
-    return (
-        f"\n\n#### Example {idx}\n"
-        f"Variable's definition to decompose: {definition}\n\n"
-        f"Expected output:\n{json.dumps(ex_no_uris, indent=2, ensure_ascii=False)}"
-    )
-
-
-def load_examples(folder: pathlib.Path, n: int) -> List[Dict[str, Any]]:
-    if n <= 0 or not folder.exists():
-        return []
-    paths = sorted(folder.glob("*.json"))
-    return [json.loads(p.read_text(encoding="utf-8")) for p in paths[:n]]
-
-
-def build_prompt(definition: str, prompt_version: str, examples: Optional[List[Dict[str, Any]]] = None) -> str:
-    examples = examples or []
-    instructions = load_prompt_instructions(PROMPT_DIR, prompt_version)
-    schema_text = SCHEMA_PATH.read_text(encoding="utf-8").strip() if SCHEMA_PATH.exists() else "{SCHEMA_PLACEHOLDER}"
-
-    ex_block = ""
-    if examples:
-        blocks = [format_example_block(ex, i + 1) for i, ex in enumerate(examples)]
-        ex_block = _EXAMPLE_HDR + "".join(blocks)
-
-    return (
-        f"{instructions}\n\n"
-        f"### JSON-Schema\n{schema_text}\n"
-        f"{ex_block}"
-        f"{_USER_HDR}{definition}"
-        f"{_EXPECTED_HDR}"
-    )
+# Prompt building moved to app.services.prompts (imported above).
 
 
 # ======================================================================================
@@ -1012,96 +847,7 @@ def _finalize_pipeline_output(
 # ======================================================================================
 
 
-def _format_path(err) -> str:
-    if not err.path:
-        return "$"
-    out = "$"
-    for p in err.path:
-        if isinstance(p, int):
-            out += f"[{p}]"
-        else:
-            out += f".{p}"
-    return out
-
-
-def _safe_preview(value: Any, limit: int = 200) -> str:
-    try:
-        s = json.dumps(value, ensure_ascii=False)
-    except Exception:
-        s = repr(value)
-    if len(s) > limit:
-        s = s[:limit] + "…"
-    return s
-
-
-def _patch_schema_for_pipeline(schema: Dict[str, Any]) -> Dict[str, Any]:
-    patched = copy.deepcopy(schema)
-
-    try:
-        hc = patched["properties"]["hasConstraint"]
-        if isinstance(hc, dict) and hc.get("minItems", None) == 1:
-            hc["minItems"] = 0
-    except Exception:
-        pass
-
-    return patched
-
-
-def load_schema(schema_path: pathlib.Path) -> Dict[str, Any]:
-    if not schema_path.exists():
-        raise RuntimeError(f"Schema file not found: {schema_path}")
-    return json.loads(schema_path.read_text(encoding="utf-8"))
-
-
-def get_schema_validation_errors(
-    instance: Dict[str, Any],
-    *,
-    schema_path: pathlib.Path = SCHEMA_PATH,
-    schema: Optional[Dict[str, Any]] = None,
-    label_for_logs: Optional[str] = None,
-) -> List[str]:
-    if schema is not None:
-        validator = Draft202012Validator(_patch_schema_for_pipeline(schema))
-    elif app_state.validator_cache is not None:
-        validator = app_state.validator_cache
-    else:
-        schema = _patch_schema_for_pipeline(load_schema(schema_path))
-        validator = Draft202012Validator(schema)
-
-    errors = sorted(validator.iter_errors(instance), key=lambda e: list(e.path))
-
-    if not errors:
-        return []
-
-    header = "Schema validation failed"
-    if label_for_logs:
-        header += f" for variable: {label_for_logs}"
-
-    lines: List[str] = [header, "-" * len(header)]
-
-    max_errs = 30
-    for i, err in enumerate(errors[:max_errs], start=1):
-        path = _format_path(err)
-        offending_value = _safe_preview(err.instance)
-
-        lines.append(f"{i:02d}) Path: {path}")
-        lines.append(f"    Error: {err.message}")
-        lines.append(f"    Offending value: {offending_value}")
-
-        if (
-            path.startswith("$.hasObjectOfInterest")
-            or path.startswith("$.hasMatrix")
-            or path.startswith("$.hasContextObject")
-        ):
-            lines.append(
-                "    Hint: This error is inside an entityOrSystem field "
-                "(string vs AsymmetricSystem vs SymmetricSystem)."
-            )
-
-    if len(errors) > max_errs:
-        lines.append(f"... plus {len(errors) - max_errs} more errors.")
-
-    return lines
+# Schema validation moved to app.services.validation (imported above).
 
 
 # ======================================================================================
@@ -1269,76 +1015,6 @@ def _normalize_constraint_phrase_for_alt_label(label: str) -> str:
             clean_label = f"at {clean_label}"
 
     return clean_label
-
-
-def _collect_constraint_target_keys(pred: Dict[str, Any]) -> List[str]:
-    """Return the normalized labels of the actual property/entity targets that constraints are allowed to point at."""
-    keys: List[str] = []
-
-    def add_value(value: Any) -> None:
-        if isinstance(value, str):
-            clean_value = _lookup_key(value)
-            if clean_value:
-                keys.append(clean_value)
-            return
-
-        if not isinstance(value, dict):
-            return
-
-        for field_name in (
-            "AsymmetricSystem",
-            "SymmetricSystem",
-            "hasSource",
-            "hasTarget",
-            "hasNumerator",
-            "hasDenominator",
-        ):
-            add_value(value.get(field_name))
-
-        for part_label in value.get("hasPart") or []:
-            add_value(part_label)
-
-    for field_name in (
-        "hasProperty",
-        "hasObjectOfInterest",
-        "hasStatisticalModifier",
-        "hasMatrix",
-        "hasContextObject",
-    ):
-        add_value(pred.get(field_name))
-
-    seen = set()
-    ordered: List[str] = []
-    for key in keys:
-        if key and key not in seen:
-            seen.add(key)
-            ordered.append(key)
-
-    return ordered
-
-
-def _get_constraint_semantic_validation_errors(pred: Dict[str, Any]) -> List[str]:
-    """Flag constraints whose `on` target does not match any real property/entity label in the prediction."""
-    allowed_targets = _collect_constraint_target_keys(pred)
-    if not allowed_targets:
-        return []
-
-    errors: List[str] = []
-    for idx, constraint in enumerate(pred.get("hasConstraint") or [], start=1):
-        if not isinstance(constraint, dict):
-            continue
-
-        constraint_on = _lookup_key(constraint.get("on") or "")
-        if not constraint_on or constraint_on in allowed_targets:
-            continue
-
-        errors.append(
-            f"Constraint target error at $.hasConstraint[{idx - 1}].on: "
-            f"'{constraint.get('on')}' does not match any extracted property/entity label. "
-            f"Allowed targets: {', '.join(allowed_targets)}"
-        )
-
-    return errors
 
 
 def _make_variable_identity() -> Tuple[str, str, str]:

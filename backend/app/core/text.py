@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Optional
 
 
-def ttl_quote(text: str) -> str:
+def ttl_quote(text: Optional[str]) -> str:
     """Escape arbitrary text once so labels/comments/definitions stay valid Turtle.
 
     Args:
@@ -27,7 +28,7 @@ def ttl_quote(text: str) -> str:
     return json.dumps((text or "").strip(), ensure_ascii=False)
 
 
-def normalize_text(text: str) -> str:
+def normalize_text(text: Optional[str]) -> str:
     """Collapse repeated whitespace so generated labels read naturally.
 
     Args:
@@ -39,7 +40,7 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def lookup_key(text: str) -> str:
+def lookup_key(text: Optional[str]) -> str:
     """Normalize a label so constraints can resolve targets by human-readable name.
 
     Args:

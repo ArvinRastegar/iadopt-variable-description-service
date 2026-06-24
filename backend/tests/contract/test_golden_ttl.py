@@ -49,7 +49,11 @@ def freeze_nondeterminism(monkeypatch):
         type("dt", (), {"now": staticmethod(_FrozenDatetime.now), "timezone": _dt.timezone}),
     )
     monkeypatch.setattr(m.random, "randint", lambda a, b: FROZEN_RANDINT)
-    monkeypatch.setattr(m, "_lookup_orcid_display_name", lambda orcid: "Test Creator")
+    # ORCID name resolution now lives in app.services.orcid; patch it there so the
+    # rdf_ttl path's resolve_creator_metadata() does not make a real HTTP lookup.
+    import app.services.orcid as orcid_service
+
+    monkeypatch.setattr(orcid_service, "lookup_orcid_display_name", lambda orcid: "Test Creator")
 
 
 @pytest.mark.parametrize("case", GOLDEN_CASES)
