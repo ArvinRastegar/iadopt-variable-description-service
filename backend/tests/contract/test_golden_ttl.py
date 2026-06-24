@@ -36,23 +36,21 @@ GOLDEN_CASES = ["simple_air_temperature", "asymmetric_soil_moisture"]
 
 @pytest.fixture(autouse=True)
 def freeze_nondeterminism(monkeypatch):
-    """Freeze clock + RNG + ORCID lookup so TTL generation is byte-reproducible."""
+    """Freeze clock + RNG + ORCID lookup so TTL generation is byte-reproducible.
 
-    class _FrozenDatetime:
-        @staticmethod
-        def now(tz=None):
-            return FROZEN_NOW
+    The variable-identity clock/RNG live in app.services.rdf_ttl, and ORCID name
+    resolution lives in app.services.orcid; patch each where it is used so the
+    generated TTL is deterministic and makes no real HTTP lookup.
+    """
+    import app.services.orcid as orcid_service
+    import app.services.rdf_ttl as rdf_ttl
 
     monkeypatch.setattr(
-        m,
+        rdf_ttl,
         "datetime",
-        type("dt", (), {"now": staticmethod(_FrozenDatetime.now), "timezone": _dt.timezone}),
+        type("dt", (), {"now": staticmethod(lambda tz=None: FROZEN_NOW), "timezone": _dt.timezone}),
     )
-    monkeypatch.setattr(m.random, "randint", lambda a, b: FROZEN_RANDINT)
-    # ORCID name resolution now lives in app.services.orcid; patch it there so the
-    # rdf_ttl path's resolve_creator_metadata() does not make a real HTTP lookup.
-    import app.services.orcid as orcid_service
-
+    monkeypatch.setattr(rdf_ttl.random, "randint", lambda a, b: FROZEN_RANDINT)
     monkeypatch.setattr(orcid_service, "lookup_orcid_display_name", lambda orcid: "Test Creator")
 
 
