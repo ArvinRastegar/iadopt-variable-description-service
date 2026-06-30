@@ -187,6 +187,7 @@ def collect_constraint_target_keys(pred: Dict[str, Any]) -> List[str]:
     keys: List[str] = []
 
     def add_value(value: Any) -> None:
+        """Recursively collect normalized labels from a string or system dict."""
         if isinstance(value, str):
             clean_value = lookup_key(value)
             if clean_value:

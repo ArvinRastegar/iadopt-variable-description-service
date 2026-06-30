@@ -26,6 +26,7 @@ class AppState:
     """
 
     def __init__(self) -> None:
+        """Initialize all caches to ``None`` (populated by ``warmup_assets`` at startup)."""
         self.schema_cache: Optional[Dict[str, Any]] = None
         self.validator_cache: Optional[Any] = None
         self.prompt_version_cache: Optional[str] = None
