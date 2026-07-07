@@ -21,7 +21,11 @@ router = APIRouter()
 
 @router.post(f"{API_PREFIX}/auth/login", response_model=AuthUserResponse, tags=["Auth"])
 def login(req: LoginRequest, request: Request) -> JSONResponse:
-    """Authenticate a user and set the session cookie; audit success/failure."""
+    """Authenticate a user and set the session cookie; audit success/failure.
+
+    Raises:
+        HTTPException: 401 if the credentials are invalid.
+    """
     start = time.perf_counter()
     user = auth_store.authenticate(req.username, req.password) if auth_store.enabled else auth_store.user_from_request(request)
     if not user:
@@ -52,7 +56,11 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
 
 @router.get(f"{API_PREFIX}/auth/verify", status_code=204, tags=["Auth"])
 def verify_auth(request: Request) -> Response:
-    """Return 204 if the request carries a valid session, else 401 (nginx auth_request)."""
+    """Return 204 if the request carries a valid session, else 401 (nginx auth_request).
+
+    Raises:
+        HTTPException: 401 if no valid session is present.
+    """
     user = auth_store.user_from_request(request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required.")

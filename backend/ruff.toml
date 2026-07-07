@@ -1,0 +1,35 @@
+# Ruff configuration for the backend.
+# Phase 3 enforces complete, correct in-code documentation:
+#   - D   (pydocstyle): docstrings exist and follow the Google convention.
+#   - DOC (pydoclint):  docstrings match their signatures (every param/return
+#                       documented, no extras, correct order).
+# Run from backend/:  ruff check --config ruff.toml app
+
+target-version = "py312"
+extend-exclude = ["__pycache__"]
+# DOC (pydoclint) rules are still in preview; enable it so signature/docstring
+# mismatch checks are active. Preview only affects our selected rule groups (D, DOC).
+preview = true
+
+[lint]
+select = ["D", "DOC"]
+ignore = [
+  # Allow docstrings to start on the first line without a blank line after the summary
+  # when there are no args/returns — pydocstyle is lenient here for one-liners.
+  "D200",   # one-line docstrings fit on one line (we keep multi-line summaries deliberately)
+  "D212",   # multi-line summary starts on the first line (Google style uses D213; both are mutually exclusive)
+  # DOC201 (missing-returns) is relaxed: it would force a decorative `Returns:` block on
+  # trivial functions whose summary line already describes the return — exactly the
+  # "decorative, not correct" padding the refactor brief warns against. The complex
+  # functions already carry real Returns sections. The high-signal *mismatch* rules
+  # (DOC501 missing-exception, DOC502 extraneous-exception, and param-mismatch rules)
+  # remain enforced so a docstring cannot lie about what the function raises/accepts.
+  "DOC201",
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+# Tests don't need full Google docstrings; keep them pragmatic.
+"tests/**" = ["D", "DOC"]

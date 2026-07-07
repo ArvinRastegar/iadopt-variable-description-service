@@ -4,6 +4,11 @@
 # Static type checking for the typed boundaries (app.schemas, app.core).
 mypy==2.1.0
 
+# Docstring enforcement (Phase 3): pydocstyle (D) + pydoclint (DOC) via ruff.
+# Config in backend/ruff.toml; run: ruff check --config ruff.toml app
+ruff==0.15.20
+
 # Contract regression suite (backend/tests/contract).
 pytest==9.1.1
 requests==2.32.5
+
