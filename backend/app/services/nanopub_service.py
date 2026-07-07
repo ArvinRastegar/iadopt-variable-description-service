@@ -35,7 +35,7 @@ _nanopub_agent_label_cache: Optional[str] = None
 
 
 def normalize_env_multiline(value: Optional[str]) -> Optional[str]:
-    """Turn ``\\n`` escapes in a ``.env`` value into real newlines before key parsing.
+    r"""Turn ``\n`` escapes in a ``.env`` value into real newlines before key parsing.
 
     Args:
         value: Raw env value or ``None``.

@@ -85,7 +85,11 @@ def liveness() -> Dict[str, str]:
 
 @router.get(f"{API_PREFIX}/readyz", response_model=ReadyzResponse, tags=["System"])
 def health() -> Dict[str, Any]:
-    """Readiness probe: 200 with checks when ready, else 503."""
+    """Readiness probe: 200 with checks when ready, else 503.
+
+    Raises:
+        HTTPException: 503 (with the checks detail) when any check fails.
+    """
     checks = readiness_checks()
     if not all(checks.values()):
         raise HTTPException(status_code=503, detail={"status": "not_ready", "checks": checks})

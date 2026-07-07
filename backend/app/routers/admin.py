@@ -48,7 +48,11 @@ def admin_create_user(
     request: Request,
     admin: Dict[str, Any] = Depends(require_admin_user),
 ) -> Dict[str, Any]:
-    """Create a new user; audit with the password redacted."""
+    """Create a new user; audit with the password redacted.
+
+    Raises:
+        HTTPException: 400 if the username is taken or the password is invalid.
+    """
     try:
         user = auth_store.create_user(**req.model_dump())
     except ValueError as e:
@@ -71,7 +75,12 @@ def admin_update_user(
     request: Request,
     admin: Dict[str, Any] = Depends(require_admin_user),
 ) -> Dict[str, Any]:
-    """Partially update a user; audit with the password redacted."""
+    """Partially update a user; audit with the password redacted.
+
+    Raises:
+        HTTPException: 400 on unknown fields, short password, missing/duplicate
+            user, or attempting to disable the last active admin.
+    """
     updates = req.model_dump(exclude_unset=True)
     try:
         user = auth_store.update_user(user_id, updates)

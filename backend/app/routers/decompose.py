@@ -74,6 +74,7 @@ def decompose_stream(
     request_payload = req.model_dump()
 
     def audited_events() -> Iterator[str]:
+        """Yield pipeline NDJSON lines, then audit the stream outcome in a finally block."""
         final_payload: Optional[Dict[str, Any]] = None
         error_detail: Optional[str] = None
         status_code = 200
@@ -139,7 +140,12 @@ def decompose(
     request: Request,
     user: Dict[str, Any] = Depends(require_current_user),
 ) -> DecomposeResponse:
-    """Run the full decomposition pipeline and return one final payload; audit the outcome."""
+    """Run the full decomposition pipeline and return one final payload; audit the outcome.
+
+    Raises:
+        HTTPException: 400 on a ValueError (bad model/provider/empty definition),
+            500 on a RuntimeError or unexpected backend error.
+    """
     start = time.perf_counter()
     try:
         result = run_pipeline(

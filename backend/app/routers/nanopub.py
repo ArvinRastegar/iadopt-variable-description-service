@@ -63,7 +63,12 @@ def publish_nanopub(
     request: Request,
     user: Dict[str, Any] = Depends(require_current_user),
 ) -> PublishNanopubResponse:
-    """Publish the exact TTL currently shown in the frontend as a signed nanopublication."""
+    """Publish the exact TTL currently shown in the frontend as a signed nanopublication.
+
+    Raises:
+        HTTPException: 400 on an empty/unparseable TTL payload; 500 on a publish
+            failure (e.g. missing signing configuration or a registry error).
+    """
     start = time.perf_counter()
     ttl = req.ttl.strip()
     if not ttl:
@@ -175,7 +180,12 @@ def retract_nanopub(
     request: Request,
     user: Dict[str, Any] = Depends(require_current_user),
 ) -> RetractNanopubResponse:
-    """Publish a signed nanopub retraction for a previously published nanopublication."""
+    """Publish a signed nanopub retraction for a previously published nanopublication.
+
+    Raises:
+        HTTPException: 400 on a bad/unresolvable URI or a key-ownership failure;
+            500 on a retraction publish failure.
+    """
     start = time.perf_counter()
     try:
         target_nanopub_uri = normalize_target_nanopub_uri(req.nanopub_uri)

@@ -268,11 +268,12 @@ def json_to_ttl_repo_style(
         The complete Turtle document as a string.
 
     Raises:
-        RuntimeError: If no creator ORCID/name can be resolved (via the ORCID service).
+        RuntimeError: If no creator ORCID/name can be resolved (raised transitively
+            via ``services.orcid.resolve_creator_metadata``).
 
     Side effects:
         Resolves creator metadata (may perform an ORCID HTTP lookup).
-    """
+    """  # noqa: DOC502  # RuntimeError is raised transitively via the orcid service
     pref_label = normalize_text(pred.get("label") or "generated variable")
     main_label = format_main_label(pref_label)
     definition = normalize_text(pred.get("definition") or "")
@@ -292,9 +293,11 @@ def json_to_ttl_repo_style(
     }
 
     def local_resource_ref(suffix: str) -> str:
+        """Return the fragment URI ``<variable_uri#suffix>`` for a local resource."""
         return f"<{variable_uri}#{suffix}>"
 
     def register_target(ref: str, role: str, *aliases: Optional[str]) -> None:
+        """Register a resource as a constraint target under each of its aliases."""
         # This lookup table lets constraint `on` values resolve against either field names or human-readable labels.
         for alias in aliases:
             if alias:
@@ -303,6 +306,7 @@ def json_to_ttl_repo_style(
     def add_block(
         ref: str, rdf_types: List[str], label: Optional[str], extra_lines: Optional[List[str]] = None
     ) -> None:
+        """Append a self-contained TTL resource block to ``blocks``."""
         # Every linked resource gets its own readable TTL block so the frontend receives a self-contained graph.
         lines = [f"{ref}", "    a " + " ,\n      ".join(rdf_types) + " ;"]
         if label:
@@ -314,12 +318,14 @@ def json_to_ttl_repo_style(
         blocks.append("\n".join(lines))
 
     def build_simple_component(field: str, label: str, rdf_type: str, uri_override: Optional[str]) -> Tuple[str, str]:
+        """Emit a simple resource block and return its (ref, clean_label)."""
         clean_label = normalize_text(label)
         ref = f"<{uri_override}>" if uri_override else local_resource_ref(field)
         add_block(ref, [rdf_type], clean_label)
         return ref, clean_label
 
     def build_system_component(field: str, value: Dict[str, Any], role_name: str) -> Tuple[str, str]:
+        """Emit an asymmetric/symmetric system block and return its (ref, system_label)."""
         system_key = "AsymmetricSystem" if "AsymmetricSystem" in value else "SymmetricSystem"
         system_uri = wiki_to_entity(value.get(f"{system_key}URI"))
         system_ref = f"<{system_uri}>" if system_uri else local_resource_ref(field)
@@ -375,6 +381,7 @@ def json_to_ttl_repo_style(
         return system_ref, system_label
 
     def build_component(field: str, rdf_type: str, role_name: str) -> Tuple[Optional[str], str]:
+        """Build a simple-entity or system component for a prediction field; return (ref, label)."""
         # This one function keeps the simple-entity and system cases aligned so later label
         # generation and constraint resolution work from the same canonical context.
         value = pred.get(field)

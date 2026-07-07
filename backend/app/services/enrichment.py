@@ -122,6 +122,7 @@ def enrich_with_uris_reranker(pred: Dict[str, Any], threshold: Optional[float] =
     out = json.loads(json.dumps(pred))
 
     def add_uri_field(container: Dict[str, Any], key: str, label_value: Any) -> None:
+        """Link a string label to Wikidata and set ``container[f"{key}URI"]`` on a hit."""
         if isinstance(label_value, str) and label_value.strip():
             uri = get_wikidata_entity_reranker(
                 label_value,
