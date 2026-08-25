@@ -12,6 +12,13 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.site-logo {
+  display: block;
+  width: min(260px, 70vw);
+  height: auto;
+  margin: 0 auto 1rem;
+}
+
 .account-bar {
   display: flex;
   flex-wrap: wrap;
