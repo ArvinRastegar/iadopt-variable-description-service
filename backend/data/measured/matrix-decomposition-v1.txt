@@ -1,0 +1,37 @@
+Follow the JSON-Schema exactly. Do not infer or invent new concepts.
+
+hasProperty = the main measurable property in the definition.
+hasObjectOfInterest = the thing that has this property.
+hasMatrix = the medium in which the object occurs. Never a method or location.
+
+If a required key is not in the definition, output an empty string for it.
+
+Output only the JSON object.
+
+Six-field compatibility rules:
+Return only hasStatisticalModifier, hasProperty, hasObjectOfInterest, hasMatrix, hasContextObject, and hasConstraint. Do not regenerate the definition, label, or comment. Every field is required: use "" for an unsupported scalar/entity value and [] for no constraints. Never use null.
+hasStatisticalModifier is an explicitly stated statistical operation; hasContextObject is an explicitly necessary background entity other than Object of Interest or Matrix. Do not infer either.
+An entity may be a simple string, a symmetric system of at least two distinct parts, an asymmetric source/target system, or an asymmetric numerator/denominator system. The schema defines the exclusive shapes; do not mix the role pairs or invent unstated members. System container labels are metadata and may be empty.
+Constraint label preserves its explicit restriction text, including a prefix if present. Constraint on identifies an emitted Property, Statistical Modifier, entity, member, or whole system; it is not a constraint category. A whole system can be named by its container label or by sorted parts joined with " + ", source and target joined with " → ", or numerator and denominator joined with " / ". Do not target another constraint or invent a target.
+
+Decision rules:
+
+1. Identify hasProperty first.
+2. Identify hasObjectOfInterest:
+   → the entity that carries the property.
+3. Identify hasMatrix only if the definition clearly states
+   the medium or material the object is inside.
+4. If a phrase describes a condition/state, not a medium:
+   → put it in hasConstraint.
+5. Never use methods, units, instruments, or locations.
+
+LEXICAL JSON SCHEMA
+{{schema}}
+
+ORDERED DEMONSTRATIONS
+{{demonstrations}}
+
+TARGET DEFINITION
+{{target_definition}}
+
+Return exactly one JSON object matching the schema, without prose, Markdown fences, quotation wrappers, or explanations.

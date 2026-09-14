@@ -23,9 +23,11 @@ from .clients.openai_client import get_openai_client
 from .core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from .core.state import app_state
 from .services.enrichment import enrich_with_uris_reranker
+from .services.label_comment import generate_label_and_comment
 from .services.llm import (
     build_chat_completion_request_kwargs,
     call_llm_loose,
+    coerce_prediction,
     call_model,
     call_psnc_model,
     extract_stream_text_deltas,
@@ -34,6 +36,12 @@ from .services.llm import (
     resolve_model_provider,
     stream_event,
     stream_psnc_model,
+)
+from .services.measured_prompt import (
+    load_demonstrations,
+    load_lexical_schema_text,
+    load_measured_template,
+    render_measured_prompt,
 )
 from .services.prompts import build_prompt, list_prompt_versions, load_examples
 from .services.rdf_ttl import json_to_ttl_repo_style
@@ -53,7 +61,8 @@ def warmup_assets() -> None:
     caches in ``app.core.state.app_state``.
 
     Raises:
-        RuntimeError: If no prompt files are found.
+        RuntimeError: If no prompt files are found, or a measured artifact is
+            missing while the measured configuration is enabled.
 
     Side effects:
         May construct the OpenRouter client; reads schema/prompt/example files.
@@ -73,6 +82,17 @@ def warmup_assets() -> None:
         raise RuntimeError(f"No prompt files found in: {settings.prompt_dir}")
     app_state.prompt_version_cache = versions[0]
     app_state.examples_5_cache = load_examples(settings.five_shot_dir, 5)
+
+    # Cache the measured artifacts. A failure here is fatal by design: the app must
+    # not start serving a configuration it cannot render byte-exactly.
+    if settings.use_measured_configuration:
+        app_state.measured_assets_cache = (
+            load_measured_template(),
+            load_lexical_schema_text(),
+            load_demonstrations(),
+        )
+    else:
+        app_state.measured_assets_cache = None
 
     # Prime HTTP session
     get_http_session()
@@ -131,6 +151,88 @@ def _finalize_pipeline_output(
     }
 
 
+def use_measured_path(provider: str) -> bool:
+    """Report whether the measured configuration applies to this provider.
+
+    The measured study is PSNC-only, so rendering the measured prompt into an
+    OpenRouter request would produce an unmeasured configuration wearing a
+    measured prompt. Both conditions are required.
+
+    Args:
+        provider: The already-resolved provider key.
+
+    Returns:
+        True when the measured configuration is enabled and the provider is PSNC.
+    """
+    return settings.use_measured_configuration and provider == PSNC_MODEL_PROVIDER
+
+
+def merge_measured_prediction(
+    six_field: Dict[str, Any],
+    *,
+    label: str,
+    comment: str,
+    definition: str,
+) -> Dict[str, Any]:
+    """Merge a six-field measured decomposition into the eight-field prediction.
+
+    The definition written into the result is always the caller's, never the
+    model's — the measured prompt forbids regenerating it, and any value the model
+    emits anyway is discarded.
+
+    Args:
+        six_field: The parsed model output.
+        label: The label from ``label-comment``.
+        comment: The comment from ``label-comment``.
+        definition: The stripped caller definition.
+
+    Returns:
+        The eight-field prediction the rest of the pipeline expects.
+    """
+    merged = coerce_prediction(six_field)
+    merged["definition"] = definition
+    merged["label"] = label
+    merged["comment"] = comment
+    return merged
+
+
+def _labelled_prediction(
+    pred: Dict[str, Any],
+    *,
+    provider: str,
+    model: str,
+    definition: str,
+) -> Dict[str, Any]:
+    """Add label and comment to a measured prediction, leaving others untouched.
+
+    Skipped entirely when the decomposition produced nothing: a failed
+    decomposition must not spend a second call labelling a result nobody will see.
+
+    Args:
+        pred: The parsed prediction, possibly empty.
+        provider: The resolved provider.
+        model: The resolved model name.
+        definition: The stripped caller definition.
+
+    Returns:
+        The eight-field prediction on the measured path, otherwise ``pred``
+        unchanged.
+
+    Side effects:
+        One additional LLM call on the measured path.
+    """
+    if not pred or not use_measured_path(provider):
+        return pred
+
+    label, comment = generate_label_and_comment(
+        definition,
+        model_provider=provider,
+        model=model,
+        temperature=settings.temperature,
+    )
+    return merge_measured_prediction(pred, label=label, comment=comment, definition=definition)
+
+
 def _prepare_pipeline_inputs(
     definition: str,
     model_name: Optional[str] = None,
@@ -154,6 +256,21 @@ def _prepare_pipeline_inputs(
     if not definition:
         raise ValueError("Definition must not be empty.")
 
+    # The provider is resolved first: which prompt to build depends on it.
+    selected_model_provider = resolve_model_provider(model_provider)
+    selected_model_name = resolve_model_name(model_name, model_provider=selected_model_provider)
+
+    if use_measured_path(selected_model_provider):
+        cached = app_state.measured_assets_cache
+        template, schema_text, demonstrations = cached if cached is not None else (None, None, None)
+        prompt = render_measured_prompt(
+            definition,
+            template=template,
+            schema_text=schema_text,
+            demonstrations=demonstrations,
+        )
+        return prompt, selected_model_provider, selected_model_name
+
     prompt_version = app_state.prompt_version_cache
     if not prompt_version:
         prompt_versions = list_prompt_versions(settings.prompt_dir)
@@ -165,8 +282,6 @@ def _prepare_pipeline_inputs(
         app_state.examples_5_cache if app_state.examples_5_cache is not None else load_examples(settings.five_shot_dir, 5)
     )
     prompt = build_prompt(definition, prompt_version=prompt_version, examples=examples_5)
-    selected_model_provider = resolve_model_provider(model_provider)
-    selected_model_name = resolve_model_name(model_name, model_provider=selected_model_provider)
 
     return prompt, selected_model_provider, selected_model_name
 
@@ -227,6 +342,7 @@ def stream_pipeline_events(
                         prompt,
                         settings.temperature,
                         disable_thinking=disable_thinking,
+                        measured=use_measured_path(selected_model_provider),
                     )
                 else:
                     client = get_openai_client()
@@ -282,6 +398,12 @@ def stream_pipeline_events(
                     print(f"LLM parse attempt {attempt} failed: {e}")
                     continue
 
+                pred = _labelled_prediction(
+                    pred,
+                    provider=selected_model_provider,
+                    model=selected_model_name,
+                    definition=definition,
+                )
                 final_payload = _finalize_pipeline_output(
                     "".join(all_display_parts),
                     pred,
@@ -322,6 +444,12 @@ def stream_pipeline_events(
                     yield stream_event("raw_delta", delta=fallback_display)
                     try:
                         pred = parse_llm_json(fallback_raw, definition)
+                        pred = _labelled_prediction(
+                            pred,
+                            provider=selected_model_provider,
+                            model=selected_model_name,
+                            definition=definition,
+                        )
                         final_payload = _finalize_pipeline_output(
                             "".join(all_display_parts),
                             pred,
@@ -380,6 +508,13 @@ def run_pipeline(
         definition=definition,
         temperature=settings.temperature,
         disable_thinking=disable_thinking,
+        measured=use_measured_path(selected_model_provider),
+    )
+    pred = _labelled_prediction(
+        pred,
+        provider=selected_model_provider,
+        model=selected_model_name,
+        definition=definition,
     )
     return _finalize_pipeline_output(
         raw_llm_output,

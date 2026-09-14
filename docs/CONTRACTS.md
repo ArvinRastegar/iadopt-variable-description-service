@@ -21,10 +21,42 @@
 >   (one `APIRouter` each, mounted by the factory in original order).
 > Dependency direction is acyclic: `routers → services → clients → core/schemas`.
 > `mypy` is configured strict on `core`/`clients`/`services`/`routers`/`pipeline`/
-> `schemas` (`backend/mypy.ini`) and passes on all 34 app modules. New dep:
-> `pydantic-settings==2.14.2` (pinned). **Gate 2:** 45 backend tests pass including
+> `schemas` (`backend/mypy.ini`) and passes on all app modules (34 at Phase 2; 36
+> after the measured-configuration change added two services). New dep:
+> `pydantic-settings==2.14.2` (pinned). **Gate 2:** 45 backend tests passed including
 > 25 live contract tests (real LLM decompose + NDJSON stream); RDF/TTL goldens
 > byte-identical; OpenAPI unchanged (18 paths / 25 schemas).
+
+> **Measured-configuration change (2026-09-14).** The decomposition step now runs the
+> configuration measured by the sibling `iadopt-lab` project: `Qwen3.8-27B` on PSNC,
+> the `matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
+> examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Because
+> that prompt returns six lexical fields and forbids `label`/`comment`, a second LLM
+> call supplies those two; the merged prediction handed to validation, enrichment and
+> TTL is the same eight-field shape as before. **No endpoint request or response shape
+> changed** and OpenAPI is unchanged at 18 paths / 25 schemas. Entity linking is
+> untouched by decision (D-006).
+>
+> **One deliberate contract change.** `$defs.entityOrSystem` previously required an
+> asymmetric system to carry all five of `AsymmetricSystem`, `hasSource`, `hasTarget`,
+> `hasNumerator` and `hasDenominator` simultaneously; it now accepts the two mutually
+> exclusive role pairs the framework actually defines. The golden
+> `asymmetric_soil_moisture.validation.json` therefore moves from `schema_valid: false`
+> to `true` with an empty error list. `asymmetric_soil_moisture.expected.ttl` is
+> unchanged byte-for-byte, confirming validation and serialization stayed independent.
+> Approved before implementation; recorded as D-005.
+>
+> **Suite after the change:** 167 collected, **151 passed, 16 skipped** locally via
+> `python -m pytest tests` from `backend/`. The 16 skips are the live contract tests,
+> which need `IADOPT_CONTRACT_BASE_URL` and a running stack. CI reports 150 passed /
+> 17 skipped: it has no `iadopt-lab` checkout, so the fixture-provenance check against
+> the lab source document skips there. CI now runs `python -m pytest tests`; it
+> previously ran `unittest discover`, which collected only the 12 `TestCase`-based
+> tests and never saw the contract suite.
+>
+> Set `USE_MEASURED_CONFIGURATION=0` to restore the previous prompt and five-shot
+> examples. Rationale and rejected alternatives are in `docs/decisions.md`
+> (D-001 ... D-010); per-module contracts are in `docs/components/`.
 
 > **Phase 1 changes (no runtime behavior change to existing clients):**
 > - All request/response models moved from inline `main.py` definitions into the
@@ -55,7 +87,7 @@
 | Runtime | `docker compose up` — backend (uvicorn) internal `8000`, frontend nginx published on host **`5173`** → container `8080` |
 | Capture path | Through nginx at `http://localhost:5173/api/...` (the real path the frontend uses) |
 | Auth | Enabled (`IADOPT_AUTH_ENABLED=true`); bootstrap admin login (local username/password) |
-| LLM provider exercised | `.env` default → **`psnc`** (PSNC/PCSS `Qwen3.5-397B-A17B`) |
+| LLM provider exercised | `.env` default → **`psnc`** (PSNC/PCSS `Qwen3.8-27B`; `Qwen3.5-397B-A17B` before the measured-configuration change) |
 | Nanopub publish/retract | **NOT exercised live** (irreversible registry writes). Success shapes documented from code; only 401/422 error paths captured live. |
 | PII | Real emails in `/auth/me`, `/admin/users`, `/admin/audit` redacted to `REDACTED@example.org` in fixtures |
 
@@ -82,8 +114,9 @@ Flagging per the brief's "confirm before editing" rule:
 
 ### Determinism note (critical for golden tests)
 
-`json_to_ttl_repo_style` is **not** naturally byte-reproducible: `_make_variable_identity()`
-([main.py:1589](../backend/app/main.py#L1589)) reads `datetime.now()` **and** `random.randint(0,99)`,
+`json_to_ttl_repo_style` is **not** naturally byte-reproducible: `make_variable_identity()`
+([rdf_ttl.py:84](../backend/app/services/rdf_ttl.py#L84); it was `_make_variable_identity`
+in `main.py` until Phase 2 moved and renamed it) reads `datetime.now()` **and** `random.randint(0,99)`,
 which flow into the variable URI, `dct:identifier`, and `dct:created`. Golden tests freeze the
 clock + RNG and stub the ORCID name lookup; with those frozen, output is verified identical across runs.
 

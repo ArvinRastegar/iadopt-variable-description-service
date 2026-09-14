@@ -53,8 +53,11 @@ DEFAULT_MODEL_NAMES = [
     "qwen/qwen3.5-397b-a17b",
     "google/gemini-3-flash-preview",
 ]
-DEFAULT_PSNC_MODEL_NAME = "Qwen3.5-397B-A17B"
+# The measured configuration's model (D-001). The previous default,
+# Qwen3.5-397B-A17B, stays in the allow-list so it remains selectable (D-004).
+DEFAULT_PSNC_MODEL_NAME = "Qwen3.8-27B"
 DEFAULT_PSNC_MODEL_NAMES = [
+    "Qwen3.8-27B",
     "Qwen3.5-397B-A17B",
     "Qwen3-VL-235B-A22B-Instruct-FP8",
 ]
@@ -142,6 +145,11 @@ class Settings(BaseSettings):
 
     # --- LLM / providers ---------------------------------------------------- #
     temperature: float = Field(default=0.5, validation_alias="TEMPERATURE")
+    # Sampling parameters of the measured configuration (D-001). The previous code
+    # sent neither; both were present in every measured call.
+    top_p: float = Field(default=1.0, validation_alias="TOP_P")
+    max_tokens: int = Field(default=16000, validation_alias="MAX_TOKENS")
+    use_measured_configuration: bool = Field(default=True, validation_alias="USE_MEASURED_CONFIGURATION")
     openrouter_api_key: Optional[str] = Field(default=None, validation_alias="OPENROUTER_API_KEY")
     model_name: str = Field(default=DEFAULT_MODEL_NAME, validation_alias="MODEL_NAME")
     model_names_raw: str = Field(default="", validation_alias="MODEL_NAMES")
@@ -216,7 +224,7 @@ class Settings(BaseSettings):
     db_path_raw: Optional[str] = Field(default=None, validation_alias="IADOPT_DB_PATH")
 
     # --- Validators (preserve exact original coercion) ---------------------- #
-    @field_validator("auth_enabled", "cookie_secure", mode="before")
+    @field_validator("auth_enabled", "cookie_secure", "use_measured_configuration", mode="before")
     @classmethod
     def _coerce_env_bool(cls, value: object) -> object:
         """Apply ``env_bool`` truthiness ({1,true,yes,on}); pass through real bools."""
@@ -286,6 +294,26 @@ class Settings(BaseSettings):
     def prompt_dir(self) -> pathlib.Path:
         """Path to the prompt-templates directory."""
         return self.data_dir / "prompts"
+
+    @property
+    def measured_dir(self) -> pathlib.Path:
+        """Directory holding the frozen measured-configuration artifacts."""
+        return self.data_dir / "measured"
+
+    @property
+    def measured_template_path(self) -> pathlib.Path:
+        """Path to the measured prompt template."""
+        return self.measured_dir / "matrix-decomposition-v1.txt"
+
+    @property
+    def measured_lexical_schema_path(self) -> pathlib.Path:
+        """Path to the six-field lexical schema embedded in the measured prompt."""
+        return self.measured_dir / "lexical-decomposition.schema.json"
+
+    @property
+    def measured_demonstrations_path(self) -> pathlib.Path:
+        """Path to the 25 measured few-shot demonstrations."""
+        return self.measured_dir / "demonstrations-top25.json"
 
     @property
     def five_shot_dir(self) -> pathlib.Path:

@@ -12,7 +12,7 @@ heavy imports.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class AppState:
@@ -23,6 +23,8 @@ class AppState:
         validator_cache: The compiled ``Draft202012Validator``, or ``None``.
         prompt_version_cache: The selected prompt version name, or ``None``.
         examples_5_cache: The loaded five-shot examples, or ``None``.
+        measured_assets_cache: ``(template, schema_text, demonstrations)`` for the
+            measured configuration, or ``None`` when it is disabled.
     """
 
     def __init__(self) -> None:
@@ -31,6 +33,7 @@ class AppState:
         self.validator_cache: Optional[Any] = None
         self.prompt_version_cache: Optional[str] = None
         self.examples_5_cache: Optional[List[Dict[str, Any]]] = None
+        self.measured_assets_cache: Optional[Tuple[str, str, List[Dict[str, Any]]]] = None
 
 
 app_state = AppState()

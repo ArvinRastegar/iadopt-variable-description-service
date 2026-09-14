@@ -50,6 +50,48 @@ def build_psnc_chat_payload(
     return payload
 
 
+def build_measured_psnc_payload(
+    model: str,
+    prompt: str,
+    *,
+    temperature: float,
+    top_p: float,
+    max_tokens: int,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    """Build the exact request body of the measured configuration.
+
+    Emits exactly seven keys and no others. Unlike :func:`build_psnc_chat_payload`
+    this sends no top-level ``enable_thinking``: that switch appeared in no
+    measured call. See ``docs/decisions.md`` D-003.
+
+    Args:
+        model: PSNC model name.
+        prompt: The rendered measured prompt.
+        temperature: Sampling temperature (measured at 0.5).
+        top_p: Nucleus sampling cutoff (measured at 1.0).
+        max_tokens: Output ceiling (measured at 16000).
+        stream: Whether to request a streamed response.
+
+    Returns:
+        The request payload dict, with exactly the keys ``model``, ``messages``,
+        ``stream``, ``temperature``, ``top_p``, ``max_tokens`` and
+        ``chat_template_kwargs``.
+    """
+    # Exactly the seven keys of the measured body. Adding an eighth -- including the
+    # top-level `enable_thinking` the legacy builder sends -- makes this a request
+    # nothing in the study measured.
+    return {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": stream,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
 def psnc_chat_headers() -> Dict[str, str]:
     """Return the auth + content-type headers for PSNC requests.
 

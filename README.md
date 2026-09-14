@@ -37,12 +37,33 @@ It performs the following steps:
 
 1. receives a **variable definition** from the frontend
 2. builds an **LLM prompt**
-3. calls the **OpenRouter API**
+3. calls the configured provider — **PSNC** by default, or OpenRouter
 4. extracts and parses the **JSON output**
-5. validates the output using a **JSON Schema**
-6. enriches components with **Wikidata URIs**
-7. converts the structured result to **RDF/Turtle (TTL)**
-8. returns the results to the frontend
+5. generates a **label and comment** in a second, smaller call
+6. validates the output using a **JSON Schema**
+7. enriches components with **Wikidata URIs**
+8. converts the structured result to **RDF/Turtle (TTL)**
+9. returns the results to the frontend
+
+### The measured configuration
+
+By default the decomposition step (2–4) runs a configuration measured on a
+held-out set by the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
+`matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
+examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Held-out
+micro Close F1 **0.4890 ± 0.0252** over 24 variables and 15 repetitions.
+
+Read that figure carefully before relying on it. It beats a deliberately-bad and a
+domain-stratified example selection decisively, but it is *not* significantly
+better than the best of three random 25-example draws. In absolute terms 3 of 24
+held-out items were exactly right and 7 of 24 scored zero. **Decompositions are
+drafts for review, not answers.**
+
+That prompt returns six lexical fields and forbids regenerating the label,
+comment, or definition, which is why step 5 exists as a separate call. Changing the
+prompt, the examples, the model, or any sampling parameter means the service is no
+longer running what was measured and the figure above no longer describes it. See
+`docs/decisions.md` and `docs/components/` for the full record.
 
 The backend exposes a simple API:
 
@@ -154,9 +175,22 @@ NANOPUB_LICENSE_URI=https://creativecommons.org/publicdomain/zero/1.0/
 NANOPUB_USE_TEST_SERVER=false
 MODEL_NAMES=qwen/qwen3.5-flash-02-23,qwen/qwen3-32b,qwen/qwen3.5-397b-a17b
 PSNC_API_BASE_URL=https://llm.hpc.psnc.pl
-PSNC_MODEL_NAME=Qwen3.5-397B-A17B
-PSNC_MODEL_NAMES=Qwen3.5-397B-A17B,Qwen3-VL-235B-A22B-Instruct-FP8
+PSNC_MODEL_NAME=Qwen3.8-27B
+PSNC_MODEL_NAMES=Qwen3.8-27B,Qwen3.5-397B-A17B,Qwen3-VL-235B-A22B-Instruct-FP8
+
+TEMPERATURE=0.5
+TOP_P=1.0
+MAX_TOKENS=16000
+USE_MEASURED_CONFIGURATION=1
 ```
+
+`PSNC_MODEL_NAME`, `TEMPERATURE`, `TOP_P` and `MAX_TOKENS` above are the **measured
+configuration** (see below). `PSNC_MODEL_NAMES` must keep `Qwen3.8-27B` in the
+list: the backend rejects any model not named there, even when a request asks for
+it explicitly.
+
+Set `USE_MEASURED_CONFIGURATION=0` to fall back to the previous prompt templates
+and five-shot examples, which remain in the repository.
 
 ---
 

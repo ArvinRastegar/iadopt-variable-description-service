@@ -76,19 +76,30 @@
         "description": "A simple entity label (e.g., 'air', 'soil', 'nitrogen')."
       },
         {
-          "$comment": "Asymmetric system, from A to B",
+          "$comment": "Asymmetric system, from a source to a target. Exclusive with the numerator/denominator form: the role pairs must never be mixed (D-005).",
           "type": "object",
           "required": [
             "AsymmetricSystem",
             "hasSource",
-            "hasTarget",
+            "hasTarget"
+          ],
+          "properties": {
+            "AsymmetricSystem": { "type": "string" },
+            "hasSource":        { "type": "string" },
+            "hasTarget":        { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "$comment": "Asymmetric system, a numerator over a denominator. Exclusive with the source/target form (D-005).",
+          "type": "object",
+          "required": [
+            "AsymmetricSystem",
             "hasNumerator",
             "hasDenominator"
           ],
           "properties": {
             "AsymmetricSystem": { "type": "string" },
-            "hasSource":        { "type": "string" },
-            "hasTarget":        { "type": "string" },
             "hasNumerator":     { "type": "string" },
             "hasDenominator":   { "type": "string" }
           },
