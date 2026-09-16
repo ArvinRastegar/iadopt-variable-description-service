@@ -22,6 +22,7 @@ from openai import APIStatusError, OpenAIError
 from ..clients.openai_client import get_openai_client
 from ..clients.http import get_http_session
 from ..clients.psnc_client import (
+    build_measured_psnc_payload,
     build_psnc_chat_payload,
     psnc_chat_completions_url,
     psnc_chat_headers,
@@ -146,7 +147,52 @@ def _extract_chat_completion_text(data: Dict[str, Any]) -> str:
     return flatten_text_fragments(first_choice.get("text"))
 
 
-def call_psnc_model(model: str, prompt: str, temperature: float, disable_thinking: bool = True) -> str:
+def _psnc_payload(
+    model: str,
+    prompt: str,
+    temperature: float,
+    *,
+    disable_thinking: bool,
+    stream: bool,
+    measured: bool,
+) -> Dict[str, Any]:
+    """Select and build the PSNC request body for this call.
+
+    The two builders stay separate (D-003): the measured body carries exactly seven
+    keys, the legacy body keeps both reasoning switches. This is the only place
+    that chooses between them.
+
+    Args:
+        model: PSNC model name.
+        prompt: User prompt.
+        temperature: Sampling temperature.
+        disable_thinking: Forwarded to the legacy builder.
+        stream: Whether to request a streamed response.
+        measured: Whether to send the measured body.
+
+    Returns:
+        The request payload dict.
+    """
+    if measured:
+        return build_measured_psnc_payload(
+            model,
+            prompt,
+            temperature=temperature,
+            top_p=settings.top_p,
+            max_tokens=settings.max_tokens,
+            stream=stream,
+        )
+    return build_psnc_chat_payload(model, prompt, temperature, disable_thinking=disable_thinking, stream=stream)
+
+
+def call_psnc_model(
+    model: str,
+    prompt: str,
+    temperature: float,
+    disable_thinking: bool = True,
+    *,
+    measured: bool = False,
+) -> str:
     """Call the PSNC model with up to 3 attempts; return raw text or "".
 
     Args:
@@ -154,6 +200,7 @@ def call_psnc_model(model: str, prompt: str, temperature: float, disable_thinkin
         prompt: User prompt.
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the payload builder.
+        measured: When true, send the measured request body instead of the legacy one.
 
     Returns:
         The raw model text, or ``""`` if all attempts fail or return HTML/empty.
@@ -169,11 +216,13 @@ def call_psnc_model(model: str, prompt: str, temperature: float, disable_thinkin
             response = get_http_session().post(
                 url,
                 headers=headers,
-                json=build_psnc_chat_payload(
+                json=_psnc_payload(
                     model,
                     prompt,
                     temperature,
                     disable_thinking=disable_thinking,
+                    stream=False,
+                    measured=measured,
                 ),
                 timeout=120,
             )
@@ -413,6 +462,7 @@ def stream_psnc_model(
     temperature: float,
     *,
     disable_thinking: bool = True,
+    measured: bool = False,
 ) -> Iterator[Tuple[str, str]]:
     """Stream a PSNC completion, yielding ``(reasoning_delta, content_delta)`` pairs.
 
@@ -421,6 +471,7 @@ def stream_psnc_model(
         prompt: User prompt.
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the payload builder.
+        measured: When true, send the measured request body instead of the legacy one.
 
     Yields:
         ``(reasoning_delta, content_delta)`` tuples per SSE event.
@@ -431,12 +482,13 @@ def stream_psnc_model(
     response = get_http_session().post(
         psnc_chat_completions_url(),
         headers=psnc_chat_headers(),
-        json=build_psnc_chat_payload(
+        json=_psnc_payload(
             model,
             prompt,
             temperature,
             disable_thinking=disable_thinking,
             stream=True,
+            measured=measured,
         ),
         stream=True,
         timeout=120,
@@ -469,6 +521,8 @@ def call_llm_loose(
     definition: str,
     temperature: float,
     disable_thinking: bool = True,
+    *,
+    measured: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
     """Call the selected provider up to 3 times and parse JSON from the output.
 
@@ -479,6 +533,7 @@ def call_llm_loose(
         definition: Original definition (written into the parsed result).
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the provider call.
+        measured: When true, send the measured PSNC request body.
 
     Returns:
         A ``(raw_text, prediction)`` tuple; ``prediction`` is ``{}`` if parsing
@@ -491,7 +546,7 @@ def call_llm_loose(
 
     for attempt in range(1, 4):
         raw = (
-            call_psnc_model(model, prompt, temperature, disable_thinking=disable_thinking)
+            call_psnc_model(model, prompt, temperature, disable_thinking=disable_thinking, measured=measured)
             if model_provider == PSNC_MODEL_PROVIDER
             else call_model(model, prompt, temperature, disable_thinking=disable_thinking)
         )

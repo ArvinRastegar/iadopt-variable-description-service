@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://iadopt-lab.local/schemas/lexical-decomposition-v1",
+  "title": "I-ADOPT Lab six-field lexical decomposition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hasStatisticalModifier", "hasProperty", "hasObjectOfInterest", "hasMatrix", "hasContextObject", "hasConstraint"],
+  "properties": {
+    "hasStatisticalModifier": {"type": "string"},
+    "hasProperty": {"type": "string"},
+    "hasObjectOfInterest": {"$ref": "#/$defs/entity"},
+    "hasMatrix": {"$ref": "#/$defs/entity"},
+    "hasContextObject": {"$ref": "#/$defs/entity"},
+    "hasConstraint": {"type": "array", "items": {"$ref": "#/$defs/constraint"}}
+  },
+  "$defs": {
+    "nonempty": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "entity": {"oneOf": [
+      {"type": "string"},
+      {"type": "object", "additionalProperties": false,
+       "required": ["SymmetricSystem", "hasPart"],
+       "properties": {"SymmetricSystem": {"type": "string"}, "hasPart": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"$ref": "#/$defs/nonempty"}}}},
+      {"type": "object", "additionalProperties": false,
+       "required": ["AsymmetricSystem", "hasSource", "hasTarget"],
+       "properties": {"AsymmetricSystem": {"type": "string"}, "hasSource": {"$ref": "#/$defs/nonempty"}, "hasTarget": {"$ref": "#/$defs/nonempty"}}},
+      {"type": "object", "additionalProperties": false,
+       "required": ["AsymmetricSystem", "hasNumerator", "hasDenominator"],
+       "properties": {"AsymmetricSystem": {"type": "string"}, "hasNumerator": {"$ref": "#/$defs/nonempty"}, "hasDenominator": {"$ref": "#/$defs/nonempty"}}}
+    ]},
+    "constraint": {"type": "object", "additionalProperties": false,
+      "required": ["label", "on"],
+      "properties": {"label": {"$ref": "#/$defs/nonempty"}, "on": {"$ref": "#/$defs/nonempty"}}}
+  }
+}

@@ -48,8 +48,12 @@ def _reference_values(env: Dict[str, str]) -> dict:
         "qwen/qwen3.5-397b-a17b",
         "google/gemini-3-flash-preview",
     ]
-    DEFAULT_PSNC_MODEL_NAME = "Qwen3.5-397B-A17B"
-    DEFAULT_PSNC_MODEL_NAMES = ["Qwen3.5-397B-A17B", "Qwen3-VL-235B-A22B-Instruct-FP8"]
+    DEFAULT_PSNC_MODEL_NAME = "Qwen3.8-27B"
+    DEFAULT_PSNC_MODEL_NAMES = [
+        "Qwen3.8-27B",
+        "Qwen3.5-397B-A17B",
+        "Qwen3-VL-235B-A22B-Instruct-FP8",
+    ]
 
     model_name = getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
     configured_models = [v.strip() for v in getenv("MODEL_NAMES", "").split(",") if v.strip()]

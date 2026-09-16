@@ -35,7 +35,7 @@ jobs:
           PSNC_API_KEY: ci-placeholder
         run: |
           python -m compileall -q app
-          python -m unittest discover -s tests
+          python -m pytest tests
 
   frontend:
     runs-on: ubuntu-latest
