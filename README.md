@@ -63,7 +63,9 @@ That prompt returns six lexical fields and forbids regenerating the label,
 comment, or definition, which is why step 5 exists as a separate call. Changing the
 prompt, the examples, the model, or any sampling parameter means the service is no
 longer running what was measured and the figure above no longer describes it. See
-`docs/decisions.md` and `docs/components/` for the full record.
+the separate private workflow repository, `iadopt-variable-description-service-docs/`
+(`decisions.md` and `components/`), for the full record. It is an optional local
+checkout and is not needed to build or run the service.
 
 The backend exposes a simple API:
 

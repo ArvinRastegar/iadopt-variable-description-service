@@ -2,7 +2,8 @@
 
 These guard the one failure a byte-exactness suite cannot catch by itself: a
 golden fixture extracted wrongly, which every other test then agrees with. See
-``backend/tests/fixtures/PROVENANCE.md`` and ``docs/decisions.md`` D-008.
+``backend/tests/fixtures/PROVENANCE.md`` and
+``iadopt-variable-description-service-docs/decisions.md`` D-008.
 
 Three of the four checks need only files committed to this repo and always run.
 The fourth compares against the lab source document and skips when no lab checkout

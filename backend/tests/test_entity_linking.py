@@ -1,6 +1,6 @@
 """Regression tests pinning existing Wikidata entity-linking behaviour.
 
-Contract: docs/components/entity-linking.md — D-006.
+Contract: iadopt-variable-description-service-docs/components/entity-linking.md — D-006.
 
 These document what the module already does; they do not drive a change. Entity
 linking was never covered by the experiments, so its steps stay exactly as they

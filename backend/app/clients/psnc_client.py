@@ -63,7 +63,7 @@ def build_measured_psnc_payload(
 
     Emits exactly seven keys and no others. Unlike :func:`build_psnc_chat_payload`
     this sends no top-level ``enable_thinking``: that switch appeared in no
-    measured call. See ``docs/decisions.md`` D-003.
+    measured call. See ``iadopt-variable-description-service-docs/decisions.md`` D-003.
 
     Args:
         model: PSNC model name.

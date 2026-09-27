@@ -3,7 +3,7 @@
 This module is the only place prompt byte-exactness is enforced. The measured
 Close F1 of 0.4890 describes a specific sequence of bytes; a prompt differing by
 one space in the demonstrations encoding is a different prompt that nothing has
-measured. See ``docs/components/measured-prompt.md``.
+measured. See ``iadopt-variable-description-service-docs/components/measured-prompt.md``.
 
 Leaf service: depends only on ``core.config``. It does not call the model, does not
 decide whether the measured configuration is in use, and does not validate output.

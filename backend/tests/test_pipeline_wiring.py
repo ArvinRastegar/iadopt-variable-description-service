@@ -1,6 +1,6 @@
 """Tests for measured-path selection and the six-to-eight field merge.
 
-Contract: docs/components/pipeline-wiring.md
+Contract: iadopt-variable-description-service-docs/components/pipeline-wiring.md
 """
 
 from __future__ import annotations

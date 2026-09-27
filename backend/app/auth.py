@@ -9,7 +9,7 @@ imports services or routers.
 Authentication is local username/password (NOT ORCID, NOT JWT). Sessions are random
 ``secrets.token_urlsafe(32)`` tokens, HMAC-SHA256-signed with ``IADOPT_SESSION_SECRET``
 and stored SHA-256-hashed in SQLite; only the hash is persisted. See
-docs/CONTRACTS.md for the full contract.
+iadopt-variable-description-service-docs/CONTRACTS.md for the full contract.
 """
 
 from __future__ import annotations

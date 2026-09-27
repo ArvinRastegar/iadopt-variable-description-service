@@ -1,6 +1,6 @@
 """Tests for the measured PSNC request body.
 
-Contract: docs/components/psnc-payload.md
+Contract: iadopt-variable-description-service-docs/components/psnc-payload.md
 """
 
 from __future__ import annotations

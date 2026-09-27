@@ -1,6 +1,6 @@
 """Tests for the second-call label/comment generator.
 
-Contract: docs/components/label-comment.md — D-002.
+Contract: iadopt-variable-description-service-docs/components/label-comment.md — D-002.
 Stubbed at the provider helper seam; no network.
 """
 

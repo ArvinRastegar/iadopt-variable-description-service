@@ -3,7 +3,8 @@
 These three helpers are the most cross-cutting in the codebase: they are used by
 the ORCID, nanopub, RDF/TTL, and validation services. Keeping them in this leaf
 module (which imports nothing from the app) is what prevents those services from
-forming an import cycle — see docs/CONTRACTS.md and the Phase-2 dependency map.
+forming an import cycle — see the Phase-2 dependency map in
+iadopt-variable-description-service-docs/CONTRACTS.md.
 
 Behavior is identical to the original ``app.main`` definitions; they were moved
 verbatim, not rewritten.

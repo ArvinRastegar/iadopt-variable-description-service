@@ -3,7 +3,8 @@
 The measured template says verbatim "Do not regenerate the definition, label, or
 comment", but ``rdf_ttl`` needs both — it falls back to the literal string
 "generated variable" and to "" respectively. A second, separate LLM call supplies
-them. See ``docs/decisions.md`` D-002 and ``docs/components/label-comment.md``.
+them. See ``iadopt-variable-description-service-docs/decisions.md`` D-002 and
+``iadopt-variable-description-service-docs/components/label-comment.md``.
 
 This module is **not** part of the measured configuration and carries none of its
 evidence. Its prompt has never been scored against anything.
