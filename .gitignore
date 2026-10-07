@@ -10,3 +10,4 @@ frontend/dist/
 backend/state/
 ngrok-policy.yml
 /iadopt-variable-description-service-docs/
+.claude/settings.local.json
