@@ -11,6 +11,7 @@ from app import main
 from app.core import config as core_config
 from app.core import dependencies as core_deps
 from app.routers import decompose as decompose_router
+from app.routers import nanopub as nanopub_router
 
 
 class ProviderConfigurationTests(unittest.TestCase):
@@ -73,11 +74,69 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_protected_route_requires_login(self):
-        response = self.client.get("/api/model-options")
+        response = self.client.get("/api/auth/me")
         self.assertEqual(response.status_code, 401)
 
         health = self.client.get("/api/health")
         self.assertEqual(health.status_code, 200)
+
+    def test_visualizer_metadata_is_available_without_login(self):
+        expected_keys = {
+            "/api/model-options": {"default_model_provider", "default_model_name", "model_names", "providers"},
+            "/api/nanopub/preparation-options": {
+                "default_creator_orcid_id", "conforms_to_uri", "created_with_label",
+            },
+        }
+        for path, keys in expected_keys.items():
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(set(response.json()), keys)
+                self.assertNotIn("iadopt_session", response.cookies)
+
+    def test_public_metadata_exemption_only_allows_get(self):
+        for path in ("/api/model-options", "/api/nanopub/preparation-options"):
+            for method in ("POST", "PUT", "PATCH", "DELETE", "HEAD"):
+                with self.subTest(path=path, method=method):
+                    response = self.client.request(method, path)
+                    self.assertEqual(response.status_code, 401)
+
+    def test_private_account_admin_and_docs_still_require_login(self):
+        for path in (
+            "/api/auth/me", "/api/auth/verify", "/api/admin/users", "/api/admin/stats",
+            "/api/admin/audit", "/api/docs", "/api/redoc", "/api/openapi.json",
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 401)
+
+    def test_anonymous_protected_operations_cannot_reach_services(self):
+        operations = (
+            ("POST", "/api/decompose", {"definition": "air temperature"}),
+            ("POST", "/api/decompose/stream", {"definition": "air temperature"}),
+            ("POST", "/api/nanopub/publish", {"ttl": "<https://example.org/v> a <https://w3id.org/iadopt/ont/Variable> ."}),
+            ("POST", "/api/nanopub/retract", {"nanopub_uri": "https://example.org/nanopub"}),
+            ("POST", "/api/events", {"action": "visualize", "payload": {"ttl": "private input"}}),
+            ("POST", "/api/admin/users", {"username": "guest", "password": "password-123"}),
+            ("PATCH", "/api/admin/users/1", {"display_name": "Changed"}),
+            ("POST", "/api/auth/logout", {}),
+        )
+        # Stop any accidental regression before LLM calls, signing-key access, or
+        # registry calls; the assertion below also requires these guards stay unused.
+        with (
+            patch.object(decompose_router, "run_pipeline", side_effect=AssertionError("Unexpected LLM call")) as pipeline,
+            patch.object(decompose_router, "stream_pipeline_events", side_effect=AssertionError("Unexpected LLM call")) as stream,
+            patch.object(nanopub_router, "get_nanopub_profile", side_effect=AssertionError("Unexpected signing access")) as profile,
+            patch.object(self.store, "audit_event") as audit,
+        ):
+            for method, path, body in operations:
+                with self.subTest(path=path, method=method):
+                    response = self.client.request(method, path, json=body)
+                    self.assertEqual(response.status_code, 401)
+            pipeline.assert_not_called()
+            stream.assert_not_called()
+            profile.assert_not_called()
+            audit.assert_not_called()
 
     def test_login_succeeds_and_fails(self):
         failed = self.client.post(

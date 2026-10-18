@@ -39,10 +39,12 @@ requests = pytest.importorskip("requests")
         ("/api/livez", "livez.200.json"),
         ("/api/readyz", "readyz.200.json"),
         ("/api/health", "health.200.json"),
+        ("/api/model-options", "model_options.200.json"),
+        ("/api/nanopub/preparation-options", "nanopub_preparation_options.200.json"),
     ],
 )
-def test_public_health_routes(base_url, path, fixture):
-    """Health routes are public and return their captured shape."""
+def test_public_read_only_routes(base_url, path, fixture):
+    """Health and public tool metadata routes return their captured shape."""
     resp = requests.get(f"{base_url}{path}", timeout=30)
     assert resp.status_code == 200
     assert_same_shape(resp.json(), load_json(API_DIR / fixture))
@@ -50,7 +52,7 @@ def test_public_health_routes(base_url, path, fixture):
 
 def test_unauth_is_401(base_url):
     """A protected route without a session returns the captured 401 shape."""
-    resp = requests.get(f"{base_url}/api/model-options", timeout=30)
+    resp = requests.get(f"{base_url}/api/auth/me", timeout=30)
     assert resp.status_code == 401
     assert_same_shape(resp.json(), load_json(API_DIR / "_401_unauth.json"))
 
@@ -62,8 +64,6 @@ def test_unauth_is_401(base_url):
     "path,fixture",
     [
         ("/api/auth/me", "auth_me.200.json"),
-        ("/api/model-options", "model_options.200.json"),
-        ("/api/nanopub/preparation-options", "nanopub_preparation_options.200.json"),
         ("/api/admin/users", "admin_users.200.json"),
         ("/api/admin/stats", "admin_stats.200.json"),
     ],

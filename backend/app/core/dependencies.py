@@ -40,10 +40,21 @@ PUBLIC_API_PATHS = {
     f"{API_PREFIX}/health",
 }
 
+# Read-only configuration used by the public visualizer and Turtle preparation.
+PUBLIC_GET_API_PATHS = {
+    f"{API_PREFIX}/model-options",
+    f"{API_PREFIX}/nanopub/preparation-options",
+}
 
-def is_public_api_path(path: str) -> bool:
-    """Return True if the path is exempt from authentication."""
-    return path in PUBLIC_API_PATHS
+
+def is_public_api_path(path: str, method: str) -> bool:
+    """Return whether the request can bypass authentication.
+
+    Args:
+        path: The incoming API path.
+        method: The incoming HTTP method.
+    """
+    return path in PUBLIC_API_PATHS or (method == "GET" and path in PUBLIC_GET_API_PATHS)
 
 
 def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,7 +110,7 @@ async def authentication_middleware(
         return await call_next(request)
 
     path = request.url.path
-    if auth_store.enabled and path.startswith(API_PREFIX) and not is_public_api_path(path):
+    if auth_store.enabled and path.startswith(API_PREFIX) and not is_public_api_path(path, request.method):
         user = auth_store.user_from_request(request)
         if not user:
             return JSONResponse({"detail": "Authentication required."}, status_code=401)
