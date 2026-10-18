@@ -562,9 +562,14 @@ function rewriteTermOccurrences( text, prefixes, fromUri, replacementText ) {
  * single iop:Variable. Throws a descriptive error otherwise. Used both internally (post-apply
  * self-check) and by the publish flow as a pre-export gate.
  *
+ * The creator ORCID is checked only when `requireCreator` is true (the default). With a
+ * `creatorOrcid` the variable must carry exactly that ORCID; without one, any creator ORCID will do.
+ * Pass `requireCreator: false` to check everything except the creator (the publish flow adds the
+ * creator afterwards).
+ *
  * @param   {string} inputTurtle
- * @param   {{creatorOrcid:string, conformsToUri:string, createdWithLabel:string}} options
- * @returns {Promise.<{creatorOrcidUri:string, variableUri:string}>}
+ * @param   {{creatorOrcid?:string, requireCreator?:boolean, conformsToUri:string, createdWithLabel:string}} options
+ * @returns {Promise.<{creatorOrcidUri:?string, variableUri:string}>}
  */
 export async function validatePreNanopubTurtle( inputTurtle, options ) {
   const turtle = String( inputTurtle ?? '' );
@@ -572,10 +577,15 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
     throw new Error( 'Paste or generate Turtle before preparing it for nanopublication.' );
   }
 
-  const creatorOrcidUri = normalizeOrcid( options.creatorOrcid );
+  const requireCreator = options.requireCreator !== false;
+  const creatorOrcidUri = options.creatorOrcid ? normalizeOrcid( options.creatorOrcid ) : null;
   const { store } = await parseRDF( turtle );
   const variableUri = getUniqueVariableUri( store );
   const variable = namedNode( variableUri );
+  const hasOrcidObject = ( predicate ) => store
+    .getQuads( variable, namedNode( predicate ), null, null )
+    .some( (quad) => quad.object.termType === 'NamedNode'
+      && (creatorOrcidUri ? quad.object.value === creatorOrcidUri : quad.object.value.startsWith( NS.orcid )) );
   const required = [
     {
       // The variable subject must be a resolvable minted w3id URI so the published identifier resolves.
@@ -600,10 +610,10 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
         .some( (quad) => quad.object.termType === 'Literal' && quad.object.datatype.value === NS.xsd + 'dateTime' ),
       label: 'dct:created',
     },
-    {
-      valid: store.countQuads( variable, namedNode( TARGET_PREDICATES.creator ), namedNode( creatorOrcidUri ), null ) > 0,
+    ... ( requireCreator ? [{
+      valid: hasOrcidObject( TARGET_PREDICATES.creator ),
       label: 'dct:creator',
-    },
+    }] : [] ),
     {
       valid: store.countQuads(
         variable,
@@ -613,15 +623,10 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
       ) > 0,
       label: 'pav:createdWith',
     },
-    {
-      valid: store.countQuads(
-        variable,
-        namedNode( TARGET_PREDICATES.attributedTo ),
-        namedNode( creatorOrcidUri ),
-        null
-      ) > 0,
+    ... ( requireCreator ? [{
+      valid: hasOrcidObject( TARGET_PREDICATES.attributedTo ),
       label: 'prov:wasAttributedTo',
-    },
+    }] : [] ),
   ];
   const missing = required.filter( (item) => !item.valid ).map( (item) => item.label );
 
@@ -632,6 +637,28 @@ export async function validatePreNanopubTurtle( inputTurtle, options ) {
   }
 
   return { creatorOrcidUri, variableUri };
+}
+
+
+/**
+ * Read the creator ORCID already present on the Turtle's single iop:Variable.
+ *
+ * @param   {string} inputTurtle
+ * @returns {Promise.<?string>} canonical https://orcid.org/... URL, or null when there is none
+ */
+export async function readCreatorOrcidFromTurtle( inputTurtle ) {
+  const turtle = String( inputTurtle ?? '' );
+  if( !turtle.trim() ) {
+    return null;
+  }
+
+  const { store } = await parseRDF( turtle );
+  const variable = namedNode( getUniqueVariableUri( store ) );
+  const creator = store
+    .getQuads( variable, namedNode( TARGET_PREDICATES.creator ), null, null )
+    .find( (quad) => quad.object.termType === 'NamedNode' && quad.object.value.startsWith( NS.orcid ) );
+
+  return creator ? creator.object.value : null;
 }
 
 
@@ -813,7 +840,13 @@ function applySystemLabels( turtle, prefixes, rdfsAlias ) {
  * and only its managed predicates are added or updated.
  *
  * @param   {string} inputTurtle
- * @param   {{creatorOrcid:string, conformsToUri:string, createdWithLabel:string, createdAt?:Date, randomSuffix?:number}} options
+ * The creator ORCID is optional here: without one, dct:creator and prov:wasAttributedTo are left
+ * exactly as they are (the publish flow asks for the ORCID and writes it later). With
+ * `creatorOnly: true` (needs a `creatorOrcid`) nothing but those two predicates is touched: no new
+ * timestamp, no re-minted URI, no system labels.
+ *
+ * @param   {string} inputTurtle
+ * @param   {{creatorOrcid?:string, creatorOnly?:boolean, conformsToUri:string, createdWithLabel:string, createdAt?:Date, randomSuffix?:number}} options
  * @returns {Promise.<string>} the enriched Turtle
  */
 export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
@@ -825,9 +858,14 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
     throw new Error( 'Nanopublication preparation settings are unavailable from the backend.' );
   }
 
+  const creatorOnly = options.creatorOnly === true;
+  if( creatorOnly && !options.creatorOrcid ) {
+    throw new Error( 'Enter a creator ORCID to add to the Turtle.' );
+  }
+
   // Validate ORCID up front so a bad value never mutates the Turtle text.
-  const creatorOrcidUri = normalizeOrcid( options.creatorOrcid );
-  const orcidSuffix = creatorOrcidUri.slice( NS.orcid.length );
+  const creatorOrcidUri = options.creatorOrcid ? normalizeOrcid( options.creatorOrcid ) : null;
+  const orcidSuffix = creatorOrcidUri ? creatorOrcidUri.slice( NS.orcid.length ) : null;
   const createdTimestamp = formatCreatedTimestamp( options.createdAt ?? new Date() );
 
   const { store, prefixes } = await parseRDF( turtle );
@@ -836,7 +874,7 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
   // The published variable must carry a resolvable w3id URI. If the pasted subject already is one,
   // keep it; otherwise mint `https://w3id.org/iadopt/variable/<datetime>-<NN>` and rename the old
   // subject everywhere it occurs at the end of the transform.
-  const mintNewUri = !isResolvableVariableUri( variableUri );
+  const mintNewUri = !creatorOnly && !isResolvableVariableUri( variableUri );
   const mintedVariableUri = mintNewUri
     ? `${IADOPT_VARIABLE_BASE}${buildIdentifierSuffix( createdTimestamp, options.randomSuffix )}`
     : variableUri;
@@ -846,20 +884,23 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
   const aliases = {
     dct: choosePrefix( prefixes, prefixAdditions, 'dct', NS.dct ),
     fdof: choosePrefix( prefixes, prefixAdditions, 'fdof', NS.fdof ),
-    orcid: choosePrefix( prefixes, prefixAdditions, 'orcid', NS.orcid ),
+    orcid: creatorOrcidUri ? choosePrefix( prefixes, prefixAdditions, 'orcid', NS.orcid ) : null,
     pav: choosePrefix( prefixes, prefixAdditions, 'pav', NS.pav ),
     prov: choosePrefix( prefixes, prefixAdditions, 'prov', NS.prov ),
     rdfs: choosePrefix( prefixes, prefixAdditions, 'rdfs', NS.rdfs ),
     xsd: choosePrefix( prefixes, prefixAdditions, 'xsd', NS.xsd ),
   };
-  const desiredObjects = {
+  const creatorObjects = creatorOrcidUri ? {
+    [TARGET_PREDICATES.creator]: `${aliases.orcid}:${orcidSuffix}`,
+    [TARGET_PREDICATES.attributedTo]: `${aliases.orcid}:${orcidSuffix}`,
+  } : {};
+  const desiredObjects = creatorOnly ? creatorObjects : {
     [TARGET_PREDICATES.conformsTo]: `<${options.conformsToUri}>`,
     // The identifier is the resolvable variable IRI itself (matches the minted subject).
     [TARGET_PREDICATES.identifier]: `<${mintedVariableUri}>`,
     [TARGET_PREDICATES.created]: `${turtleLiteral( createdTimestamp )}^^${aliases.xsd}:dateTime`,
-    [TARGET_PREDICATES.creator]: `${aliases.orcid}:${orcidSuffix}`,
     [TARGET_PREDICATES.createdWith]: turtleLiteral( options.createdWithLabel ),
-    [TARGET_PREDICATES.attributedTo]: `${aliases.orcid}:${orcidSuffix}`,
+    ... creatorObjects,
   };
 
   // Collect the variable's statement(s) and split each into predicate;object clauses.
@@ -896,7 +937,7 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
 
   const seenPredicates = new Set();
   const rdfTypeIri = NS.rdf + 'type';
-  let fairDigitalObjectAdded = store.countQuads(
+  let fairDigitalObjectAdded = creatorOnly || store.countQuads(
     namedNode( variableUri ),
     namedNode( rdfTypeIri ),
     FAIR_DIGITAL_OBJECT_CLASS,
@@ -953,7 +994,7 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
   ];
 
   for( const [predicateIri, predicateToken] of missingClauses ) {
-    if( seenPredicates.has( predicateIri ) ) {
+    if( seenPredicates.has( predicateIri ) || !( predicateIri in desiredObjects ) ) {
       continue;
     }
     firstStatement.clauses.push( `\n    ${predicateToken} ${desiredObjects[predicateIri]} ` );
@@ -1000,13 +1041,29 @@ export async function applyPreNanopubSettingsToTurtle( inputTurtle, options ) {
 
   // Write a derived rdfs:label onto any system node that lacks one, so the published nanopub and
   // the visualization (which reads the actual TTL) both carry the same first-part + second-part label.
-  updatedTurtle = applySystemLabels( updatedTurtle, prefixes, aliases.rdfs );
+  if( !creatorOnly ) {
+    updatedTurtle = applySystemLabels( updatedTurtle, prefixes, aliases.rdfs );
+  }
 
   // Self-check: the result must satisfy the same gate the publish flow uses.
   await validatePreNanopubTurtle( updatedTurtle, {
     ... options,
-    creatorOrcid: creatorOrcidUri,
+    creatorOrcid: creatorOrcidUri ?? undefined,
+    requireCreator: Boolean( creatorOrcidUri ),
   } );
 
   return updatedTurtle;
+}
+
+
+/**
+ * Write only the creator ORCID (dct:creator and prov:wasAttributedTo) onto the single iop:Variable,
+ * leaving every other statement untouched. Used at publish time when the Turtle has no creator yet.
+ *
+ * @param   {string} inputTurtle
+ * @param   {{creatorOrcid:string, conformsToUri:string, createdWithLabel:string}} options
+ * @returns {Promise.<string>} the Turtle carrying the creator ORCID
+ */
+export async function applyCreatorOrcidToTurtle( inputTurtle, options ) {
+  return applyPreNanopubSettingsToTurtle( inputTurtle, { ... options, creatorOnly: true } );
 }

@@ -8,8 +8,8 @@ Determinism note: output is byte-reproducible EXCEPT for the variable identity,
 which ``make_variable_identity`` derives from the wall clock and a random suffix.
 Golden tests freeze ``datetime``/``random`` in this module to pin output.
 
-Depends on ``core.text``, ``core.config``, and ``services.orcid`` (for creator
-metadata). It must never be imported by ``services.orcid`` (one-directional).
+Depends on ``core.text`` and ``core.config``. The generated Turtle carries no creator
+ORCID: the person publishing supplies it at nanopublication time, not at decomposition.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.config import settings
 from ..core.text import lookup_key, normalize_text, ttl_quote
-from .orcid import orcid_suffix, resolve_creator_metadata
 from .vocabularies import quantity_vocabulary_iri
 
 TTL_PREFIXES = """@prefix iop: <https://w3id.org/iadopt/ont/> .
@@ -32,7 +31,6 @@ TTL_PREFIXES = """@prefix iop: <https://w3id.org/iadopt/ont/> .
 @prefix pav: <http://purl.org/pav/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix orcid: <https://orcid.org/> .
 @prefix fdof: <https://w3id.org/fdof/ontology#> .
 
 """
@@ -263,35 +261,21 @@ def build_alt_label(formula_context: Dict[str, str], constraints_by_role: Dict[s
     return alt_label or normalize_text(formula_context.get("pref_label", "")), formula_name
 
 
-def json_to_ttl_repo_style(
-    pred: Dict[str, Any],
-    *,
-    creator_orcid_id: Optional[str] = None,
-) -> str:
+def json_to_ttl_repo_style(pred: Dict[str, Any]) -> str:
     """Serialize an enriched prediction into the simple I-ADOPT Turtle shape.
 
     Args:
         pred: The enriched prediction (labels plus optional ``*URI`` keys holding Wikidata,
             QUDT or OM links).
-        creator_orcid_id: Optional ORCID override for creator/provenance metadata.
 
     Returns:
-        The complete Turtle document as a string.
-
-    Raises:
-        RuntimeError: If no creator ORCID/name can be resolved (raised transitively
-            via ``services.orcid.resolve_creator_metadata``).
-
-    Side effects:
-        Resolves creator metadata (may perform an ORCID HTTP lookup).
-    """  # noqa: DOC502  # RuntimeError is raised transitively via the orcid service
+        The complete Turtle document as a string, without any creator ORCID.
+    """
     pref_label = normalize_text(pred.get("label") or "generated variable")
     main_label = format_main_label(pref_label)
     definition = normalize_text(pred.get("definition") or "")
     comment = normalize_text(pred.get("comment") or "")
-    resolved_orcid, resolved_profile_name = resolve_creator_metadata(creator_orcid_id)
     variable_uri, variable_identifier, created_literal = make_variable_identity()
-    creator_orcid_suffix = orcid_suffix(resolved_orcid) or "0000-0000-0000-0000"
 
     blocks: List[str] = []
     variable_lines: List[str] = []
@@ -465,9 +449,7 @@ def json_to_ttl_repo_style(
             # The identifier is the resolvable variable IRI itself so the published id always resolves.
             f"    dct:identifier <{variable_uri}> ;",
             f'    dct:created "{created_literal}"^^xsd:dateTime ;',
-            f"    dct:creator orcid:{creator_orcid_suffix} ;",
             f"    pav:createdWith {ttl_quote(settings.iadopt_created_with_label)} ;",
-            f"    prov:wasAttributedTo orcid:{creator_orcid_suffix} ;",
         ]
     )
 
@@ -486,11 +468,4 @@ def json_to_ttl_repo_style(
 
     variable_lines[-1] = variable_lines[-1].rstrip(" ;") + " ."
 
-    creator_block = "\n".join(
-        [
-            f"orcid:{creator_orcid_suffix}",
-            f"    rdfs:label {ttl_quote(resolved_profile_name)} .",
-        ]
-    )
-
-    return "\n".join([TTL_PREFIXES, "\n".join(variable_lines), "", *blocks, creator_block, ""])
+    return "\n".join([TTL_PREFIXES, "\n".join(variable_lines), "", *blocks, ""])

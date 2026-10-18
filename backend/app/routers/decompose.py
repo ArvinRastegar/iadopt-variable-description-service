@@ -84,7 +84,6 @@ def decompose_stream(
                 disable_thinking=req.disable_thinking,
                 model_provider=req.model_provider,
                 model_name=req.model_name,
-                creator_orcid_id=req.creator_orcid_id,
             ):
                 try:
                     event = json.loads(line)
@@ -153,7 +152,6 @@ def decompose(
             disable_thinking=req.disable_thinking,
             model_provider=req.model_provider,
             model_name=req.model_name,
-            creator_orcid_id=req.creator_orcid_id,
         )
         auth_store.audit_event(
             action="decompose",

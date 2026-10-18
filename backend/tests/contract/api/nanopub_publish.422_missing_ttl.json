@@ -1,1 +1,1 @@
-{"detail":[{"type":"missing","loc":["body","ttl"],"msg":"Field required","input":{}}]}
+{"detail":[{"type":"missing","loc":["body","ttl"],"msg":"Field required","input":{}},{"type":"missing","loc":["body","creator_orcid_id"],"msg":"Field required","input":{}}]}

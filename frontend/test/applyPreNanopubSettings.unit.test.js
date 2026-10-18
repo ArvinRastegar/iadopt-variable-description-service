@@ -1,9 +1,12 @@
 import { assert, describe, expect, test } from 'vitest';
+import { Parser } from 'n3';
 
 import extract from '../src/lib/extract.js';
 import {
+  applyCreatorOrcidToTurtle,
   applyPreNanopubSettingsToTurtle,
   normalizeOrcid,
+  readCreatorOrcidFromTurtle,
   validatePreNanopubTurtle,
 } from '../src/lib/applyPreNanopubSettingsToTurtle.js';
 
@@ -281,5 +284,85 @@ ex:Prop a iop:Property ; rdfs:label "p" .
     assert.include( updated, 'rdfs:label "custom system label"' );
     assert.notInclude( updated, 'rdfs:label "numer denom"' );
   } );
+
+  describe( 'creator ORCID supplied at publish time', () => {
+    const { creatorOrcid, ... WITHOUT_ORCID } = OPTIONS;
+
+    test( 'preparation without an ORCID adds no creator, attribution or orcid prefix', async () => {
+      const updated = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, WITHOUT_ORCID );
+
+      assert.notInclude( updated, 'dct:creator' );
+      assert.notInclude( updated, 'wasAttributedTo' );
+      assert.notInclude( updated, 'orcid' );
+      assert.include( updated, 'dct:conformsTo' );
+      assert.include( updated, 'pav:createdWith' );
+      assert.equal( await readCreatorOrcidFromTurtle( updated ), null );
+    } );
+
+    test( 'an ORCID already in the Turtle is read back, and validation accepts it without one typed', async () => {
+      const prepared = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, OPTIONS );
+
+      assert.equal( await readCreatorOrcidFromTurtle( prepared ), 'https://orcid.org/0009-0006-1978-4302' );
+      const { creatorOrcid: _ignored, ... settings } = OPTIONS;
+      const result = await validatePreNanopubTurtle( prepared, settings );
+      assert.equal( result.creatorOrcidUri, null );
+    } );
+
+    test( 'validation reports a missing creator unless the creator check is waived', async () => {
+      const withoutOrcid = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, WITHOUT_ORCID );
+
+      await expect( validatePreNanopubTurtle( withoutOrcid, WITHOUT_ORCID ) )
+        .rejects.toThrow( /dct:creator.*prov:wasAttributedTo/ );
+      await expect( validatePreNanopubTurtle( withoutOrcid, { ... WITHOUT_ORCID, requireCreator: false } ) )
+        .resolves.toBeTruthy();
+    } );
+
+    test( 'adding the creator touches only dct:creator and prov:wasAttributedTo', async () => {
+      const prepared = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, WITHOUT_ORCID );
+      const updated = await applyCreatorOrcidToTurtle( prepared, OPTIONS );
+
+      assert.include( updated, 'dct:creator orcid:0009-0006-1978-4302' );
+      assert.include( updated, 'prov:wasAttributedTo orcid:0009-0006-1978-4302' );
+      assert.equal( await readCreatorOrcidFromTurtle( updated ), 'https://orcid.org/0009-0006-1978-4302' );
+      await validatePreNanopubTurtle( updated, OPTIONS );
+
+      // Every other triple is identical: same identifier and timestamp, no re-minting.
+      const triples = (text) => new Parser().parse( text )
+        .filter( (quad) => ![ 'http://purl.org/dc/terms/creator', 'http://www.w3.org/ns/prov#wasAttributedTo' ]
+          .includes( quad.predicate.value ) )
+        .map( (quad) => `${quad.subject.value} ${quad.predicate.value} ${quad.object.value}`.replace( /b\d+_b(\d+)/g, '_:b$1' ) )
+        .sort();
+      assert.deepEqual( triples( updated ), triples( prepared ) );
+    } );
+
+    test( 'adding the creator from a Turtle that has dct:creator but no attribution repairs it', async () => {
+      const prepared = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, OPTIONS );
+      const creatorOnly = prepared.replace( /\s*prov:wasAttributedTo\s+orcid:\S+\s*;?/, '' );
+      assert.notInclude( creatorOnly, 'wasAttributedTo' );
+
+      const orcid = await readCreatorOrcidFromTurtle( creatorOnly );
+      const updated = await applyCreatorOrcidToTurtle( creatorOnly, { ... OPTIONS, creatorOrcid: orcid } );
+      await validatePreNanopubTurtle( updated, OPTIONS );
+    } );
+
+    test( 'adding the creator replaces a different one rather than duplicating it', async () => {
+      const prepared = await applyPreNanopubSettingsToTurtle( NORMAL_TURTLE, OPTIONS );
+      const updated = await applyCreatorOrcidToTurtle( prepared, {
+        ... OPTIONS,
+        creatorOrcid: 'https://orcid.org/0000-0003-2195-3997',
+      } );
+
+      assert.notInclude( updated, '0009-0006-1978-4302' );
+      assert.equal( [... updated.matchAll( /dct:creator\b/g )].length, 1 );
+      assert.equal( await readCreatorOrcidFromTurtle( updated ), 'https://orcid.org/0000-0003-2195-3997' );
+    } );
+
+    test( 'adding the creator needs an ORCID and rejects an invalid one', async () => {
+      await expect( applyCreatorOrcidToTurtle( NORMAL_TURTLE, WITHOUT_ORCID ) ).rejects.toThrow( /ORCID/ );
+      await expect( applyCreatorOrcidToTurtle( NORMAL_TURTLE, { ... OPTIONS, creatorOrcid: 'nope' } ) )
+        .rejects.toThrow( /valid ORCID/i );
+    } );
+  } );
+
 
 } );

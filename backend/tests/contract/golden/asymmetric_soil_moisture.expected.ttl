@@ -6,7 +6,6 @@
 @prefix pav: <http://purl.org/pav/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix orcid: <https://orcid.org/> .
 @prefix fdof: <https://w3id.org/fdof/ontology#> .
 
 
@@ -21,9 +20,7 @@
     rdfs:comment "Moisture in upper soil portion measured in kg m-2" ;
     dct:identifier <https://w3id.org/iadopt/variable/20260102T030405-07> ;
     dct:created "2026-01-02T03:04:05Z"^^xsd:dateTime ;
-    dct:creator orcid:0000-0003-2195-3997 ;
     pav:createdWith "LLM-assisted I-ADOPT variable generation" ;
-    prov:wasAttributedTo orcid:0000-0003-2195-3997 ;
     iop:hasObjectOfInterest <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest> ;
     iop:hasProperty <https://w3id.org/iadopt/variable/20260102T030405-07#hasProperty> ;
     iop:hasConstraint _:c1 .
@@ -47,5 +44,3 @@ _:c1
     a iop:Constraint ;
     rdfs:label "layer: upper soil" ;
     iop:constrains <https://w3id.org/iadopt/variable/20260102T030405-07#hasObjectOfInterest-target> .
-orcid:0000-0003-2195-3997
-    rdfs:label "Test Creator" .

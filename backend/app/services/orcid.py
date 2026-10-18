@@ -151,28 +151,29 @@ def lookup_orcid_display_name(orcid_id: Optional[str]) -> Optional[str]:
     return resolved_name
 
 
-def resolve_creator_metadata(creator_orcid_id: Optional[str] = None) -> Tuple[str, str]:
+def resolve_creator_metadata(creator_orcid_id: Optional[str]) -> Tuple[str, str]:
     """Resolve the creator ORCID URI and public name for provenance metadata.
 
+    There is deliberately no server-side default: the ORCID must come from the person
+    publishing or retracting.
+
     Args:
-        creator_orcid_id: Optional ORCID override; falls back to the configured
-            ``NANOPUB_ORCID_ID``.
+        creator_orcid_id: The ORCID supplied by the caller (bare id or URI).
 
     Returns:
         A ``(orcid_uri, display_name)`` tuple.
 
     Raises:
-        RuntimeError: If no ORCID is configured, or no public name can be resolved.
+        RuntimeError: If no ORCID is given, or no public name can be resolved.
 
     Side effects:
         May perform an ORCID HTTP lookup (via :func:`lookup_orcid_display_name`).
     """
-    resolved_orcid = normalize_orcid(creator_orcid_id) or normalize_orcid(settings.nanopub_orcid_id)
-    resolved_profile_name = lookup_orcid_display_name(resolved_orcid)
-
+    resolved_orcid = normalize_orcid(creator_orcid_id)
     if not resolved_orcid:
-        raise RuntimeError("No creator ORCID is configured. Provide it in the request or set NANOPUB_ORCID_ID.")
+        raise RuntimeError("A creator ORCID is required. Please put in your ORCID.")
 
+    resolved_profile_name = lookup_orcid_display_name(resolved_orcid)
     if not resolved_profile_name:
         raise RuntimeError(
             "No public creator name could be resolved from the selected ORCID. Use an ORCID with a public name."

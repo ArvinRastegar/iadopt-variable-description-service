@@ -16,8 +16,6 @@ class _FrozenDT:
 import datetime as _dt
 m.datetime = types.SimpleNamespace(now=_FrozenDT.now, timezone=_dt.timezone)
 m.random.randint = lambda a,b: 7
-# Avoid live ORCID HTTP: force a deterministic creator name resolution.
-m._lookup_orcid_display_name = lambda orcid: "Test Creator"
 
 samples = {
   "simple_air_temperature": {
@@ -39,13 +37,13 @@ for name, pred in samples.items():
     pred["definition"] = pred.get("definition","")
     errs = m.get_schema_validation_errors(pred, label_for_logs=pred.get("label"))
     errs += m._get_constraint_semantic_validation_errors(pred)
-    ttl = m.json_to_ttl_repo_style(pred, creator_orcid_id="0000-0003-2195-3997")
+    ttl = m.json_to_ttl_repo_style(pred)
     out[name] = {"input": pred, "schema_valid": len(errs)==0, "validation_errors": errs, "ttl": ttl}
 
 # Determinism self-check: regenerate and compare.
 for name, pred in samples.items():
     pred2 = m.coerce_prediction(dict(pred)); pred2["definition"]=pred2.get("definition","")
-    ttl2 = m.json_to_ttl_repo_style(pred2, creator_orcid_id="0000-0003-2195-3997")
+    ttl2 = m.json_to_ttl_repo_style(pred2)
     assert ttl2 == out[name]["ttl"], f"NONDETERMINISTIC: {name}"
 print(json.dumps(out, ensure_ascii=False, indent=2))
 sys.stderr.write("DETERMINISM_OK: regeneration matched for all samples\n")

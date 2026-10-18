@@ -34,7 +34,6 @@ from ..services.nanopub_service import (
     nanopub_created_literal,
     normalize_target_nanopub_uri,
 )
-from ..services.orcid import normalize_orcid
 
 router = APIRouter()
 
@@ -51,7 +50,6 @@ def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
     pasted-Turtle preparation and generated Turtle stay byte-for-byte aligned.
     """
     return NanopubPreparationOptionsResponse(
-        default_creator_orcid_id=normalize_orcid(settings.nanopub_orcid_id),
         conforms_to_uri=settings.iadopt_variable_conforms_to,
         created_with_label=settings.iadopt_created_with_label,
     )

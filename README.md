@@ -204,6 +204,7 @@ Replace the keys with your **OpenRouter API key** and, if you want to use PSNC m
 
 These keys are used by the backend to call the selected LLM provider.
 The nanopub values are used by the backend to sign and publish nanopublications from the frontend's Turtle payload.
+`NANOPUB_ORCID_ID` and `NANOPUB_PROFILE_NAME` identify the **signing profile** (the key owner) only. They are never used as the creator of a nanopublication or of generated Turtle: the person publishing or retracting types their own **Creator ORCID** below the diagram, and publishing or retracting without one is refused.
 `NANOPUB_PRIVATE_KEY` and `NANOPUB_PUBLIC_KEY` can be provided either as one-line base64 key bodies or as PEM strings with `\n` escapes.
 
 Optional nanopub settings:
