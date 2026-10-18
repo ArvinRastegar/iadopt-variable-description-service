@@ -315,14 +315,14 @@ def assert_retraction_allowed(target_nanopub_uri: str, profile: Profile) -> None
 def build_retraction_nanopub(
     target_nanopub_uri: str,
     profile: Profile,
-    creator_orcid_id: Optional[str] = None,
+    creator_orcid_id: str,
 ) -> Nanopub:
     """Build the retraction nanopub mirroring the Nanodash-style pubinfo shape.
 
     Args:
         target_nanopub_uri: The nanopub being retracted.
         profile: The signing profile.
-        creator_orcid_id: Optional ORCID override for provenance/pubinfo.
+        creator_orcid_id: The publishing person's ORCID.
 
     Returns:
         The unsigned retraction ``Nanopub`` ready to publish.
@@ -400,7 +400,7 @@ def add_nanopub_metadata(
     variable_uri: URIRef,
     created_at: Literal,
     agent_uri: Optional[str],
-    creator_orcid_id: Optional[str] = None,
+    creator_orcid_id: str,
 ) -> None:
     """Add provenance + pubinfo template metadata to a publish nanopub before signing.
 
@@ -409,7 +409,7 @@ def add_nanopub_metadata(
         variable_uri: The introduced variable URI.
         created_at: The publication timestamp literal.
         agent_uri: The software-agent URI, or ``None``.
-        creator_orcid_id: Optional ORCID override.
+        creator_orcid_id: The publishing person's ORCID.
 
     Side effects:
         Resolves creator metadata (possible ORCID lookup).

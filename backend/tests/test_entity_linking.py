@@ -298,7 +298,7 @@ def finalize(monkeypatch):
     monkeypatch.setattr(pipeline, "get_schema_validation_errors", lambda p, label_for_logs=None: [])
     monkeypatch.setattr(pipeline, "get_constraint_semantic_validation_errors", lambda p: [])
 
-    def fake_ttl(enriched, creator_orcid_id=None):
+    def fake_ttl(enriched):
         seen["enriched"] = enriched
         return "TTL"
 

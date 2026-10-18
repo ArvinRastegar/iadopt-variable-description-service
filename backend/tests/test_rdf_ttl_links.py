@@ -17,12 +17,10 @@ import pytest
 from rdflib import Graph, Literal, Namespace, URIRef
 from rdflib.namespace import RDF, RDFS
 
-import app.services.orcid as orcid_service
 import app.services.rdf_ttl as rdf_ttl
 
 IOP = Namespace("https://w3id.org/iadopt/ont/")
 FROZEN_NOW = _dt.datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=_dt.timezone.utc)
-CREATOR = "0000-0003-2195-3997"
 
 QUDT = "http://qudt.org/vocab/quantitykind/Temperature"
 OM = "http://www.ontology-of-units-of-measure.org/resource/om-2/Temperature"
@@ -37,7 +35,6 @@ def freeze_nondeterminism(monkeypatch):
         type("dt", (), {"now": staticmethod(lambda tz=None: FROZEN_NOW), "timezone": _dt.timezone}),
     )
     monkeypatch.setattr(rdf_ttl.random, "randint", lambda a, b: 7)
-    monkeypatch.setattr(orcid_service, "lookup_orcid_display_name", lambda orcid: "Test Creator")
 
 
 def prediction(**fields):
@@ -49,7 +46,7 @@ def prediction(**fields):
 
 
 def graph_of(pred):
-    ttl = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR)
+    ttl = rdf_ttl.json_to_ttl_repo_style(pred)
     graph = Graph()
     graph.parse(data=ttl, format="turtle")
     return ttl, graph
@@ -167,3 +164,12 @@ def test_wikidata_output_is_unchanged_by_the_generalisation():
     """The golden TTL tests pin this byte for byte; this is the same promise at unit level."""
     ttl, _ = graph_of(prediction(hasPropertyURI="https://www.wikidata.org/wiki/Q11466"))
     assert "<https://www.wikidata.org/entity/Q11466>" in ttl
+
+
+def test_generated_turtle_carries_no_creator_orcid():
+    """The person publishing supplies the ORCID later; decomposition never writes one."""
+    ttl, graph = graph_of(prediction())
+    assert "orcid" not in ttl.lower()
+    variable = the_variable(graph)
+    assert not list(graph.objects(variable, URIRef("http://purl.org/dc/terms/creator")))
+    assert not list(graph.objects(variable, URIRef("http://www.w3.org/ns/prov#wasAttributedTo")))

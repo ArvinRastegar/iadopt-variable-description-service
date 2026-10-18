@@ -10,7 +10,10 @@ import triggerRedraw from './lib/triggerRedraw.js';
 import extract from './lib/extract.js';
 import { getCurrentTurtle, getSVGBlob, getPNGBlob, getTurtleBlob } from './lib/export.js';
 import {
+  applyCreatorOrcidToTurtle,
   applyPreNanopubSettingsToTurtle,
+  normalizeOrcid,
+  readCreatorOrcidFromTurtle,
   validatePreNanopubTurtle,
 } from './lib/applyPreNanopubSettingsToTurtle.js';
 
@@ -355,7 +358,6 @@ function setDecomposeButtonState(isLoading) {
   const modelProviderSelect = document.querySelector('#modelProviderSelect');
   const modelSelect = document.querySelector('#modelSelect');
   const thinkingToggle = document.querySelector('#disableThinkingToggle');
-  const creatorOrcidInput = document.querySelector('#creatorOrcidInput');
   const applyPreNanopubButton = document.querySelector('#applyPreNanopubSettings');
   if (!button) return;
 
@@ -365,7 +367,6 @@ function setDecomposeButtonState(isLoading) {
   if (modelProviderSelect) modelProviderSelect.disabled = isLoading;
   if (modelSelect) modelSelect.disabled = isLoading;
   if (thinkingToggle) thinkingToggle.disabled = isLoading;
-  if (creatorOrcidInput) creatorOrcidInput.disabled = isLoading;
   if (applyPreNanopubButton) applyPreNanopubButton.disabled = isLoading || !nanopubPreparationOptions;
 }
 
@@ -377,35 +378,53 @@ function appendRawOutputDelta(delta) {
   rawOutputEl.scrollTop = rawOutputEl.scrollHeight;
 }
 
-function getCreatorMetadataOverrides() {
-  return {
-    creator_orcid_id: document.querySelector('#creatorOrcidInput')?.value?.trim() || undefined,
-  };
+function setOrcidFieldError(inputSelector, labelSelector, message) {
+  const input = document.querySelector(inputSelector);
+  const label = document.querySelector(labelSelector);
+  const feedback = document.querySelector(`${inputSelector}`.replace('Input', 'Error'));
+  if (!input) return;
+
+  const hasError = Boolean(message);
+  input.classList.toggle('is-invalid', hasError);
+  input.setAttribute('aria-invalid', String(hasError));
+  label?.classList.toggle('text-danger', hasError);
+  if (feedback && message) feedback.textContent = message;
 }
 
-function getEffectiveCreatorOrcid() {
-  // The typed ORCID wins; otherwise fall back to the backend-configured default (NANOPUB_ORCID_ID).
-  return (
-    document.querySelector('#creatorOrcidInput')?.value?.trim()
-    || nanopubPreparationOptions?.default_creator_orcid_id
-    || ''
-  );
+function clearCreatorOrcidError() {
+  setOrcidFieldError('#creatorOrcidInput', '#creatorOrcidLabel', '');
 }
 
-function getCurrentPreparationSettings() {
+function clearRetractOrcidError() {
+  setOrcidFieldError('#retractCreatorOrcidInput', '#retractCreatorOrcidLabel', '');
+}
+
+function getTurtleInput() {
+  return document.querySelector('#input');
+}
+
+function getTypedCreatorOrcid() {
+  return document.querySelector('#creatorOrcidInput')?.value?.trim() || '';
+}
+
+function getBasePreparationSettings() {
   if (!nanopubPreparationOptions) {
     throw new Error('Nanopublication preparation settings could not be loaded from the backend.');
   }
 
-  const creatorOrcid = getEffectiveCreatorOrcid();
-  if (!creatorOrcid) {
-    throw new Error('Enter a Creator ORCID or configure NANOPUB_ORCID_ID in the backend .env file.');
-  }
-
   return {
-    creatorOrcid,
     conformsToUri: nanopubPreparationOptions.conforms_to_uri,
     createdWithLabel: nanopubPreparationOptions.created_with_label,
+  };
+}
+
+// The creator ORCID is optional while preparing Turtle: it is applied when typed, and otherwise
+// the Turtle is left without one (publishing asks for it).
+function getCurrentPreparationSettings() {
+  const creatorOrcid = getTypedCreatorOrcid();
+  return {
+    ...getBasePreparationSettings(),
+    ...(creatorOrcid ? { creatorOrcid } : {}),
   };
 }
 
@@ -474,10 +493,18 @@ async function applyPreNanopubSettings() {
   }
 }
 
-function getRetractCreatorMetadataOverrides() {
-  return {
-    creator_orcid_id: document.querySelector('#retractCreatorOrcidInput')?.value?.trim() || undefined,
-  };
+// Retraction uses its own ORCID when typed, otherwise the Creator ORCID field; there is no server default.
+function getRetractCreatorOrcid() {
+  return (
+    document.querySelector('#retractCreatorOrcidInput')?.value?.trim()
+    || getTypedCreatorOrcid()
+  );
+}
+
+// Returns the canonical ORCID URI, '' when none was given, and throws for an invalid one.
+function getValidatedRetractOrcid() {
+  const orcid = getRetractCreatorOrcid();
+  return orcid ? normalizeOrcid(orcid) : '';
 }
 
 function getSelectedModelProvider() {
@@ -602,7 +629,6 @@ async function decomposeDefinition() {
     || getProviderOptions(modelProvider).default_model_name
   );
   const disableThinking = Boolean(document.querySelector('#disableThinkingToggle')?.checked);
-  const creatorMetadata = getCreatorMetadataOverrides();
   const rawOutputEl = document.querySelector('#rawOutput');
   const ttlEl = document.querySelector('#input');
 
@@ -628,7 +654,6 @@ async function decomposeDefinition() {
         model_provider: modelProvider,
         model_name: modelName,
         disable_thinking: disableThinking,
-        ...creatorMetadata,
       }),
     });
 
@@ -734,19 +759,60 @@ async function decomposeDefinition() {
 async function publishNanopub() {
   if (!await requireLogin('publish a nanopublication')) return;
   // Always publish exactly the Turtle currently visible in the textarea (no stale state).
-  const ttl = getCurrentTurtle().trim();
+  const currentTtl = getCurrentTurtle().trim();
 
-  if (!ttl) {
+  if (!currentTtl) {
     throw new Error('No Turtle available to publish.');
   }
 
-  // Gate the export: the visible Turtle must already carry the required nanopub metadata + ORCID.
+  // The ORCID typed below the diagram wins; otherwise the Turtle must already carry one.
+  const typedOrcid = getTypedCreatorOrcid();
+  let creatorOrcidUri = null;
+  let ttl = currentTtl;
   let preparedMetadata;
+
+  if (typedOrcid) {
+    try {
+      creatorOrcidUri = normalizeOrcid(typedOrcid);
+    } catch (e) {
+      setOrcidFieldError('#creatorOrcidInput', '#creatorOrcidLabel', e.message);
+      setPreNanopubStatus(e.message, true);
+      document.querySelector('#creatorOrcidInput')?.focus();
+      throw e;
+    }
+  } else {
+    try {
+      creatorOrcidUri = await readCreatorOrcidFromTurtle(currentTtl);
+    } catch (e) {
+      // A Turtle problem is not an ORCID problem: report it on the status line only.
+      setPreNanopubStatus(e.message || 'The Turtle could not be read.', true);
+      throw e;
+    }
+  }
+
+  if (!creatorOrcidUri) {
+    const message = 'Please put in your ORCID for nanopublication.';
+    setOrcidFieldError('#creatorOrcidInput', '#creatorOrcidLabel', message);
+    setPreNanopubStatus(message, true);
+    document.querySelector('#creatorOrcidInput')?.focus();
+    throw new Error(message);
+  }
+  clearCreatorOrcidError();
+
   try {
-    preparedMetadata = await validatePreNanopubTurtle(ttl, getCurrentPreparationSettings());
+    const settings = { ...getBasePreparationSettings(), creatorOrcid: creatorOrcidUri };
+    // Write the ORCID (typed, or already in the Turtle) into the visible Turtle so dct:creator and
+    // prov:wasAttributedTo both carry it and what is published is what the user sees.
+    ttl = (await applyCreatorOrcidToTurtle(currentTtl, settings)).trim();
+    // Gate the export: the Turtle must carry the required nanopub metadata + this ORCID.
+    preparedMetadata = await validatePreNanopubTurtle(ttl, settings);
   } catch (e) {
     setPreNanopubStatus(e.message || 'The Turtle is not ready for nanopublication.', true);
     throw e;
+  }
+
+  if (ttl !== currentTtl) {
+    getTurtleInput().value = ttl;
   }
 
   // Open the tab after local validation but before the network roundtrip to keep the popup allowance.
@@ -807,7 +873,13 @@ async function retractNanopub() {
   const retractTab = window.open('', '_blank', 'noopener,noreferrer');
   const manualReference = getManualRetractReference();
   const selectedEntry = getSelectedPublishedNanopub();
-  const retractCreatorMetadata = getRetractCreatorMetadataOverrides();
+  let retractCreatorOrcid = '';
+  let retractOrcidError = '';
+  try {
+    retractCreatorOrcid = getValidatedRetractOrcid();
+  } catch (e) {
+    retractOrcidError = e.message;
+  }
   const targetReference = manualReference || selectedEntry?.nanopubUrl;
   const targetLabel = manualReference || selectedEntry?.variableIdentifier || 'selected nanopublication';
 
@@ -816,13 +888,23 @@ async function retractNanopub() {
     throw new Error('Choose a published variable identifier or paste a nanopublication reference to retract.');
   }
 
+  if (!retractCreatorOrcid) {
+    if (retractTab) retractTab.close();
+    const message = retractOrcidError || 'Please put in your ORCID for the retraction.';
+    setOrcidFieldError('#retractCreatorOrcidInput', '#retractCreatorOrcidLabel', message);
+    setRetractStatus(message, true);
+    document.querySelector('#retractCreatorOrcidInput')?.focus();
+    throw new Error(message);
+  }
+  clearRetractOrcidError();
+
   setRetractStatus(`Retracting ${targetLabel}...`);
 
   try {
     const response = await authenticatedFetch(`${BACKEND_URL}/nanopub/retract`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nanopub_uri: targetReference, ...retractCreatorMetadata }),
+      body: JSON.stringify({ nanopub_uri: targetReference, creator_orcid_id: retractCreatorOrcid }),
     });
 
     const data = await response.json();
@@ -894,8 +976,12 @@ document.querySelector('#input')
 
 document.querySelector('#creatorOrcidInput')
   ?.addEventListener('input', () => {
+    clearCreatorOrcidError();
     setPreNanopubStatus('');
   });
+
+document.querySelector('#retractCreatorOrcidInput')
+  ?.addEventListener('input', clearRetractOrcidError);
 
 // ---- PRELOAD TTL FROM URL (optional) ----
 const url = new URL(window.location.href);

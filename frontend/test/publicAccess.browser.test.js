@@ -68,7 +68,6 @@ test('public tools preserve local work while local login gates protected actions
     }
     if (path === '/api/nanopub/preparation-options' && method === 'GET') {
       return json({
-        default_creator_orcid_id: null,
         conforms_to_uri: 'https://w3id.org/iadopt/ont/Variable',
         created_with_label: 'I-ADOPT Variable Description Service',
       });
@@ -133,14 +132,23 @@ test('public tools preserve local work while local login gates protected actions
   element('#editor-label').value = 'Guest edited variable';
   element('#editor-save').click();
   await expect.poll(() => element('#input').value).toContain('Guest edited variable');
-  element('#creatorOrcidInput').value = '0000-0002-1825-0097';
+  // The Creator ORCID sits below the diagram and above the nanopublication button, not in the
+  // decomposition panel, and preparation works (and adds no creator) while it is empty.
+  const orcidField = element('#creatorOrcidInput');
+  const isAfter = (later, earlier) => Boolean(
+    earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(isAfter(orcidField, element('#svg'))).toBe(true);
+  expect(isAfter(element('#publishNanopubButton'), orcidField)).toBe(true);
+  expect(element('.decompose-panel').contains(orcidField)).toBe(false);
+  expect(orcidField.value).toBe('');
+  const creatorQuads = (turtle) => new Parser().parse(turtle).filter((quad) => [
+    'http://purl.org/dc/terms/creator', 'http://www.w3.org/ns/prov#wasAttributedTo',
+  ].includes(quad.predicate.value));
   element('#applyPreNanopubSettings').click();
   await expect.poll(() => element('#preNanopubStatus').textContent).toContain('settings applied');
   const preparedTurtle = element('#input').value;
-  expect(new Parser().parse(preparedTurtle).some((quad) => (
-    quad.predicate.value === 'http://purl.org/dc/terms/creator'
-    && quad.object.value === 'https://orcid.org/0000-0002-1825-0097'
-  ))).toBe(true);
+  expect(creatorQuads(preparedTurtle)).toEqual([]);
+  expect(preparedTurtle).not.toContain('orcid');
   element('#visualize').click();
   await expect.poll(() => element('#svg').textContent).toContain('Guest edited variable');
   element('#export a[data-format="ttl"]').dispatchEvent(new MouseEvent('click', {
@@ -272,18 +280,65 @@ test('public tools preserve local work while local login gates protected actions
   expect(element('#loginDialog').open).toBe(false);
   expectWorkPreserved();
 
-  // A blocked popup still leaves a usable result link after mocked publication.
+  // Publishing without any ORCID is refused in the page: the field turns red with the message,
+  // and nothing is sent, no tab is opened, and the Turtle is untouched.
+  const orcidError = element('#creatorOrcidError');
+  element('#publishNanopubButton').click();
+  await expect.poll(() => orcidField.classList.contains('is-invalid')).toBe(true);
+  expect(element('#creatorOrcidLabel').classList.contains('text-danger')).toBe(true);
+  expect(orcidError.textContent).toContain('Please put in your ORCID for nanopublication.');
+  expect(getComputedStyle(orcidError).display).not.toBe('none');
+  const redOf = (color) => { const [r, g, b] = color.match(/\d+/g).map(Number); return r > 150 && g < 120 && b < 120; };
+  expect(redOf(getComputedStyle(element('#creatorOrcidLabel')).color)).toBe(true);
+  // Bootstrap animates the border colour, so wait for the transition to settle.
+  await expect.poll(() => redOf(getComputedStyle(orcidField).borderColor)).toBe(true);
+  expect(redOf(getComputedStyle(orcidError).color)).toBe(true);
+  expect(element('#preNanopubStatus').textContent).toContain('Please put in your ORCID for nanopublication.');
+  expect(calls.filter((call) => call.path === '/api/nanopub/publish')).toHaveLength(0);
+  expect(popup).not.toHaveBeenCalled();
+  expect(element('#input').value).toBe(preparedTurtle);
+
+  // An invalid ORCID is also refused in the same place.
+  orcidField.value = '0000-0002-1825-0098';
+  element('#publishNanopubButton').click();
+  await expect.poll(() => orcidError.textContent).toContain('check digit');
+  expect(orcidField.classList.contains('is-invalid')).toBe(true);
+  expect(calls.filter((call) => call.path === '/api/nanopub/publish')).toHaveLength(0);
+
+  // Typing a valid ORCID clears the error; publishing writes it into the visible Turtle and sends it.
+  orcidField.value = '0000-0002-1825-0097';
+  orcidField.dispatchEvent(new Event('input', { bubbles: true }));
+  expect(orcidField.classList.contains('is-invalid')).toBe(false);
+  expect(element('#creatorOrcidLabel').classList.contains('text-danger')).toBe(false);
   element('#publishNanopubButton').click();
   await expect.poll(() => container.querySelector('#preNanopubStatus a')?.href).toBe(publishedUrl);
   expect(element('#preNanopubStatus a').target).toBe('_blank');
   expect(element('#preNanopubStatus a').rel).toContain('noopener');
   expect(calls.filter((call) => call.path === '/api/nanopub/publish')).toHaveLength(1);
   const publishRequest = calls.find((call) => call.path === '/api/nanopub/publish');
-  expect(JSON.parse(publishRequest.options.body)).toEqual({
-    ttl: preparedTurtle.trim(), creator_orcid_id: 'https://orcid.org/0000-0002-1825-0097',
-  });
+  const publishBody = JSON.parse(publishRequest.options.body);
+  expect(Object.keys(publishBody).sort()).toEqual(['creator_orcid_id', 'ttl']);
+  expect(publishBody.creator_orcid_id).toBe('https://orcid.org/0000-0002-1825-0097');
+  expect(publishBody.ttl).toBe(element('#input').value.trim());
+  expect(creatorQuads(publishBody.ttl).map((quad) => quad.object.value)).toEqual([
+    'https://orcid.org/0000-0002-1825-0097', 'https://orcid.org/0000-0002-1825-0097',
+  ]);
   expect(JSON.parse(localStorage.getItem(publishedStorageKey))).toHaveLength(1);
   expect(element('#retractSelect').value).toBe(publishedUrl);
+
+  // Retraction has no server default either: without any ORCID it is refused in the page.
+  orcidField.value = '';
+  element('#retractButton').click();
+  await expect.poll(() => element('#retractCreatorOrcidInput').classList.contains('is-invalid')).toBe(true);
+  expect(element('#retractStatus').textContent).toContain('Please put in your ORCID for the retraction.');
+  expect(calls.filter((call) => call.path === '/api/nanopub/retract')).toHaveLength(0);
+  // An invalid retraction ORCID is refused in the page too.
+  element('#retractCreatorOrcidInput').value = '0000-0002-1825-0098';
+  element('#retractButton').click();
+  await expect.poll(() => element('#retractStatus').textContent).toContain('check digit');
+  expect(calls.filter((call) => call.path === '/api/nanopub/retract')).toHaveLength(0);
+  element('#retractCreatorOrcidInput').value = '';
+  orcidField.value = '0000-0002-1825-0097';
 
   element('#retractInput').value = '';
   element('#retractInput').dispatchEvent(new Event('input', { bubbles: true }));
@@ -293,7 +348,9 @@ test('public tools preserve local work while local login gates protected actions
   expect(element('#retractStatus a').rel).toContain('noopener');
   expect(calls.filter((call) => call.path === '/api/nanopub/retract')).toHaveLength(1);
   const retractRequest = calls.find((call) => call.path === '/api/nanopub/retract');
-  expect(JSON.parse(retractRequest.options.body)).toEqual({ nanopub_uri: publishedUrl });
+  expect(JSON.parse(retractRequest.options.body)).toEqual({
+    nanopub_uri: publishedUrl, creator_orcid_id: 'https://orcid.org/0000-0002-1825-0097',
+  });
   expect(JSON.parse(localStorage.getItem(publishedStorageKey))).toEqual([]);
   expect(protectedCalls()).toHaveLength(3);
   expect(popup).toHaveBeenCalledWith(publishedUrl, '_blank', 'noopener,noreferrer');

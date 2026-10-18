@@ -101,15 +101,12 @@ def warmup_assets() -> None:
 def _finalize_pipeline_output(
     raw_llm_output: str,
     pred: Dict[str, Any],
-    *,
-    creator_orcid_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Validate, enrich, and serialize a prediction into the response payload.
 
     Args:
         raw_llm_output: The raw model text to echo back.
         pred: The parsed prediction.
-        creator_orcid_id: Optional ORCID override for TTL provenance.
 
     Returns:
         The ``DecomposeResponse``-shaped dict.
@@ -118,7 +115,7 @@ def _finalize_pipeline_output(
         RuntimeError: If ``pred`` is empty.
 
     Side effects:
-        May call Wikidata, QUDT, EBI OLS and PSNC (entity linking) and ORCID (TTL creator metadata).
+        May call Wikidata, QUDT, EBI OLS and PSNC (entity linking).
     """
     if not pred:
         raise RuntimeError("Could not extract valid JSON from the model output.")
@@ -136,10 +133,7 @@ def _finalize_pipeline_output(
     else:
         enriched = pred
 
-    ttl = json_to_ttl_repo_style(
-        enriched,
-        creator_orcid_id=creator_orcid_id,
-    )
+    ttl = json_to_ttl_repo_style(enriched)
 
     return {
         "raw_llm_output": raw_llm_output,
@@ -292,7 +286,6 @@ def stream_pipeline_events(
     disable_thinking: bool = True,
     model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
-    creator_orcid_id: Optional[str] = None,
 ) -> Iterator[str]:
     """Run the decomposition pipeline, yielding NDJSON event lines.
 
@@ -305,13 +298,12 @@ def stream_pipeline_events(
         disable_thinking: Forwarded to the provider call.
         model_provider: Optional provider override.
         model_name: Optional model override.
-        creator_orcid_id: Optional ORCID override for TTL provenance.
 
     Yields:
         NDJSON event line strings (``raw_delta`` / ``final`` / ``error``).
 
     Side effects:
-        Performs LLM, entity-linking (vocabulary search and PSNC), and ORCID calls.
+        Performs LLM and entity-linking (vocabulary search and PSNC) calls.
     """
     try:
         definition = definition.strip()
@@ -407,7 +399,6 @@ def stream_pipeline_events(
                 final_payload = _finalize_pipeline_output(
                     "".join(all_display_parts),
                     pred,
-                    creator_orcid_id=creator_orcid_id,
                 )
                 yield stream_event("final", data=final_payload)
                 return
@@ -453,7 +444,6 @@ def stream_pipeline_events(
                         final_payload = _finalize_pipeline_output(
                             "".join(all_display_parts),
                             pred,
-                            creator_orcid_id=creator_orcid_id,
                         )
                         yield stream_event("final", data=final_payload)
                         return
@@ -477,7 +467,6 @@ def run_pipeline(
     disable_thinking: bool = True,
     model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
-    creator_orcid_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run the decomposition pipeline and return one final payload (non-streaming).
 
@@ -486,13 +475,12 @@ def run_pipeline(
         disable_thinking: Forwarded to the provider call.
         model_provider: Optional provider override.
         model_name: Optional model override.
-        creator_orcid_id: Optional ORCID override for TTL provenance.
 
     Returns:
         The ``DecomposeResponse``-shaped dict.
 
     Side effects:
-        Performs LLM, entity-linking (vocabulary search and PSNC), and ORCID calls.
+        Performs LLM and entity-linking (vocabulary search and PSNC) calls.
     """
     definition = definition.strip()
     prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(
@@ -519,5 +507,4 @@ def run_pipeline(
     return _finalize_pipeline_output(
         raw_llm_output,
         pred,
-        creator_orcid_id=creator_orcid_id,
     )

@@ -7,8 +7,7 @@ Phase 2 module move (rdf_ttl.py, validation.py) must keep green.
 
 Determinism: ``json_to_ttl_repo_style`` reads the wall clock and ``random`` when
 building the variable identity (see ``_make_variable_identity``). Both are frozen
-here so the output is reproducible. ORCID display-name lookup (a live HTTP call)
-is monkeypatched to a constant so the tests make no network calls.
+here so the output is reproducible. Generated Turtle carries no creator ORCID.
 
 Run inside the backend container:
 
@@ -30,20 +29,17 @@ from conftest import GOLDEN_DIR, load_json
 
 FROZEN_NOW = _dt.datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=_dt.timezone.utc)
 FROZEN_RANDINT = 7
-CREATOR_ORCID = "0000-0003-2195-3997"
 
 GOLDEN_CASES = ["simple_air_temperature", "asymmetric_soil_moisture"]
 
 
 @pytest.fixture(autouse=True)
 def freeze_nondeterminism(monkeypatch):
-    """Freeze clock + RNG + ORCID lookup so TTL generation is byte-reproducible.
+    """Freeze clock + RNG so TTL generation is byte-reproducible.
 
-    The variable-identity clock/RNG live in app.services.rdf_ttl, and ORCID name
-    resolution lives in app.services.orcid; patch each where it is used so the
-    generated TTL is deterministic and makes no real HTTP lookup.
+    The variable-identity clock/RNG live in app.services.rdf_ttl; patch them where
+    they are used.
     """
-    import app.services.orcid as orcid_service
     import app.services.rdf_ttl as rdf_ttl
 
     monkeypatch.setattr(
@@ -52,7 +48,6 @@ def freeze_nondeterminism(monkeypatch):
         type("dt", (), {"now": staticmethod(lambda tz=None: FROZEN_NOW), "timezone": _dt.timezone}),
     )
     monkeypatch.setattr(rdf_ttl.random, "randint", lambda a, b: FROZEN_RANDINT)
-    monkeypatch.setattr(orcid_service, "lookup_orcid_display_name", lambda orcid: "Test Creator")
 
 
 @pytest.mark.parametrize("case", GOLDEN_CASES)
@@ -61,7 +56,7 @@ def test_ttl_matches_golden(case: str):
     pred = load_json(GOLDEN_DIR / f"{case}.input.json")
     expected_ttl = (GOLDEN_DIR / f"{case}.expected.ttl").read_text(encoding="utf-8")
 
-    ttl = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
+    ttl = rdf_ttl.json_to_ttl_repo_style(pred)
 
     assert ttl == expected_ttl
 
@@ -70,8 +65,8 @@ def test_ttl_matches_golden(case: str):
 def test_ttl_is_deterministic(case: str):
     """Regenerating with frozen clock/RNG yields identical output."""
     pred = load_json(GOLDEN_DIR / f"{case}.input.json")
-    first = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
-    second = rdf_ttl.json_to_ttl_repo_style(pred, creator_orcid_id=CREATOR_ORCID)
+    first = rdf_ttl.json_to_ttl_repo_style(pred)
+    second = rdf_ttl.json_to_ttl_repo_style(pred)
     assert first == second
 
 

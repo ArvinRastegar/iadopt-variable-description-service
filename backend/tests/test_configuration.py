@@ -84,7 +84,7 @@ class AuthApiTests(unittest.TestCase):
         expected_keys = {
             "/api/model-options": {"default_model_provider", "default_model_name", "model_names", "providers"},
             "/api/nanopub/preparation-options": {
-                "default_creator_orcid_id", "conforms_to_uri", "created_with_label",
+                "conforms_to_uri", "created_with_label",
             },
         }
         for path, keys in expected_keys.items():
@@ -114,8 +114,8 @@ class AuthApiTests(unittest.TestCase):
         operations = (
             ("POST", "/api/decompose", {"definition": "air temperature"}),
             ("POST", "/api/decompose/stream", {"definition": "air temperature"}),
-            ("POST", "/api/nanopub/publish", {"ttl": "<https://example.org/v> a <https://w3id.org/iadopt/ont/Variable> ."}),
-            ("POST", "/api/nanopub/retract", {"nanopub_uri": "https://example.org/nanopub"}),
+            ("POST", "/api/nanopub/publish", {"ttl": "<https://example.org/v> a <https://w3id.org/iadopt/ont/Variable> .", "creator_orcid_id": "0000-0002-1825-0097"}),
+            ("POST", "/api/nanopub/retract", {"nanopub_uri": "https://example.org/nanopub", "creator_orcid_id": "0000-0002-1825-0097"}),
             ("POST", "/api/events", {"action": "visualize", "payload": {"ttl": "private input"}}),
             ("POST", "/api/admin/users", {"username": "guest", "password": "password-123"}),
             ("PATCH", "/api/admin/users/1", {"display_name": "Changed"}),
@@ -232,13 +232,13 @@ class AuthApiTests(unittest.TestCase):
 
         publish = self.client.post(
             "/api/nanopub/publish",
-            json={"ttl": "not turtle"},
+            json={"ttl": "not turtle", "creator_orcid_id": "0000-0002-1825-0097"},
         )
         self.assertEqual(publish.status_code, 400)
 
         retract = self.client.post(
             "/api/nanopub/retract",
-            json={"nanopub_uri": "not-a-nanopub"},
+            json={"nanopub_uri": "not-a-nanopub", "creator_orcid_id": "0000-0002-1825-0097"},
         )
         self.assertEqual(retract.status_code, 400)
 
@@ -267,3 +267,46 @@ class AuthApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CreatorOrcidRequiredTests(unittest.TestCase):
+    """Publishing identity comes from the person publishing: there is no server default."""
+
+    def test_orcid_resolution_has_no_server_default(self):
+        from app.services import orcid as orcid_service
+
+        with patch.object(orcid_service.settings, "nanopub_orcid_id", "0009-0006-1978-4302", create=True):
+            for missing in (None, ""):
+                with self.subTest(value=missing), self.assertRaisesRegex(RuntimeError, "ORCID is required"):
+                    orcid_service.resolve_creator_metadata(missing)
+
+    def test_supplied_orcid_is_normalized_and_resolved(self):
+        from app.services import orcid as orcid_service
+
+        with patch.object(orcid_service, "lookup_orcid_display_name", return_value="Test Creator"):
+            self.assertEqual(
+                orcid_service.resolve_creator_metadata("0000-0002-1825-0097"),
+                ("https://orcid.org/0000-0002-1825-0097", "Test Creator"),
+            )
+
+    def test_publish_and_retract_requests_require_an_orcid(self):
+        from pydantic import ValidationError
+        from app.schemas.requests import PublishNanopubRequest, RetractNanopubRequest
+
+        for model, fields in (
+            (PublishNanopubRequest, {"ttl": "x"}),
+            (RetractNanopubRequest, {"nanopub_uri": "x"}),
+        ):
+            for extra in ({}, {"creator_orcid_id": ""}):
+                with self.subTest(model=model.__name__, extra=extra), self.assertRaises(ValidationError):
+                    model(**fields, **extra)
+
+    def test_preparation_options_expose_no_default_orcid(self):
+        from app.schemas.responses import NanopubPreparationOptionsResponse
+
+        self.assertNotIn("default_creator_orcid_id", NanopubPreparationOptionsResponse.model_fields)
+
+    def test_decompose_request_has_no_orcid_field(self):
+        from app.schemas.requests import DecomposeRequest
+
+        self.assertNotIn("creator_orcid_id", DecomposeRequest.model_fields)

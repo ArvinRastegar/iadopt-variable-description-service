@@ -28,8 +28,6 @@ class DecomposeRequest(BaseModel):
         model_name: One of the backend-configured model names; ``None`` uses the
             provider default.
         model_provider: Model provider to use; defaults to the configured default.
-        creator_orcid_id: Optional ORCID override for TTL/provenance metadata;
-            falls back to ``NANOPUB_ORCID_ID`` when omitted.
         disable_thinking: When true, request the model without reasoning effort.
     """
 
@@ -42,10 +40,6 @@ class DecomposeRequest(BaseModel):
             f"{', '.join(settings.enabled_model_providers)}."
         ),
     )
-    creator_orcid_id: Optional[str] = Field(
-        default=None,
-        description="Optional ORCID override for TTL/provenance metadata; falls back to NANOPUB_ORCID_ID when omitted.",
-    )
     disable_thinking: bool = Field(
         default=True,
         description="When true, request the model without reasoning effort by sending `reasoning.effort = none`.",
@@ -57,13 +51,12 @@ class PublishNanopubRequest(BaseModel):
 
     Attributes:
         ttl: TTL assertion payload currently shown in the frontend (required).
-        creator_orcid_id: Optional ORCID override for provenance/pubinfo metadata.
+        creator_orcid_id: The publishing person's ORCID (required; no server default).
     """
 
     ttl: str = Field(..., min_length=1, description="TTL assertion payload currently shown in the frontend")
-    creator_orcid_id: Optional[str] = Field(
-        default=None,
-        description="Optional ORCID override for provenance/pubinfo metadata; falls back to NANOPUB_ORCID_ID when omitted.",
+    creator_orcid_id: NonEmptyStr = Field(
+        ..., description="ORCID of the person publishing (bare id or https://orcid.org/ URI); required."
     )
 
 
@@ -72,15 +65,14 @@ class RetractNanopubRequest(BaseModel):
 
     Attributes:
         nanopub_uri: The published nanopub URI or Nanodash explore URL to retract.
-        creator_orcid_id: Optional ORCID override for retraction provenance/pubinfo.
+        creator_orcid_id: The retracting person's ORCID (required; no server default).
     """
 
     nanopub_uri: str = Field(
         ..., min_length=1, description="The published nanopub URI or Nanodash explore URL to retract"
     )
-    creator_orcid_id: Optional[str] = Field(
-        default=None,
-        description="Optional ORCID override for retraction provenance/pubinfo metadata; falls back to NANOPUB_ORCID_ID when omitted.",
+    creator_orcid_id: NonEmptyStr = Field(
+        ..., description="ORCID of the person retracting (bare id or https://orcid.org/ URI); required."
     )
 
 

@@ -84,12 +84,10 @@ class NanopubPreparationOptionsResponse(BaseModel):
     """Metadata constants for preparing pasted Turtle (``/api/nanopub/preparation-options``).
 
     Attributes:
-        default_creator_orcid_id: Configured default creator ORCID URI, if any.
         conforms_to_uri: The I-ADOPT ``dct:conformsTo`` target URI.
         created_with_label: The ``pav:createdWith`` label.
     """
 
-    default_creator_orcid_id: Optional[str]
     conforms_to_uri: str
     created_with_label: str
 

@@ -35,7 +35,7 @@ body:
     id: creator_orcid
     attributes:
       label: Creator ORCID used
-      description: Paste the ORCID used in the frontend, or state that the default `.env` value was used.
+      description: Paste the ORCID you typed in the frontend.
       placeholder: https://orcid.org/0000-0000-0000-0000
     validations:
       required: false
