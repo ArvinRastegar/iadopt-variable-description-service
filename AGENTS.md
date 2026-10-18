@@ -1,6 +1,10 @@
 <!-- Repo-specific rules only; every line must prevent a mistake. Keep it short. Plans, decisions and approvals never go here: they live in the private docs checkout. -->
 # Agent instructions
 
+## Git ownership
+- Never create commits or push in this project, including amend, merge commits or equivalent automated actions. The user performs all commits and pushes.
+- Provide proposed commit messages only; stop before any commit or push, even if a workflow or skill suggests it.
+
 ## Verify
 Run the commands that cover your change, all of them when unsure. Backend from `backend/` with the project venv (`../.venv/bin/`), frontend from `frontend/`.
 - `python -m compileall -q app && python -m pytest tests -q`
