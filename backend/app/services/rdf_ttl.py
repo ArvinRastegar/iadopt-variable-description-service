@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..core.config import settings
 from ..core.text import lookup_key, normalize_text, ttl_quote
 from .orcid import orcid_suffix, resolve_creator_metadata
+from .vocabularies import quantity_vocabulary_iri
 
 TTL_PREFIXES = """@prefix iop: <https://w3id.org/iadopt/ont/> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -40,17 +41,26 @@ WIKIDATA_ENTITY = "https://www.wikidata.org/entity/"
 IADOPT_VARIABLE_BASE = "https://w3id.org/iadopt/variable/"
 
 
-def wiki_to_entity(uri: Optional[str]) -> Optional[str]:
-    """Normalize a Wikidata page URL into its canonical entity URL.
+def linked_entity_iri(uri: Optional[str]) -> Optional[str]:
+    """Normalize a stored entity link into the IRI to write in Turtle.
+
+    A QUDT quantity-kind or OM-2 IRI is kept exactly as stored, but only when it is exactly in
+    one of those vocabularies' own canonical forms: it is written between angle brackets, so
+    nothing else gets through. Any other value is read as a Wikidata reference and reduced to
+    its item id, which is the only part of it that is ever written.
 
     Args:
-        uri: A Wikidata URL/identifier or ``None``.
+        uri: A stored ``*URI`` value (a Wikidata URL/identifier, or a QUDT or OM IRI) or ``None``.
 
     Returns:
-        The ``.../entity/Q...`` URL, or ``None`` if no QID is found.
+        The IRI to write: the QUDT or OM IRI itself, the canonical ``.../entity/Q...`` URL for
+        a Wikidata reference, or ``None`` if the value is neither.
     """
     if not uri:
         return None
+    vocabulary_iri = quantity_vocabulary_iri(uri)
+    if vocabulary_iri:
+        return vocabulary_iri
     m = re.search(r"(Q\d+)", uri)
     if not m:
         return None
@@ -261,7 +271,8 @@ def json_to_ttl_repo_style(
     """Serialize an enriched prediction into the simple I-ADOPT Turtle shape.
 
     Args:
-        pred: The enriched prediction (labels plus optional Wikidata ``*URI`` keys).
+        pred: The enriched prediction (labels plus optional ``*URI`` keys holding Wikidata,
+            QUDT or OM links).
         creator_orcid_id: Optional ORCID override for creator/provenance metadata.
 
     Returns:
@@ -327,7 +338,7 @@ def json_to_ttl_repo_style(
     def build_system_component(field: str, value: Dict[str, Any], role_name: str) -> Tuple[str, str]:
         """Emit an asymmetric/symmetric system block and return its (ref, system_label)."""
         system_key = "AsymmetricSystem" if "AsymmetricSystem" in value else "SymmetricSystem"
-        system_uri = wiki_to_entity(value.get(f"{system_key}URI"))
+        system_uri = linked_entity_iri(value.get(f"{system_key}URI"))
         system_ref = f"<{system_uri}>" if system_uri else local_resource_ref(field)
         component_lines: List[str] = []
         # The system label is derived from its components in canonical order (first part + second
@@ -349,7 +360,7 @@ def json_to_ttl_repo_style(
                 role_label = normalize_text(value.get(key) or "")
                 if not role_label:
                     continue
-                role_uri = wiki_to_entity(value.get(f"{key}URI"))
+                role_uri = linked_entity_iri(value.get(f"{key}URI"))
                 role_ref, clean_role_label = build_simple_component(suffix, role_label, "iop:Entity", role_uri)
                 component_lines.append(f"    iop:{key} {role_ref} ;")
                 component_labels.append(clean_role_label)
@@ -367,7 +378,7 @@ def json_to_ttl_repo_style(
                 clean_part_label = normalize_text(part_label)
                 if not clean_part_label:
                     continue
-                part_uri = wiki_to_entity(part_uris[idx - 1]) if idx - 1 < len(part_uris) else None
+                part_uri = linked_entity_iri(part_uris[idx - 1]) if idx - 1 < len(part_uris) else None
                 part_ref, _ = build_simple_component(f"{field}-part-{idx}", clean_part_label, "iop:Entity", part_uri)
                 part_refs.append(part_ref)
                 component_labels.append(clean_part_label)
@@ -386,7 +397,7 @@ def json_to_ttl_repo_style(
         # generation and constraint resolution work from the same canonical context.
         value = pred.get(field)
         if isinstance(value, str) and normalize_text(value):
-            uri = wiki_to_entity(pred.get(f"{field}URI"))
+            uri = linked_entity_iri(pred.get(f"{field}URI"))
             ref, label = build_simple_component(field, value, rdf_type, uri)
             formula_context[role_name] = label
             register_target(ref, role_name, field, role_name, label)

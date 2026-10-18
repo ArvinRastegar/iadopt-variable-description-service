@@ -2,7 +2,7 @@ import os
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -11,7 +11,6 @@ from app import main
 from app.core import config as core_config
 from app.core import dependencies as core_deps
 from app.routers import decompose as decompose_router
-from app.services import reranker as reranker_service
 
 
 class ProviderConfigurationTests(unittest.TestCase):
@@ -29,28 +28,6 @@ class ProviderConfigurationTests(unittest.TestCase):
     def test_invalid_provider_is_rejected(self):
         with self.assertRaises(RuntimeError):
             core_config._parse_enabled_model_providers("psnc,unknown")
-
-
-class PsncRerankerTests(unittest.TestCase):
-    # The reranker moved to app.services.reranker in Phase 2; patch its session there.
-    @patch.object(reranker_service, "get_http_session")
-    def test_scores_are_returned_in_document_order(self, get_http_session):
-        response = Mock()
-        response.json.return_value = {
-            "results": [
-                {"index": 1, "relevance_score": 0.2},
-                {"index": 0, "relevance_score": 0.9},
-            ]
-        }
-        response.raise_for_status.return_value = None
-        get_http_session.return_value.post.return_value = response
-
-        scores = reranker_service.call_psnc_reranker("query", ["first", "second"])
-
-        self.assertEqual(scores, [0.9, 0.2])
-        request = get_http_session.return_value.post.call_args
-        self.assertEqual(request.kwargs["json"]["model"], core_config.settings.psnc_rerank_model)
-        self.assertEqual(request.kwargs["json"]["documents"], ["first", "second"])
 
 
 class AuthApiTests(unittest.TestCase):

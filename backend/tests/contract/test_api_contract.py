@@ -15,7 +15,7 @@ Coverage and deliberate exclusions:
   real LLM call; enabled only when ``IADOPT_CONTRACT_RUN_LLM=1``).
 * ``/api/nanopub/publish`` and ``/api/nanopub/retract``: only the 401/422 error
   paths are asserted. The success paths write irreversibly to the public nanopub
-  registry and are NEVER exercised here (see docs/CONTRACTS.md).
+  registry and are NEVER exercised here (see iadopt-variable-description-service-docs/CONTRACTS.md).
 """
 
 from __future__ import annotations

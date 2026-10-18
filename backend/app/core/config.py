@@ -161,10 +161,9 @@ class Settings(BaseSettings):
     # --- PSNC client -------------------------------------------------------- #
     psnc_api_key: Optional[str] = Field(default=None, validation_alias="PSNC_API_KEY")
     psnc_api_base_url: str = Field(default="https://llm.hpc.psnc.pl", validation_alias="PSNC_API_BASE_URL")
-    psnc_rerank_model: str = Field(default="bge-reranker-v2-m3", validation_alias="PSNC_RERANK_MODEL")
 
-    # --- Wikidata enrichment ------------------------------------------------ #
-    rerank_threshold: float = Field(default=0.10, validation_alias="RERANK_THRESHOLD")
+    # --- Entity linking ----------------------------------------------------- #
+    # Despite its name this flag switches all entity linking: Wikidata, QUDT and OM (D-032).
     enable_wikidata_linking: bool = Field(default=True, validation_alias="ENABLE_WIKIDATA_LINKING")
 
     # --- Nanopub ------------------------------------------------------------ #

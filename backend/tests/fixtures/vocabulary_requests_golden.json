@@ -1,0 +1,45 @@
+{
+  "wikidata": {
+    "url": "https://www.wikidata.org/w/api.php",
+    "params": {
+      "action": "wbsearchentities",
+      "search": "soil moisture of the topsoil",
+      "language": "en",
+      "uselang": "en",
+      "type": "item",
+      "limit": "10",
+      "format": "json"
+    },
+    "headers": {
+      "Accept": "application/json"
+    }
+  },
+  "qudt": {
+    "url": "https://www.qudt.org/fuseki/qudt/sparql",
+    "params": {
+      "query": "PREFIX qudt: <http://qudt.org/schema/qudt/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nSELECT ?qk ?len ?label ?description ?wikidata ?definedBy WHERE {\n  { SELECT ?qk (MIN(STRLEN(STR(?l))) AS ?len) WHERE {\n      ?qk a qudt:QuantityKind ; rdfs:label ?l .\n      FILTER(STRSTARTS(LANG(?l), \"en\") || LANG(?l) = \"\")\n      FILTER NOT EXISTS { ?qk qudt:deprecated true }\n      FILTER(CONTAINS(LCASE(STR(?l)), \"soil\"))\n      FILTER(CONTAINS(LCASE(STR(?l)), \"moisture\"))\n      FILTER(CONTAINS(LCASE(STR(?l)), \"topsoil\"))\n  } GROUP BY ?qk ORDER BY ?len ?qk LIMIT 10 }\n  ?qk rdfs:label ?label . FILTER(STRSTARTS(LANG(?label), \"en\") || LANG(?label) = \"\")\n  OPTIONAL { ?qk dcterms:description ?d1 }\n  OPTIONAL { ?qk qudt:plainTextDescription ?d2 }\n  OPTIONAL { ?qk qudt:wikidataMatch ?wikidata }\n  OPTIONAL { ?qk rdfs:isDefinedBy ?definedBy }\n  BIND(COALESCE(?d1, ?d2) AS ?description)\n}"
+    },
+    "headers": {
+      "Accept": "application/sparql-results+json"
+    }
+  },
+  "om": {
+    "url": "https://www.ebi.ac.uk/ols4/api/search",
+    "params": {
+      "q": "soil moisture of the topsoil",
+      "ontology": "om",
+      "allChildrenOf": "http://www.ontology-of-units-of-measure.org/resource/om-2/Quantity",
+      "rows": "10",
+      "fieldList": "iri,label,description,type,ontology_name"
+    },
+    "headers": {
+      "Accept": "application/json"
+    }
+  },
+  "_no_searchable_word": {
+    "wikidata": "request",
+    "qudt": null,
+    "om": "request"
+  },
+  "_result_limit": 10
+}

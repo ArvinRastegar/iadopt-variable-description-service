@@ -1,0 +1,203 @@
+{
+  "provenance": {
+    "generated_by": "iadopt_linking.chat_choice.chat_request (sibling working tree, HEAD 6c00370 plus uncommitted chat modules), identity candidate order, 300-character cap",
+    "prompt_version": "psnc-chat-entity-link-v1",
+    "prompt_fingerprint": "20d69e9a52e2dfe38c19250c0ce7fea2761b5352440b1b38bae4b63735ff6f24",
+    "removed_keys": [
+      "logprobs",
+      "top_logprobs"
+    ]
+  },
+  "constants": {
+    "labels": "123456789ABCDEFGHJKLMNPQRSTUVWXYZ",
+    "none_label": "0",
+    "none_description": "no candidate is the same concept as the term",
+    "answer_line": "Answer with one label.",
+    "system_prompt": "You link a term from a scientific variable name to the knowledge-base entry that names the same concept. You are given a `term`, the `variable_definition` of the variable the term is a component of, and a numbered list of candidate entries. Pick the candidate that is the entry for the concept that `term` names. Use `variable_definition` only to tell which meaning of `term` is intended. A candidate matches only if it is the same concept as `term`: a broader, narrower or merely related concept does not match, and neither does a concept for the whole variable. Differences in capitalization, plural form or word order do not matter. If no candidate is the same concept, pick option 0. Reply with the label of exactly one option (a digit or a capital letter) and nothing else.",
+    "max_tokens": 1,
+    "temperature": 0,
+    "max_description_chars": 300
+  },
+  "cases": [
+    {
+      "name": "short_mixed_sources",
+      "term": "temperature",
+      "definition": "air temperature measured at 2 m above ground",
+      "candidates": [
+        {
+          "source": "wikidata",
+          "local_id": "Q11466",
+          "label": "temperature",
+          "description": "physical quantity expressing hot and cold"
+        },
+        {
+          "source": "om",
+          "local_id": "Temperature",
+          "label": "temperature",
+          "description": ""
+        },
+        {
+          "source": "qudt",
+          "local_id": "Temperature",
+          "label": "Temperature",
+          "description": "Temperature is a physical quantity that expresses quantitatively the perceptions of hotness and coldness."
+        }
+      ],
+      "request": {
+        "model": "Qwen3.8-27B",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You link a term from a scientific variable name to the knowledge-base entry that names the same concept. You are given a `term`, the `variable_definition` of the variable the term is a component of, and a numbered list of candidate entries. Pick the candidate that is the entry for the concept that `term` names. Use `variable_definition` only to tell which meaning of `term` is intended. A candidate matches only if it is the same concept as `term`: a broader, narrower or merely related concept does not match, and neither does a concept for the whole variable. Differences in capitalization, plural form or word order do not matter. If no candidate is the same concept, pick option 0. Reply with the label of exactly one option (a digit or a capital letter) and nothing else."
+          },
+          {
+            "role": "user",
+            "content": "term: temperature\nvariable_definition: air temperature measured at 2 m above ground\n\ncandidates:\n1. \"temperature\": physical quantity expressing hot and cold\n2. \"temperature\"\n3. \"Temperature\": Temperature is a physical quantity that expresses quantitatively the perceptions of hotness and coldness.\n0. none of these: no candidate is the same concept as the term\n\nAnswer with one label."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 1,
+        "stream": false,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    {
+      "name": "long_description_quotes_unicode",
+      "term": "soil moisture",
+      "definition": "volumetric water content (θ) of the topsoil,\nmeasured in m³/m³",
+      "candidates": [
+        {
+          "source": "qudt",
+          "local_id": "VolumetricWaterContent",
+          "label": "Volumetric Water Content",
+          "description": "Volumetric water content is the ratio of the volume of water to the unit volume of soil.  It is expressed in cubic metres of water per cubic metre of soil, or as a percentage.\nMeasurements are usually made with time-domain reflectometry, capacitance sensors or neutron probes, and depend on soil texture, bulk density and temperature. Values range from the residual water content to the saturated water content (porosity). Supercalifragilisticexpialidocious-measurement-technique-without-spaces"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q1",
+          "label": "Gauge \"pressure\"",
+          "description": "a quoted label"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q2",
+          "label": "α-diversity",
+          "description": "≤ 300 characters, with unicode: µm – °C"
+        }
+      ],
+      "request": {
+        "model": "Qwen3.8-27B",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You link a term from a scientific variable name to the knowledge-base entry that names the same concept. You are given a `term`, the `variable_definition` of the variable the term is a component of, and a numbered list of candidate entries. Pick the candidate that is the entry for the concept that `term` names. Use `variable_definition` only to tell which meaning of `term` is intended. A candidate matches only if it is the same concept as `term`: a broader, narrower or merely related concept does not match, and neither does a concept for the whole variable. Differences in capitalization, plural form or word order do not matter. If no candidate is the same concept, pick option 0. Reply with the label of exactly one option (a digit or a capital letter) and nothing else."
+          },
+          {
+            "role": "user",
+            "content": "term: soil moisture\nvariable_definition: volumetric water content (θ) of the topsoil,\nmeasured in m³/m³\n\ncandidates:\n1. \"Volumetric Water Content\": Volumetric water content is the ratio of the volume of water to the unit volume of soil. It is expressed in cubic metres of water per cubic metre of soil, or as a percentage. Measurements are usually made with time-domain reflectometry, capacitance sensors or neutron probes, and depend on soil…\n2. \"Gauge \"pressure\"\": a quoted label\n3. \"α-diversity\": ≤ 300 characters, with unicode: µm – °C\n0. none of these: no candidate is the same concept as the term\n\nAnswer with one label."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 1,
+        "stream": false,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    },
+    {
+      "name": "eleven_options_reach_label_B",
+      "term": "count",
+      "definition": "number of persons receiving welfare in a statistical unit",
+      "candidates": [
+        {
+          "source": "wikidata",
+          "local_id": "Q101",
+          "label": "option 1",
+          "description": ""
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q102",
+          "label": "option 2",
+          "description": "description of option 2"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q103",
+          "label": "option 3",
+          "description": ""
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q104",
+          "label": "option 4",
+          "description": "description of option 4"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q105",
+          "label": "option 5",
+          "description": ""
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q106",
+          "label": "option 6",
+          "description": "description of option 6"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q107",
+          "label": "option 7",
+          "description": ""
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q108",
+          "label": "option 8",
+          "description": "description of option 8"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q109",
+          "label": "option 9",
+          "description": ""
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q110",
+          "label": "option 10",
+          "description": "description of option 10"
+        },
+        {
+          "source": "wikidata",
+          "local_id": "Q111",
+          "label": "option 11",
+          "description": ""
+        }
+      ],
+      "request": {
+        "model": "Qwen3.8-27B",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You link a term from a scientific variable name to the knowledge-base entry that names the same concept. You are given a `term`, the `variable_definition` of the variable the term is a component of, and a numbered list of candidate entries. Pick the candidate that is the entry for the concept that `term` names. Use `variable_definition` only to tell which meaning of `term` is intended. A candidate matches only if it is the same concept as `term`: a broader, narrower or merely related concept does not match, and neither does a concept for the whole variable. Differences in capitalization, plural form or word order do not matter. If no candidate is the same concept, pick option 0. Reply with the label of exactly one option (a digit or a capital letter) and nothing else."
+          },
+          {
+            "role": "user",
+            "content": "term: count\nvariable_definition: number of persons receiving welfare in a statistical unit\n\ncandidates:\n1. \"option 1\"\n2. \"option 2\": description of option 2\n3. \"option 3\"\n4. \"option 4\": description of option 4\n5. \"option 5\"\n6. \"option 6\": description of option 6\n7. \"option 7\"\n8. \"option 8\": description of option 8\n9. \"option 9\"\nA. \"option 10\": description of option 10\nB. \"option 11\"\n0. none of these: no candidate is the same concept as the term\n\nAnswer with one label."
+          }
+        ],
+        "temperature": 0,
+        "max_tokens": 1,
+        "stream": false,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      }
+    }
+  ]
+}

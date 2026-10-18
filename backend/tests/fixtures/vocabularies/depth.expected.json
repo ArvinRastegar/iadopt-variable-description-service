@@ -1,0 +1,73 @@
+{
+ "wikidata": [
+  {
+   "iri": "http://www.wikidata.org/entity/Q19580008",
+   "label": "Depth",
+   "description": "2014 video game"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q133476870",
+   "label": "Depth",
+   "description": "2024 EP by Yuta"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q930412",
+   "label": "depth",
+   "description": "vertical distance below the reference surface"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q139938501",
+   "label": "Depth",
+   "description": ""
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q139939773",
+   "label": "Depth",
+   "description": ""
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q3250078",
+   "label": "depth",
+   "description": "horizontal dimension away from the observer"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q653260",
+   "label": "depth charge",
+   "description": "anti-submarine weapon"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q63189631",
+   "label": "Depth of Extinction",
+   "description": "2018 video game"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q5530081",
+   "label": "Gehrayee",
+   "description": "1980 film by Aruna Raje"
+  },
+  {
+   "iri": "http://www.wikidata.org/entity/Q5462699",
+   "label": "Fluid",
+   "description": "1996 video game"
+  }
+ ],
+ "qudt": [
+  {
+   "iri": "http://qudt.org/vocab/quantitykind/Depth",
+   "label": "Depth",
+   "description": "Depth typically refers to the vertical measure of length from the surface of a liquid."
+  },
+  {
+   "iri": "http://qudt.org/vocab/quantitykind/LondonPenetrationDepth",
+   "label": "London Penetration Depth",
+   "description": "\"London Penetration Depth\" characterizes the distance to which a magnetic field penetrates into a superconductor and becomes equal to 1/e times that of the magnetic field at the surface of the superconductor."
+  }
+ ],
+ "om": [
+  {
+   "iri": "http://www.ontology-of-units-of-measure.org/resource/om-2/Depth",
+   "label": "depth",
+   "description": ""
+  }
+ ]
+}

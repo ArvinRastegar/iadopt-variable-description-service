@@ -1,6 +1,6 @@
 """Tests for the entityOrSystem shapes the validation schema accepts.
 
-Contract: docs/components/lexical-schema.md — D-005.
+Contract: iadopt-variable-description-service-docs/components/lexical-schema.md — D-005.
 Observed through the real seam: Draft202012Validator over the pipeline-patched schema.
 """
 

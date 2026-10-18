@@ -12,7 +12,7 @@ two tiers:
   saved fixtures. They are skipped unless ``IADOPT_CONTRACT_BASE_URL`` is set.
 
 Nothing here mutates state on external services; nanopub publish/retract success
-paths are intentionally NOT exercised live (see docs/CONTRACTS.md).
+paths are intentionally NOT exercised live (see iadopt-variable-description-service-docs/CONTRACTS.md).
 """
 
 from __future__ import annotations

@@ -1,0 +1,24 @@
+{ "head": {
+    "vars": [ "qk" , "len" , "label" , "description" , "wikidata" , "definedBy" ]
+  } ,
+  "results": {
+    "bindings": [
+      { 
+        "qk": { "type": "uri" , "value": "http://qudt.org/vocab/quantitykind/Depth" } ,
+        "len": { "type": "literal" , "datatype": "http://www.w3.org/2001/XMLSchema#integer" , "value": "5" } ,
+        "label": { "type": "literal" , "xml:lang": "en" , "value": "Depth" } ,
+        "description": { "type": "literal" , "datatype": "http://qudt.org/schema/qudt/LatexString" , "value": "Depth typically refers to the vertical measure of length from the surface of a liquid." } ,
+        "wikidata": { "type": "uri" , "value": "http://www.wikidata.org/entity/Q930412" } ,
+        "definedBy": { "type": "uri" , "value": "http://qudt.org/vocab/quantitykind" }
+      } ,
+      { 
+        "qk": { "type": "uri" , "value": "http://qudt.org/vocab/quantitykind/LondonPenetrationDepth" } ,
+        "len": { "type": "literal" , "datatype": "http://www.w3.org/2001/XMLSchema#integer" , "value": "24" } ,
+        "label": { "type": "literal" , "xml:lang": "en" , "value": "London Penetration Depth" } ,
+        "description": { "type": "literal" , "datatype": "http://qudt.org/schema/qudt/LatexString" , "value": "\"London Penetration Depth\" characterizes the distance to which a magnetic field penetrates into a\n    superconductor and becomes equal to 1/e times that of the magnetic field at the surface of the superconductor.\n  " } ,
+        "wikidata": { "type": "uri" , "value": "http://www.wikidata.org/entity/Q3277853" } ,
+        "definedBy": { "type": "uri" , "value": "http://qudt.org/vocab/quantitykind" }
+      }
+    ]
+  }
+}

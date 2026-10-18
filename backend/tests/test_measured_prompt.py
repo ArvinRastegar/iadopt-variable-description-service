@@ -1,6 +1,6 @@
 """Byte-exactness tests for the measured prompt renderer.
 
-Contract: docs/components/measured-prompt.md
+Contract: iadopt-variable-description-service-docs/components/measured-prompt.md
 """
 
 from __future__ import annotations

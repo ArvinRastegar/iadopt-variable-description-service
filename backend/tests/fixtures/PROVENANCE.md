@@ -76,3 +76,63 @@ check for anyone who has it.
 | `backend/data/measured/demonstrations-top25.json` | The 25 demonstrations, indented for review; re-encoded compactly at render time |
 | `backend/tests/fixtures/measured_prompt_golden.txt` | The rendered prompt, one trailing newline |
 | `backend/tests/fixtures/measured_target_definition.txt` | The §5 target definition the golden was rendered for |
+
+# Entity-linking fixtures (D-032)
+
+Added 2026-10-16. They pin the entity-linking question and the vocabulary searches to
+what the sibling `iadopt-linking` project measured (its DECISIONS L-006 and L-016 to
+L-018, prompt version `psnc-chat-entity-link-v1`, prompt fingerprint
+`20d69e9a52e2dfe38c19250c0ce7fea2761b5352440b1b38bae4b63735ff6f24`). As above they are
+produced by that project's own code, never typed.
+
+| File | What it pins | Produced by |
+|---|---|---|
+| `entity_link_request_golden.json` | The chat request (system prompt, user-message layout, labels, decoding parameters) for three invented cases, and the constants | `chat_choice.chat_request` with an identity candidate order and the 300-character cap, then `logprobs` and `top_logprobs` removed |
+| `entity_choice_helpers_golden.json` | Term normalisation and description truncation | `population.normalise_term`, `rerank.truncate_description` |
+| `vocabulary_requests_golden.json` | The Wikidata, QUDT and OM search requests for one key, and the key that QUDT cannot search | `sources.WikidataSource/QudtSource/OmSource().request` |
+| `vocabularies/depth.{wikidata,qudt,om}.json` | Three real responses, byte for byte (retrieved 2026-10-14, 10 + 2 + 1 candidates) | `results/baseline-20261014/candidates.jsonl`, field `response_text` |
+| `vocabularies/depth.expected.json` | The candidates the sibling parsed from those responses | the same records, field `candidates` |
+
+## How they were made
+
+From the sibling repository root, with its lab interpreter and without writing anything
+there (`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=iadopt-linking/src
+iadopt-lab/.venv/bin/python script.py OUT`), a short script called
+`chat_request(term, definition, pool, list(range(len(pool))), max_description_chars=300)`
+for each case, `normalise_term` and `truncate_description` for each input, and
+`SOURCES[name].request("soil moisture of the topsoil")` for each source, and dumped the
+results. The three cases use invented candidates. Nothing was sent to any service.
+
+Sources at that moment (sibling HEAD `6c00370`; the chat modules were uncommitted):
+
+| Module | SHA-256 (first 16) | Modified |
+|---|---|---|
+| `chat_choice.py` | `9161b0056d781cb7` | 2026-10-15 14:59 |
+| `jev.py` | `62d5cf0ba1436f9a` | 2026-10-15 12:29 |
+| `rerank.py` | `c7b09ae0df076ffe` | 2026-10-14 15:12 |
+| `population.py` | `3d795d2439cde960` | 2026-10-13 15:37 |
+| `sources.py` | `02915bf09ac91dbb` | 2026-10-14 15:12 |
+
+## Checked when they were made
+
+- All 459 stored real responses (153 per source, 1,622 candidates) parse with
+  `vocabularies.parse_response` to exactly the `iri`, `label` and `description` the
+  sibling stored, in the same order. No mismatch.
+- The three search-request builders equal the sibling's for the sample key.
+- `chat_choice.prompt_fingerprint()` printed `20d69e9a52e2`, the value recorded in the
+  sibling's plan and in D-032.
+
+## Recorded checksums
+
+SHA-256 over the file bytes, as produced on 2026-10-16; `test_entity_link_provenance.py`
+fails if a file no longer matches.
+
+| File | SHA-256 |
+|---|---|
+| `entity_link_request_golden.json` | `f0207c9df125df550e8a36f173b8d2648926aac6a823813711f94b92e85a6f2c` |
+| `entity_choice_helpers_golden.json` | `92a7f5641605cde4e0ac5e9371859171683986c88996467f6e22e0ab6c222d88` |
+| `vocabulary_requests_golden.json` | `36bcbe32cbc325cfadf1a5128a568be286c188b4c221ea02d9f9bc8b003b59fc` |
+| `vocabularies/depth.expected.json` | `a0058b7e3ad11e92d0e6cff097c7d18a6d99f18ee87732420fcef44adcb38833` |
+| `vocabularies/depth.wikidata.json` | `56590959945f1bb5c71ac0bf33202032a59abe7c4c54666c4929a8fd17af66f7` |
+| `vocabularies/depth.qudt.json` | `04a2731983e23a265a5a82e6f40d04349f3404d57ee6572193fc1014db49319a` |
+| `vocabularies/depth.om.json` | `c018fe9031bd5f17366e4796880293fe70c432be4246dbe002bf0e38620d36a1` |

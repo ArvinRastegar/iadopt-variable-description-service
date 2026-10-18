@@ -1,7 +1,7 @@
 """PSNC/PCSS HTTP plumbing: request payloads, auth headers, and endpoint URLs.
 
 This module owns the wire-level details of talking to the PSNC LiteLLM-compatible
-service (chat completions and reranking). Business logic (retries, parsing) lives
+service (chat completions). Business logic (retries, parsing) lives
 in the ``services`` layer; this module only builds requests and resolves URLs from
 :data:`app.core.config.settings`.
 """
@@ -63,7 +63,7 @@ def build_measured_psnc_payload(
 
     Emits exactly seven keys and no others. Unlike :func:`build_psnc_chat_payload`
     this sends no top-level ``enable_thinking``: that switch appeared in no
-    measured call. See ``docs/decisions.md`` D-003.
+    measured call. See ``iadopt-variable-description-service-docs/decisions.md`` D-003.
 
     Args:
         model: PSNC model name.
@@ -92,6 +92,37 @@ def build_measured_psnc_payload(
     }
 
 
+def build_entity_link_payload(model: str, system_prompt: str, user_message: str) -> Dict[str, Any]:
+    """Build the request body of the measured entity-linking question.
+
+    The question is answered with a single token at temperature 0 and reasoning off,
+    so the body has no sampling parameters to tune. It is the body measured in the
+    sibling ``iadopt-linking`` project minus ``logprobs`` and ``top_logprobs``, which
+    nothing here reads (``decisions.md`` D-032). Like the decomposition body (D-003) it
+    has its own builder, so neither can drift into the other.
+
+    Args:
+        model: PSNC model name.
+        system_prompt: The frozen instructions.
+        user_message: The term, the variable definition and the labelled candidates.
+
+    Returns:
+        The request payload dict, with exactly the keys ``model``, ``messages``,
+        ``stream``, ``temperature``, ``max_tokens`` and ``chat_template_kwargs``.
+    """
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "stream": False,
+        "temperature": 0,
+        "max_tokens": 1,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
 def psnc_chat_headers() -> Dict[str, str]:
     """Return the auth + content-type headers for PSNC requests.
 
@@ -113,8 +144,3 @@ def psnc_chat_headers() -> Dict[str, str]:
 def psnc_chat_completions_url() -> str:
     """Return the PSNC chat-completions endpoint URL."""
     return f"{settings.psnc_api_base_url.rstrip('/')}/v1/chat/completions"
-
-
-def psnc_rerank_url() -> str:
-    """Return the PSNC rerank endpoint URL."""
-    return f"{settings.psnc_api_base_url.rstrip('/')}/v1/rerank"

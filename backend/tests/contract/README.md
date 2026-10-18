@@ -1,8 +1,10 @@
 # Phase 0 contract regression suite
 
 This is the behavioral baseline captured **before** the refactor. It must stay
-green at every later gate. See [`docs/CONTRACTS.md`](../../../docs/CONTRACTS.md)
-for the full contract map.
+green at every later gate. The full contract map is in the optional private
+workflow checkout at
+`iadopt-variable-description-service-docs/CONTRACTS.md` (application-root relative).
+The checkout is not required to run this suite.
 
 ## Layout
 
@@ -19,7 +21,7 @@ contract/
 
 Pin byte-for-byte TTL output and validation results for representative inputs.
 The clock, RNG, and ORCID lookup are frozen (see the determinism note in
-`docs/CONTRACTS.md`).
+the private workflow checkout's `CONTRACTS.md`).
 
 ```bash
 # From repo root, using the local venv (has the app deps):
