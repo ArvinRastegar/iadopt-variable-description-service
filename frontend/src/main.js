@@ -44,13 +44,29 @@ const FALLBACK_PROVIDER_OPTIONS = {
 let modelProviderOptions = FALLBACK_PROVIDER_OPTIONS;
 let nanopubPreparationOptions = null;
 let currentUser = null;
+let sessionRevision = 0;
+
+function setCurrentUser(user) {
+  currentUser = user;
+  sessionRevision += 1;
+  renderCurrentUser();
+}
+
+function showLogin(action = 'use decomposition or publish nanopublications') {
+  const dialog = document.querySelector('#loginDialog');
+  document.querySelector('#inlineLoginReason').textContent = `Sign in to ${action}. Your work will stay on this page.`;
+  if (!dialog.open) dialog.showModal();
+}
 
 async function authenticatedFetch(...args) {
+  const revision = sessionRevision;
   const response = await fetch(...args);
   if (response.status === 401) {
-    const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-    window.location.href = `/login.html?redirect=${redirect}`;
-    throw new Error('Authentication required.');
+    if (revision === sessionRevision) {
+      setCurrentUser(null);
+      showLogin();
+    }
+    throw new Error('Sign in to continue. Your work is still on this page.');
   }
   return response;
 }
@@ -66,34 +82,84 @@ function renderCurrentUser() {
   if (adminLink) {
     adminLink.classList.toggle('d-none', !currentUser?.roles?.includes('admin'));
   }
+  document.querySelector('#loginButton')?.classList.toggle('d-none', Boolean(currentUser));
+  document.querySelector('#logoutButton')?.classList.toggle('d-none', !currentUser);
 }
 
 async function loadCurrentUser() {
+  const revision = sessionRevision;
   try {
-    const response = await authenticatedFetch(`${BACKEND_URL}/auth/me`);
-    const data = await response.json();
-    currentUser = data.user || null;
-    renderCurrentUser();
+    const response = await fetch(`${BACKEND_URL}/auth/me`);
+    if (response.status !== 401 && !response.ok) {
+      throw new Error('Could not check your login.');
+    }
+    const data = response.ok ? await response.json() : {};
+    // A slow startup probe must not overwrite a newer login or logout.
+    if (revision === sessionRevision) setCurrentUser(data.user || null);
   } catch (e) {
     console.error(e);
+    if (revision === sessionRevision) setCurrentUser(null);
+  }
+  return currentUser;
+}
+
+async function requireLogin(action) {
+  if (await loadCurrentUser()) return true;
+  showLogin(action);
+  return false;
+}
+
+async function loginInPlace(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const status = document.querySelector('#inlineLoginStatus');
+  status.textContent = '';
+  button.disabled = true;
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.querySelector('#inlineUsername').value.trim(),
+        password: document.querySelector('#inlinePassword').value,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.user) throw new Error(data.detail || 'Login failed.');
+    setCurrentUser(data.user);
+    document.querySelector('#loginDialog').close();
+    // Signing in never automatically runs a decomposition or publishes anything.
+  } catch (e) {
+    status.textContent = e.message || 'Login failed.';
+  } finally {
+    document.querySelector('#inlinePassword').value = '';
+    button.disabled = false;
   }
 }
 
 async function logout() {
   try {
-    await fetch(`${BACKEND_URL}/auth/logout`, { method: 'POST' });
+    const response = await fetch(`${BACKEND_URL}/auth/logout`, { method: 'POST' });
+    if (!response.ok && response.status !== 401) throw new Error('Could not sign out. Please try again.');
+    setCurrentUser(null);
   } catch (e) {
     console.error(e);
-  } finally {
-    window.location.href = '/login.html';
+    setDecomposeStatus('Could not sign out. Please try again.', true);
   }
 }
 
 function logFrontendEvent(action, payload = {}, metadata = {}) {
-  authenticatedFetch(`${BACKEND_URL}/events`, {
+  if (!currentUser) return;
+  const revision = sessionRevision;
+  fetch(`${BACKEND_URL}/events`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, payload, metadata }),
+  }).then((response) => {
+    // Expired telemetry must not interrupt local editing or export with a login prompt.
+    if (response.status === 401 && revision === sessionRevision) setCurrentUser(null);
   }).catch((e) => {
     console.error(e);
   });
@@ -125,6 +191,17 @@ function setPreNanopubStatus(message, isError = false) {
   el.classList.toggle('text-danger', isError);
   el.classList.toggle('text-success', Boolean(message) && !isError);
   el.classList.toggle('text-secondary', !message);
+}
+
+function appendNanopubResultLink(selector, url) {
+  const container = document.querySelector(selector);
+  if (!container) return;
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = 'Open nanopublication';
+  container.append(' ', link);
 }
 
 function escapeHtml(value) {
@@ -337,7 +414,7 @@ async function loadNanopubPreparationOptions() {
   if (applyButton) applyButton.disabled = true;
 
   try {
-    const response = await authenticatedFetch(`${BACKEND_URL}/nanopub/preparation-options`);
+    const response = await fetch(`${BACKEND_URL}/nanopub/preparation-options`);
     const data = await response.json();
 
     if (!response.ok) {
@@ -497,7 +574,7 @@ function renderModelOptions(providerId = getSelectedModelProvider()) {
 
 async function loadModelOptions() {
   try {
-    const response = await authenticatedFetch(`${BACKEND_URL}/model-options`);
+    const response = await fetch(`${BACKEND_URL}/model-options`);
     const data = await response.json();
 
     if (!response.ok) {
@@ -516,6 +593,8 @@ async function loadModelOptions() {
 
 async function decomposeDefinition() {
   if (isDecomposing) return;
+  if (!await requireLogin('decompose a variable')) return;
+  if (isDecomposing) return;
   const definition = document.querySelector('#definitionInput')?.value?.trim();
   const modelProvider = getSelectedModelProvider();
   const modelName = (
@@ -533,9 +612,6 @@ async function decomposeDefinition() {
     return;
   }
 
-  if (rawOutputEl) rawOutputEl.value = '';
-  if (ttlEl) ttlEl.value = '';
-  renderValidationErrors([]);
   setDecomposeStatus(
     disableThinking ? 'This is going to take a moment. Thinking is disabled.' : 'This is going to take a moment...',
   );
@@ -577,6 +653,10 @@ async function decomposeDefinition() {
       throw new Error('The backend did not return a readable stream.');
     }
 
+    // Keep the existing work intact if the session expires after the preflight.
+    if (rawOutputEl) rawOutputEl.value = '';
+    if (ttlEl) ttlEl.value = '';
+    renderValidationErrors([]);
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -652,6 +732,7 @@ async function decomposeDefinition() {
 }
 
 async function publishNanopub() {
+  if (!await requireLogin('publish a nanopublication')) return;
   // Always publish exactly the Turtle currently visible in the textarea (no stale state).
   const ttl = getCurrentTurtle().trim();
 
@@ -711,6 +792,7 @@ async function publishNanopub() {
 
     setDecomposeStatus('Nanopublication published.');
     setPreNanopubStatus('The currently visible Turtle was published successfully.');
+    appendNanopubResultLink('#preNanopubStatus', data.nanopub_url);
   } catch (e) {
     if (publishTab) publishTab.close();
     setDecomposeStatus('Nanopublication publish failed.', true);
@@ -720,6 +802,7 @@ async function publishNanopub() {
 }
 
 async function retractNanopub() {
+  if (!await requireLogin('retract a nanopublication')) return;
   // Reserve the browser tab before the request so the final retraction nanopub opens without popup blocking.
   const retractTab = window.open('', '_blank', 'noopener,noreferrer');
   const manualReference = getManualRetractReference();
@@ -763,6 +846,7 @@ async function retractNanopub() {
     if (retractInput) retractInput.value = '';
 
     setRetractStatus(`Retracted ${targetLabel}.`);
+    appendNanopubResultLink('#retractStatus', data.retraction_url);
     updateRetractButtonState();
 
     if (retractTab) {
@@ -919,6 +1003,21 @@ document.querySelector('#retractButton')
 document.querySelector('#logoutButton')
   ?.addEventListener('click', async () => {
     await logout();
+  });
+
+document.querySelector('#loginButton')
+  ?.addEventListener('click', () => showLogin());
+
+document.querySelector('#inlineLoginForm')
+  ?.addEventListener('submit', loginInPlace);
+
+document.querySelector('#cancelInlineLogin')
+  ?.addEventListener('click', () => document.querySelector('#loginDialog').close());
+
+document.querySelector('#loginDialog')
+  ?.addEventListener('close', () => {
+    document.querySelector('#inlineLoginForm').reset();
+    document.querySelector('#inlineLoginStatus').textContent = '';
   });
 
 /* XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX ORDER XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX */

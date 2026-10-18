@@ -7,6 +7,14 @@ The system combines:
 * a **Python backend** that runs the LLM pipeline
 * a **JavaScript frontend** that visualizes the generated RDF/Turtle (TTL)
 
+Visualization, editing, pre-nanopublication preparation and local SVG, PNG and Turtle
+export are available without signing in. Decomposition, nanopublication publication
+and retraction require the existing local account login when authentication is enabled.
+The main page offers an in-page sign-in form that preserves the current work; after
+signing in, press the intended action again. Anonymous tool use sends no activity events.
+Administration and account APIs remain protected. Keep `IADOPT_AUTH_ENABLED=true` in
+hosted deployments; disabling authentication is only for local development.
+
 The user can:
 
 1. enter a variable definition in plain text
