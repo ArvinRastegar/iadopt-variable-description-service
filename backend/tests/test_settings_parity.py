@@ -71,8 +71,6 @@ def _reference_values(env: Dict[str, str]) -> dict:
         "psnc_model_names": psnc_model_names,
         "psnc_api_key": getenv("PSNC_API_KEY"),
         "psnc_api_base_url": getenv("PSNC_API_BASE_URL", "https://llm.hpc.psnc.pl"),
-        "psnc_rerank_model": getenv("PSNC_RERANK_MODEL", "bge-reranker-v2-m3"),
-        "rerank_threshold": float(getenv("RERANK_THRESHOLD", "0.10")),
         "enable_wikidata_linking": getenv("ENABLE_WIKIDATA_LINKING", "true").lower() == "true",
         "nanopub_publish_server": getenv("NANOPUB_PUBLISH_SERVER", "https://registry.petapico.org/np/"),
         "nanopub_pubinfo_template_uris": [
@@ -103,7 +101,6 @@ SCENARIOS = {
         "MODEL_NAMES": "a, b ,a,",
         "PSNC_MODEL_NAMES": "Qwen3.5-397B-A17B, X",
         "TEMPERATURE": "0.2",
-        "RERANK_THRESHOLD": "0.42",
     },
     "wikidata_flag_one_is_false": {"ENABLE_WIKIDATA_LINKING": "1"},  # "1" != "true" -> False
     "wikidata_flag_true": {"ENABLE_WIKIDATA_LINKING": "TRUE"},
@@ -115,8 +112,8 @@ SCENARIOS = {
 # All iadopt-relevant env keys, so each scenario starts from a clean slate.
 _ALL_KEYS = [
     "TEMPERATURE", "OPENROUTER_API_KEY", "MODEL_NAME", "MODEL_NAMES", "PSNC_MODEL_NAME", "PSNC_MODEL_NAMES",
-    "ENABLED_MODEL_PROVIDERS", "DEFAULT_MODEL_PROVIDER", "PSNC_API_KEY", "PSNC_API_BASE_URL", "PSNC_RERANK_MODEL",
-    "RERANK_THRESHOLD", "ENABLE_WIKIDATA_LINKING", "NANOPUB_PUBLISH_SERVER", "NANOPUB_PUBINFO_TEMPLATE_URIS",
+    "ENABLED_MODEL_PROVIDERS", "DEFAULT_MODEL_PROVIDER", "PSNC_API_KEY", "PSNC_API_BASE_URL",
+    "ENABLE_WIKIDATA_LINKING", "NANOPUB_PUBLISH_SERVER", "NANOPUB_PUBINFO_TEMPLATE_URIS",
     "IADOPT_AUTH_ENABLED", "IADOPT_COOKIE_SECURE", "IADOPT_SESSION_SECRET", "IADOPT_SESSION_TTL_HOURS",
     "IADOPT_AUDIT_RETENTION_DAYS", "IADOPT_AUDIT_MAX_PAYLOAD_BYTES", "IADOPT_STATE_DIR", "IADOPT_DB_PATH",
 ]

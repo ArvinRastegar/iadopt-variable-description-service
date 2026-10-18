@@ -41,7 +41,7 @@ It performs the following steps:
 4. extracts and parses the **JSON output**
 5. generates a **label and comment** in a second, smaller call
 6. validates the output using a **JSON Schema**
-7. enriches components with **Wikidata URIs**
+7. links components to **Wikidata, QUDT and OM** entries (see *Entity linking* below)
 8. converts the structured result to **RDF/Turtle (TTL)**
 9. returns the results to the frontend
 
@@ -66,6 +66,37 @@ longer running what was measured and the figure above no longer describes it. Se
 the separate private workflow repository, `iadopt-variable-description-service-docs/`
 (`decisions.md` and `components/`), for the full record. It is an optional local
 checkout and is not needed to build or run the service.
+
+### Entity linking
+
+Step 7 links each label of the decomposition (property, object of interest, matrix,
+context object, statistical modifier, and the parts of systems) to a controlled-vocabulary
+entry. For every label the backend searches **Wikidata** items, **QUDT** quantity kinds and
+**OM** quantities (at most ten candidates from each), then asks `Qwen3.8-27B` on PSNC, with
+reasoning off, which candidate is the same concept as the label, or none of them. The answer
+is a single character, so it is checked strictly: if it is not exactly one of the offered
+labels, the identical request is sent again, up to three more times. A label the model
+matches to nothing, or never answers validly, is left unlinked (so is a label longer than
+200 characters), and if PSNC cannot be reached no label is linked and the decomposition is
+returned without links. Links the decomposition model wrote itself are discarded; only links
+chosen here are kept. The links appear as
+`*URI` fields in `enriched_json` and as IRIs in the Turtle, where a property can now point
+at a QUDT or OM quantity kind.
+
+The question, its labels and its decoding parameters are those measured in the sibling
+`iadopt-linking` project. That measurement used curated corpus labels and compared the model
+with a different reranker from the one this service used before, and the difference could not
+be told from zero. **Links are drafts for review, like the decomposition.** QUDT and OM are
+searched by the words of the label, so a paraphrase can miss an entry the curated wording
+would have found.
+
+Linking is switched off with `ENABLE_WIKIDATA_LINKING=false` (the name is historical; it
+switches all linking). It needs `PSNC_API_KEY`, and the backend must be able to reach
+`www.wikidata.org`, `www.qudt.org` and `www.ebi.ac.uk`; a vocabulary that cannot be reached
+is skipped and logged. Every outbound request carries a User-Agent that names this project and
+its public URL, as Wikimedia asks; Wikidata rate-limited the earlier generic one after about ten
+requests in five seconds. The earlier reranker and its `RERANK_THRESHOLD` and `PSNC_RERANK_MODEL`
+settings are gone.
 
 The backend exposes a simple API:
 

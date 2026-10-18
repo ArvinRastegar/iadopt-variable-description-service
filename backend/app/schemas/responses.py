@@ -32,7 +32,8 @@ class DecomposeResponse(BaseModel):
         parsed_json: The parsed/coerced LLM prediction (free-form; see domain docs).
         schema_valid: Whether the prediction passed schema + semantic validation.
         validation_errors: Human-readable validation error lines (empty if valid).
-        enriched_json: The prediction plus dynamic Wikidata ``*URI`` keys (free-form).
+        enriched_json: The prediction plus dynamic entity-link ``*URI`` keys: Wikidata, QUDT
+            or OM IRIs (free-form).
         ttl: The generated I-ADOPT Turtle serialization.
     """
 

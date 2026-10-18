@@ -1,7 +1,7 @@
 """End-to-end decomposition pipeline orchestration.
 
 Ties the services together: build the prompt, call the LLM (streamed or not),
-parse + validate, enrich with Wikidata URIs, and serialize to Turtle. Exposes the
+parse + validate, link entities to vocabulary IRIs, and serialize to Turtle. Exposes the
 two entry points the routers use (``run_pipeline``, ``stream_pipeline_events``) and
 the startup warmup (``warmup_assets``).
 
@@ -22,7 +22,7 @@ from .clients.http import get_http_session
 from .clients.openai_client import get_openai_client
 from .core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from .core.state import app_state
-from .services.enrichment import enrich_with_uris_reranker
+from .services.enrichment import enrich_with_uris
 from .services.label_comment import generate_label_and_comment
 from .services.llm import (
     build_chat_completion_request_kwargs,
@@ -118,7 +118,7 @@ def _finalize_pipeline_output(
         RuntimeError: If ``pred`` is empty.
 
     Side effects:
-        May call Wikidata/PSNC (enrichment) and ORCID (TTL creator metadata).
+        May call Wikidata, QUDT, EBI OLS and PSNC (entity linking) and ORCID (TTL creator metadata).
     """
     if not pred:
         raise RuntimeError("Could not extract valid JSON from the model output.")
@@ -129,9 +129,9 @@ def _finalize_pipeline_output(
 
     if settings.enable_wikidata_linking:
         try:
-            enriched = enrich_with_uris_reranker(pred, threshold=settings.rerank_threshold)
+            enriched = enrich_with_uris(pred)
         except Exception as e:
-            print(f"Wikidata enrichment failed: {e}")
+            print(f"Entity linking failed: {e}")
             enriched = pred
     else:
         enriched = pred
@@ -311,7 +311,7 @@ def stream_pipeline_events(
         NDJSON event line strings (``raw_delta`` / ``final`` / ``error``).
 
     Side effects:
-        Performs LLM, reranker, Wikidata, and ORCID calls.
+        Performs LLM, entity-linking (vocabulary search and PSNC), and ORCID calls.
     """
     try:
         definition = definition.strip()
@@ -492,7 +492,7 @@ def run_pipeline(
         The ``DecomposeResponse``-shaped dict.
 
     Side effects:
-        Performs LLM, reranker, Wikidata, and ORCID calls.
+        Performs LLM, entity-linking (vocabulary search and PSNC), and ORCID calls.
     """
     definition = definition.strip()
     prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(

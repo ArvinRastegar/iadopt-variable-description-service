@@ -5,7 +5,7 @@ This module is intentionally thin. All behavior lives in:
 * ``app.core`` — config (``Settings``), shared state/text leaves, auth dependencies
   + middleware, logging.
 * ``app.clients`` — OpenRouter / PSNC / HTTP plumbing.
-* ``app.services`` — llm, reranker, enrichment, prompts, validation, rdf_ttl,
+* ``app.services`` — llm, enrichment (entity linking), prompts, validation, rdf_ttl,
   nanopub_service, orcid.
 * ``app.pipeline`` — decomposition orchestration + startup warmup.
 * ``app.routers`` — the HTTP route handlers grouped by domain.

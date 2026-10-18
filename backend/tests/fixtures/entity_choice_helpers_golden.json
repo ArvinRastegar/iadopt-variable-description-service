@@ -1,0 +1,69 @@
+{
+  "normalise_term": [
+    [
+      "  Soil   moisture ",
+      "Soil moisture"
+    ],
+    [
+      "Air‑temperature",
+      "Air-temperature"
+    ],
+    [
+      "net–radiation",
+      "net-radiation"
+    ],
+    [
+      "CO₂ flux",
+      "CO2 flux"
+    ],
+    [
+      "Ｔemperature",
+      "Temperature"
+    ],
+    [
+      "a−b",
+      "a-b"
+    ],
+    [
+      "tab\tsep\nnew",
+      "tab sep new"
+    ]
+  ],
+  "truncate_description": [
+    [
+      "short text",
+      300,
+      "short text"
+    ],
+    [
+      "  spaced   out \n text ",
+      300,
+      "spaced out text"
+    ],
+    [
+      "Volumetric water content is the ratio of the volume of water to the unit volume of soil.  It is expressed in cubic metres of water per cubic metre of soil, or as a percentage.\nMeasurements are usually made with time-domain reflectometry, capacitance sensors or neutron probes, and depend on soil texture, bulk density and temperature. Values range from the residual water content to the saturated water content (porosity). Supercalifragilisticexpialidocious-measurement-technique-without-spaces",
+      300,
+      "Volumetric water content is the ratio of the volume of water to the unit volume of soil. It is expressed in cubic metres of water per cubic metre of soil, or as a percentage. Measurements are usually made with time-domain reflectometry, capacitance sensors or neutron probes, and depend on soil…"
+    ],
+    [
+      "Volumetric water content is the ratio of the volume of water to the unit volume of soil.  It is expressed in cubic metres of water per cubic metre of soil, or as a percentage.\nMeasurements are usually made with time-domain reflectometry, capacitance sensors or neutron probes, and depend on soil texture, bulk density and temperature. Values range from the residual water content to the saturated water content (porosity). Supercalifragilisticexpialidocious-measurement-technique-without-spaces",
+      40,
+      "Volumetric water content is the ratio…"
+    ],
+    [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      20,
+      "xxxxxxxxxxxxxxxxxxxx…"
+    ],
+    [
+      "",
+      300,
+      ""
+    ],
+    [
+      "kept whole",
+      null,
+      "kept whole"
+    ]
+  ]
+}

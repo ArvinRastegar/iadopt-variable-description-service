@@ -2,7 +2,7 @@
 
 These describe the objects that currently travel between pipeline functions as
 ``Dict[str, Any]``: the LLM decomposition *prediction*, its *enriched* form after
-Wikidata linking, and the structured constraint/system parts. They are the typed
+entity linking, and the structured constraint/system parts. They are the typed
 contract the Phase-2 service split (``services/llm.py``, ``services/enrichment.py``,
 ``services/rdf_ttl.py``) will pass around.
 
@@ -11,9 +11,10 @@ the *raw* parsed LLM JSON and the final ``parsed_json`` / ``enriched_json`` fiel
 of :class:`~app.schemas.responses.DecomposeResponse` remain free-form dicts. The
 LLM can return any of three ``entityOrSystem`` variants (string, AsymmetricSystem,
 SymmetricSystem), and the enrichment step adds dynamic ``*URI`` / ``*URIs`` keys
-whose presence depends on Wikidata hits. Modeling those as closed schemas and
-wiring them as response types would risk rejecting valid-but-unusual output, so the
-models here are a *documentation/typing* contract, not a serialization gate.
+whose presence depends on which entries the linker finds (Wikidata, QUDT or OM).
+Modeling those as closed schemas and wiring them as response types would risk
+rejecting valid-but-unusual output, so the models here are a *documentation/typing*
+contract, not a serialization gate.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ class AsymmetricSystem(BaseModel):
     """A directional entity system (from a source to a target, or a ratio).
 
     Mirrors the ``AsymmetricSystem`` branch of the JSON-Schema ``entityOrSystem``
-    definition. ``*URI`` fields are added dynamically by Wikidata enrichment and so
+    definition. ``*URI`` fields are added dynamically by entity linking and so
     are optional here.
     """
 
@@ -108,11 +109,11 @@ class Prediction(BaseModel):
     has_constraint: List[Constraint] = Field(default_factory=list, alias="hasConstraint")
 
 
-# The enriched prediction is the same shape plus dynamic Wikidata `*URI`/`*URIs`
+# The enriched prediction is the same shape plus dynamic entity-link `*URI`/`*URIs`
 # keys (e.g. hasPropertyURI, hasObjectOfInterestURI, hasPartURIs). Because those
 # keys are open-ended, the enriched form is documented as a free-form mapping with
 # the Prediction fields as a known subset.
 EnrichedPredictionDict = Annotated[
     Dict[str, object],
-    Field(description="Prediction fields plus dynamically added Wikidata *URI/*URIs keys."),
+    Field(description="Prediction fields plus dynamically added entity-link *URI/*URIs keys."),
 ]
