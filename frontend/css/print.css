@@ -4,6 +4,7 @@
   h1,
   nav,
   .tab-content,
+  .site-footer,
   button {
     display: none !important;
   }
