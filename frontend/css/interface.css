@@ -52,6 +52,16 @@ body {
   padding-bottom: 3rem;
 }
 
+.site-footer {
+  padding: 2rem 1rem;
+  border-top: 1px solid var(--bs-border-color);
+  font-size: 0.9rem;
+}
+
+.site-footer li + li {
+  margin-top: 0.75rem;
+}
+
 .decompose-panel,
 .visualizer-panel {
   max-width: 1200px;
