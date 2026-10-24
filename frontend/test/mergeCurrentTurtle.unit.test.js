@@ -3,7 +3,7 @@ import { assert, describe, test } from 'vitest';
 import mergeCurrentTurtle from '../src/lib/mergeCurrentTurtle.js';
 import { parseRDF } from '../src/lib/parse.js';
 import { Variable } from '../src/model/models.js';
-import { NS } from '../src/lib/extract.js';
+import extract, { NS } from '../src/lib/extract.js';
 
 const VARIABLE_IRI = 'https://example.org/variable';
 const DCT_TITLE = 'http://purl.org/dc/terms/title';
@@ -29,6 +29,29 @@ async function objectsFor( turtle, predicateIri ) {
 }
 
 describe( 'mergeCurrentTurtle', () => {
+
+  test( 'keeps entity descriptions when another component is edited', async () => {
+    const turtle = `@prefix iop: <${NS.iop}> .
+@prefix rdfs: <${NS.rdfs}> .
+
+<${VARIABLE_IRI}>
+    a iop:Variable ;
+    rdfs:label "variable" ;
+    iop:hasProperty <https://example.org/property> ;
+    iop:hasObjectOfInterest <https://example.org/entity> .
+<https://example.org/property> a iop:Property ; rdfs:label "property" .
+<https://example.org/entity> a iop:Entity ; rdfs:label "entity" ; rdfs:comment "about the entity" .
+`;
+    const [ variable ] = await extract( turtle );
+    variable.getProperty().setLabel( '', 'renamed property' );
+
+    const updated = await mergeCurrentTurtle( turtle, variable );
+    const { store } = await parseRDF( updated );
+    assert.deepEqual(
+      store.getQuads( 'https://example.org/entity', NS.rdfs + 'comment', null, null ).map( (quad) => quad.object.value ),
+      [ 'about the entity' ]
+    );
+  }, 10_000 );
 
   test( 'synchronizes all Variable labels after an explicit Variable label edit', async () => {
     const variable = new Variable({

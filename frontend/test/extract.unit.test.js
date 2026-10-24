@@ -36,6 +36,37 @@ describe( 'extract', () => {
 
 
 
+  test( 'reads the descriptions of components, system parts and constraints', async function(){
+
+    const [ variable ] = await extract( `
+      @prefix iop:  <https://w3id.org/iadopt/ont/> .
+      @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+      <https://example.org/variable> a iop:Variable ;
+        rdfs:label "variable" ;
+        rdfs:comment "about the variable" ;
+        iop:hasProperty <https://example.org/property> ;
+        iop:hasObjectOfInterest <https://example.org/entity> ;
+        iop:hasMatrix <https://example.org/matrix> ;
+        iop:hasConstraint _:constraint .
+      <https://example.org/property> a iop:Property ; rdfs:label "property" ; rdfs:comment "about the property" .
+      <https://example.org/entity> a iop:Entity ; rdfs:label "entity" ; rdfs:comment "über das Objekt"@de .
+      <https://example.org/matrix> a iop:Entity, iop:SymmetricSystem ; rdfs:label "matrix" ; iop:hasPart <https://example.org/part> .
+      <https://example.org/part> a iop:Entity ; rdfs:label "part" ; rdfs:comment "about the part" .
+      _:constraint a iop:Constraint ; rdfs:label "constraint" ; rdfs:comment "about the constraint" ;
+        iop:constrains <https://example.org/entity> .
+    ` );
+
+    const part = Object.values( variable.getMatrix().getComponents() ).flat()[0];
+    assert.equal( variable.getComment(),                      'about the variable',   'should contain the description of the Variable' );
+    assert.equal( variable.getProperty().getComment(),        'about the property',   'should contain the description of the Property' );
+    assert.equal( variable.getObjectOfInterest().getComment(), 'über das Objekt',     'should keep a description in another language' );
+    assert.equal( part.getComment(),                          'about the part',       'should contain the description of a system part' );
+    assert.equal( variable.getConstraints()[0].getComment(),  'about the constraint', 'should contain the description of the Constraint' );
+
+  }, 10_000 );
+
+
+
   test( 'extracts all components of an entry with blank node constraints', async function(){
 
     // get entities

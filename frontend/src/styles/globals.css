@@ -1,0 +1,340 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens of the redesign (see the "Foundations" board of the design canvas).
+ * Light and dark are two designed sets of values, not an inversion.
+ * The I-ADOPT component colours (var, prop, ooi, mat, ctx, stat, con) come from the I-ADOPT logo
+ * and are reserved for components; they are never reused for other data.
+ */
+:root {
+  --radius: 0.625rem;
+
+  --background: #f6f7f9;
+  --foreground: #101418;
+  --surface: #ffffff;
+  --surface-2: #f3f4f6;
+  --surface-3: #ebedf0;
+  --card: #ffffff;
+  --card-foreground: #101418;
+  --popover: #ffffff;
+  --popover-foreground: #101418;
+  --text-2: #454d59;
+  --muted: #f3f4f6;
+  --muted-foreground: #646c79;
+  --secondary: #f3f4f6;
+  --secondary-foreground: #101418;
+  --accent: #f3f4f6;
+  --accent-foreground: #101418;
+  --border: #e3e6ea;
+  --input: #d2d6dc;
+  --ring: #1e7a4c;
+  --link: #17663f;
+
+  --primary: #1e7a4c;
+  --primary-hover: #17663f;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e8f3ec;
+  --primary-soft-foreground: #15603b;
+
+  --destructive: #c23a33;
+  --destructive-hover: #a7302a;
+  --destructive-foreground: #ffffff;
+  --destructive-soft: #fdedec;
+  --destructive-soft-foreground: #9b2c26;
+  --destructive-line: #f3c2bf;
+  --warning-soft: #fff6e0;
+  --warning-foreground: #7a4f00;
+  --warning-line: #f0d598;
+  --info-soft: #eaf2fc;
+  --info-foreground: #1d4f86;
+  --info-line: #c2d8f2;
+
+  --edge: #7c8593;
+  --dot: #d7dbe1;
+  --series-1: #2a78d6;
+
+  --var: #2e8b57;
+  --var-bg: #e9f5ee;
+  --var-fg: #1b5e3c;
+  --var-line: #b9dec9;
+  --prop: #8b5cc7;
+  --prop-bg: #f3ecfa;
+  --prop-fg: #5b3290;
+  --prop-line: #dcc8ef;
+  --ooi: #2f6fb0;
+  --ooi-bg: #dceaf8;
+  --ooi-fg: #163f69;
+  --ooi-line: #a9c8ea;
+  --mat: #4c8fcb;
+  --mat-bg: #e7f1fb;
+  --mat-fg: #1d4b75;
+  --mat-line: #bcd6f0;
+  --ctx: #7da9d6;
+  --ctx-bg: #f1f6fc;
+  --ctx-fg: #27507a;
+  --ctx-line: #cfe0f2;
+  --stat: #6b7280;
+  --stat-bg: #f0f1f3;
+  --stat-fg: #3b4150;
+  --stat-line: #d3d6dc;
+  --con: #d2504a;
+  --con-bg: #fdedec;
+  --con-fg: #8f2a25;
+  --con-line: #f3c2bf;
+
+  --shadow-xs: 0 1px 2px rgb(16 20 24 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(16 20 24 / 0.06), 0 1px 3px rgb(16 20 24 / 0.05);
+  --shadow-md: 0 10px 28px -10px rgb(16 20 24 / 0.18), 0 2px 6px rgb(16 20 24 / 0.05);
+  --shadow-lg: 0 28px 72px -18px rgb(16 20 24 / 0.32), 0 4px 14px rgb(16 20 24 / 0.07);
+  --backdrop: rgb(16 20 24 / 0.4);
+}
+
+.dark {
+  --background: #0a0d11;
+  --foreground: #e7ebf0;
+  --surface: #111519;
+  --surface-2: #161b21;
+  --surface-3: #1d232b;
+  --card: #111519;
+  --card-foreground: #e7ebf0;
+  --popover: #111519;
+  --popover-foreground: #e7ebf0;
+  --text-2: #aeb7c3;
+  --muted: #161b21;
+  --muted-foreground: #8a95a3;
+  --secondary: #161b21;
+  --secondary-foreground: #e7ebf0;
+  --accent: #1d232b;
+  --accent-foreground: #e7ebf0;
+  --border: #232a33;
+  --input: #313a45;
+  --ring: #4cc38a;
+  --link: #7fdaae;
+
+  --primary: #4cc38a;
+  --primary-hover: #63d19b;
+  --primary-foreground: #04170d;
+  --primary-soft: #192d29;
+  --primary-soft-foreground: #8fe0b8;
+
+  --destructive: #f07a74;
+  --destructive-hover: #f4938e;
+  --destructive-foreground: #2a0b09;
+  --destructive-soft: #2c2124;
+  --destructive-soft-foreground: #f7b9b5;
+  --destructive-line: rgb(240 122 116 / 0.36);
+  --warning-soft: #282721;
+  --warning-foreground: #f3c969;
+  --warning-line: rgb(243 201 105 / 0.3);
+  --info-soft: #1a2632;
+  --info-foreground: #a9cdf5;
+  --info-line: rgb(90 162 232 / 0.32);
+
+  --edge: #6b7685;
+  --dot: #1e242c;
+  --series-1: #3987e5;
+
+  --var: #4cc38a;
+  --var-bg: #182a27;
+  --var-fg: #9fe3c1;
+  --var-line: rgb(76 195 138 / 0.34);
+  --prop: #b48ae8;
+  --prop-bg: #26243a;
+  --prop-fg: #d7c2f5;
+  --prop-line: rgb(180 138 232 / 0.38);
+  --ooi: #5aa2e8;
+  --ooi-bg: #1d2d3c;
+  --ooi-fg: #b9d8f7;
+  --ooi-line: rgb(90 162 232 / 0.46);
+  --mat: #6db3e6;
+  --mat-bg: #1b2630;
+  --mat-fg: #c1def4;
+  --mat-line: rgb(109 179 230 / 0.34);
+  --ctx: #8fbde6;
+  --ctx-bg: #1a2127;
+  --ctx-fg: #cbe1f4;
+  --ctx-line: rgb(143 189 230 / 0.28);
+  --stat: #9aa3b2;
+  --stat-bg: #22262b;
+  --stat-fg: #d3d8e0;
+  --stat-line: rgb(154 163 178 / 0.34);
+  --con: #f07a74;
+  --con-bg: #2c2124;
+  --con-fg: #f7b9b5;
+  --con-line: rgb(240 122 116 / 0.38);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 12px 30px -10px rgb(0 0 0 / 0.7), 0 2px 6px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 30px 80px -18px rgb(0 0 0 / 0.85), 0 4px 14px rgb(0 0 0 / 0.5);
+  --backdrop: rgb(3 5 8 / 0.62);
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-text-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-link: var(--link);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-foreground: var(--primary-soft-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-hover: var(--destructive-hover);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-soft-foreground: var(--destructive-soft-foreground);
+  --color-destructive-line: var(--destructive-line);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-line: var(--warning-line);
+  --color-info-soft: var(--info-soft);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-line: var(--info-line);
+  --color-edge: var(--edge);
+  --color-dot: var(--dot);
+  --color-series-1: var(--series-1);
+
+  --color-var: var(--var);
+  --color-var-bg: var(--var-bg);
+  --color-var-fg: var(--var-fg);
+  --color-var-line: var(--var-line);
+  --color-prop: var(--prop);
+  --color-prop-bg: var(--prop-bg);
+  --color-prop-fg: var(--prop-fg);
+  --color-prop-line: var(--prop-line);
+  --color-ooi: var(--ooi);
+  --color-ooi-bg: var(--ooi-bg);
+  --color-ooi-fg: var(--ooi-fg);
+  --color-ooi-line: var(--ooi-line);
+  --color-mat: var(--mat);
+  --color-mat-bg: var(--mat-bg);
+  --color-mat-fg: var(--mat-fg);
+  --color-mat-line: var(--mat-line);
+  --color-ctx: var(--ctx);
+  --color-ctx-bg: var(--ctx-bg);
+  --color-ctx-fg: var(--ctx-fg);
+  --color-ctx-line: var(--ctx-line);
+  --color-stat: var(--stat);
+  --color-stat-bg: var(--stat-bg);
+  --color-stat-fg: var(--stat-fg);
+  --color-stat-line: var(--stat-line);
+  --color-con: var(--con);
+  --color-con-bg: var(--con-bg);
+  --color-con-fg: var(--con-fg);
+  --color-con-line: var(--con-line);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 20px;
+  }
+
+  a {
+    color: var(--link);
+  }
+
+  ::placeholder {
+    color: var(--muted-foreground);
+    opacity: 1;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+}
+
+/* The dotted canvas behind diagrams (a pattern with a purpose, not decoration). */
+.canvas-dots {
+  background-color: var(--background);
+  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.2px);
+  background-size: 18px 18px;
+}
+
+/*
+ * Hidden element the existing layout engine (src/lib/createLayout/getTextDims.js) measures text with.
+ * Its font must match the title text the diagram renders (see src/app/components/diagram).
+ */
+#helper {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#helper text {
+  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.caret-blink {
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

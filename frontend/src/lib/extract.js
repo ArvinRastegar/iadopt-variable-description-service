@@ -171,7 +171,7 @@ export default async function extract( content ) {
         entities[ entity ].setLabel( value.language, value.value );
       }
       // description
-      value = binding.get( 'comment' )?.value;
+      value = binding.get( 'comment' );
       if( value ) {
         entities[ entity ].setComment( value.language, value.value );
       }
@@ -235,7 +235,7 @@ export default async function extract( content ) {
       if( value ) {
         entity.setLabel( value.language, value.value );
       }
-      value = binding.get( 'comment' )?.value;
+      value = binding.get( 'comment' );
       if( value ) {
         entity.setComment( value.language, value.value );
       }
@@ -298,7 +298,7 @@ export default async function extract( content ) {
         entities[ entity ].setLabel( value.language, value.value );
       }
       // description
-      value = binding.get( 'comment' )?.value;
+      value = binding.get( 'comment' );
       if( value ) {
         entities[ entity ].setComment( value.language, value.value );
       }

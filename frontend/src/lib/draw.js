@@ -76,7 +76,8 @@ export default function draw( div, layout ) {
         y: arr.y,
         transform: arr.rotate ? `rotate( -90 ${arr.x} ${arr.y} )` : '',
       });
-      textEl.innerHTML = arr.text;
+      // labels come from user-supplied RDF: always plain text, never markup
+      textEl.textContent = arr.text;
       container.appendChild( textEl );
 
       // arrow cutout
@@ -165,10 +166,10 @@ export default function draw( div, layout ) {
           href:   text.link,
           target: '_blank',
         });
-        anchor.innerHTML = text.text;
+        anchor.textContent = text.text;
         textEl.appendChild( anchor );
       } else {;
-        textEl.innerHTML = text.text;
+        textEl.textContent = text.text;
       }
       container.appendChild( textEl );
 
