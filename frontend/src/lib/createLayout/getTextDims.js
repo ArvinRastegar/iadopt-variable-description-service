@@ -29,13 +29,14 @@ const minTextWidth = Math.max(
 export default function getTextDims( text, classes ) {
 
   helperText.classList = classes;
-  helperText.innerHTML = text;
+  // labels come from user-supplied RDF: measure them as plain text, never parse them as markup
+  helperText.textContent = text;
   const bbox = helperText.getBoundingClientRect();
   const dims = {
     width:  bbox.width,
     height: bbox.height,
   };
-  helperText.innerHTML = '';
+  helperText.textContent = '';
   helperText.classList = '';
   return dims;
 

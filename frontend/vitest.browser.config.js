@@ -1,5 +1,8 @@
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import { fileURLToPath } from 'node:url';
 import { promises as Fs } from 'node:fs';
 
 // fetch ttl files
@@ -12,15 +15,22 @@ for await (const file of Fs.glob( '**/*.ttl' ) ) {
 }
 
 export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   test: {
     projects:[
 
       {
+        // Inherit the root plugins, aliases and provided fixtures.
+        extends: true,
         test:{
-          extends: true,
           name: 'browser',
           include: [
-            'test/**/*.browser.{test,spec}.js',
+            'test/**/*.browser.{test,spec}.{js,ts,tsx}',
           ],
           enabled: true,
           browser: {
@@ -36,11 +46,11 @@ export default defineConfig({
       },
 
       {
+        extends: true,
         test:{
-          extends: true,
           name: 'node',
           include: [
-            'test/**/*.unit.{test,spec}.js',
+            'test/**/*.unit.{test,spec}.{js,ts}',
           ],
           enabled: true,
           environment: 'node',

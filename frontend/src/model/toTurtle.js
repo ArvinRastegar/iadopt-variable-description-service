@@ -9,6 +9,24 @@ const PADDING = '    ';
 const blankNodes = new Map();
 
 /**
+ * a Turtle string literal; quotes, backslashes and line breaks in the value are escaped
+ * @param   {string}  value
+ * @returns {string}
+ */
+function literal( value ) {
+  return `"${String( value ).replace( /\\/g, '\\\\' ).replace( /"/g, '\\"' ).replace( /\n/g, '\\n' ).replace( /\r/g, '\\r' )}"`;
+}
+
+/**
+ * a long Turtle string literal, which keeps line breaks; quotes and backslashes are escaped
+ * @param   {string}  value
+ * @returns {string}
+ */
+function longLiteral( value ) {
+  return `"""${String( value ).replace( /\\/g, '\\\\' ).replace( /"/g, '\\"' )}"""`;
+}
+
+/**
  * convert a given Variable into its Turtle representation
  *
  * @param   {import('./models').Variable}   variable      variable to serialize
@@ -146,13 +164,13 @@ function addCommonProperties( result, concept ) {
   // label
   let value = concept.getLabel();
   if( value ) {
-    result[ 'rdfs:label' ] = [ `"${value}"` ];
+    result[ 'rdfs:label' ] = [ literal( value ) ];
   }
 
   // description
   value = concept.getComment();
   if( value ) {
-    result[ 'rdfs:comment' ] =[ `"""${value}"""` ];
+    result[ 'rdfs:comment' ] =[ longLiteral( value ) ];
   }
 
 }
@@ -210,11 +228,11 @@ function serializeConstraint( constraint ) {
   const result = [];
 
   if( constraint.getLabel() ) {
-    result.push( `${PADDING} rdfs:label "${constraint.getLabel()}" ;` );
+    result.push( `${PADDING} rdfs:label ${literal( constraint.getLabel() )} ;` );
   }
 
   if( constraint.getComment() ) {
-    result.push( `${PADDING} rdfs:comment """${constraint.getComment()}""" ;` );
+    result.push( `${PADDING} rdfs:comment ${longLiteral( constraint.getComment() )} ;` );
   }
 
   result.push( `${PADDING} iop:constrains ${constraint.getEntities().map( (e) => getId( e ))} ;` );

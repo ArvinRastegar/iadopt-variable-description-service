@@ -5,7 +5,7 @@ This project provides a simple web interface for **decomposing variable definiti
 The system combines:
 
 * a **Python backend** that runs the LLM pipeline
-* a **JavaScript frontend** that visualizes the generated RDF/Turtle (TTL)
+* a **React + TypeScript frontend** that visualizes, edits, exports and publishes the generated RDF/Turtle (TTL)
 
 Visualization, editing, pre-nanopublication preparation and local SVG, PNG and Turtle
 export are available without signing in. Decomposition, nanopublication publication
@@ -17,13 +17,11 @@ hosted deployments; disabling authentication is only for local development.
 
 The user can:
 
-1. enter a variable definition in plain text
-2. click **Decompose**
-3. inspect the **raw LLM output**
-4. inspect **JSON schema validation errors**
-5. view the **generated TTL**
-6. click **Visualize**
-7. see the **I-ADOPT diagram**
+1. describe a variable in plain text on the start page and click **Decompose**, watching the model output stream in
+2. review the draft in the **Workspace**: the **I-ADOPT diagram**, the list of components with their Wikidata, QUDT or OM links, the **Turtle**, and the **raw model output** with the **JSON schema validation** result
+3. correct components in the inspector (label, IRI, description, shape, constraints) and mark each one as checked
+4. open or paste existing Turtle to visualize, edit and export it, without an account
+5. export SVG, PNG or Turtle, or publish a **nanopublication** with their ORCID iD, and retract it later under **Publications**
 
 ---
 
@@ -133,7 +131,7 @@ Output:
 
 ---
 
-## Frontend (Vite + JavaScript)
+## Frontend (React + TypeScript)
 
 Location:
 
@@ -141,21 +139,35 @@ Location:
 frontend/
 ```
 
-The frontend provides the **interactive user interface**.
+The frontend provides the **interactive user interface**: a React + TypeScript app built with
+Vite, styled with Tailwind CSS and [shadcn/ui](https://ui.shadcn.com) components (Radix
+primitives), with CodeMirror as the Turtle editor. The Geist fonts are bundled, so the pages
+load nothing from other hosts. Light and dark themes follow the system setting until the
+visitor picks one.
 
-It allows the user to:
+The pages keep their previous URLs, so nginx needs no change:
 
-1. enter a variable definition
-2. send it to the backend
-3. display:
+* `index.html`: the start page, the workspace (`#/workspace`) and the publications (`#/publications`)
+* `login.html`: the sign-in page nginx sends visitors to for protected pages
+* `admin.html`: the admin dashboard (statistics, readiness, users, audit log)
+* `remote.html`: the embeddable viewer, unchanged
 
-   * raw LLM output
-   * validation errors
-   * generated TTL
-4. visualize the TTL using the **I-ADOPT visualizer**
-5. export the current TTL or publish it as a nanopublication
+The I-ADOPT model, Turtle parsing, the diagram layout engine (from the
+[I-ADOPT Visualizer](https://doi.org/10.5281/zenodo.18097903) by Sirko Schindler) and the
+nanopublication helpers stay in `src/lib` and `src/model`. The diagram reuses that layout engine
+and only draws it in the new style; SVG and PNG exports embed the fonts and use the light colours.
+Drafts, review checks and the list of publications are kept in the browser's local storage
+(publications under the same key as before).
 
-The visualization is rendered as an **SVG diagram**.
+Working on the frontend, from `frontend/`:
+
+```bash
+pnpm dev                  # http://localhost:5173, proxies /api to localhost:8000
+pnpm test:unit --run      # unit tests (run in CI)
+pnpm build                # type check and production build (run in CI)
+pnpm exec playwright install chromium   # once, for the browser tests
+pnpm test:browser --run   # browser tests (not run in CI)
+```
 
 ---
 
@@ -270,7 +282,10 @@ http://localhost:8000/docs
 
 # How to Use the Application
 
-1. Enter a **variable definition** in the first textbox.
+1. **Sign in** (top right). Decomposing and publishing need an account; visualizing, editing
+   and exporting Turtle do not.
+
+2. Describe the variable on the start page and click **Decompose** (or press ⌘↵ / Ctrl+↵).
 
 Example:
 
@@ -278,17 +293,16 @@ Example:
 My system is measuring air temperature at a height of 1.7m
 ```
 
-2. Click **Decompose**
+3. The **Workspace** opens and shows the model output while it streams. Then you see the
+   I-ADOPT diagram, with the words of your definition highlighted where each component was found.
 
-You will see:
+4. Select each component in the diagram or the review list and check its label and vocabulary
+   link in the inspector; fix it there or in the **Turtle** tab, then mark it as checked.
+   The **Model output** tab shows the raw response and the JSON schema validation.
 
-* raw LLM output
-* schema validation results
-* generated TTL
-
-3. Click **Visualize**
-
-The I-ADOPT diagram will appear below.
+5. Click **Export** for SVG, PNG or Turtle, or **Publish** to sign and publish a nanopublication:
+   the dialog checks the draft, asks for your ORCID iD and asks you to confirm, because
+   publishing is permanent and public. Retract it later under **Publications**.
 
 ---
 
@@ -322,8 +336,14 @@ i-adopt-service-website
 │
 ├── frontend
 │   ├── src
-│   ├── css
-│   ├── index.html
+│   │   ├── app          (main page: start, workspace, publications)
+│   │   ├── admin        (admin dashboard)
+│   │   ├── login        (sign-in page)
+│   │   ├── components   (shadcn/ui building blocks)
+│   │   ├── lib, model   (I-ADOPT model, parsing, layout, nanopub helpers)
+│   │   └── styles       (design tokens, light and dark)
+│   ├── css              (styles of remote.html)
+│   ├── index.html, login.html, admin.html, remote.html
 │   └── Dockerfile
 │
 ├── docker-compose.yml
