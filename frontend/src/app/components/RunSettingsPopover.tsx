@@ -2,7 +2,7 @@ import { ChevronDownIcon, SlidersHorizontalIcon } from 'lucide-react';
 
 import { Label } from '@/components/ui/fields';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/menus';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '@/components/ui/controls';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/controls';
 import { Callout } from '@/components/ui/feedback';
 import { useWorkspace } from '../state/workspace';
 
@@ -15,8 +15,7 @@ export function RunSettingsPopover() {
   const defaultProvider = modelOptions ? providers[modelOptions.defaultProvider] : undefined;
   const isDefault =
     runSettings.provider === modelOptions?.defaultProvider &&
-    runSettings.model === defaultProvider?.default_model_name &&
-    runSettings.disableThinking;
+    runSettings.model === defaultProvider?.default_model_name;
 
   return (
     <Popover>
@@ -30,7 +29,6 @@ export function RunSettingsPopover() {
           <span className="truncate">
             {runSettings.model || 'Default model'}
             {isDefault ? ' · default setup' : ''}
-            {!runSettings.disableThinking ? ' · reasoning on' : ''}
           </span>
           <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         </button>
@@ -68,19 +66,8 @@ export function RunSettingsPopover() {
             </SelectContent>
           </Select>
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <Label htmlFor="run-reasoning" className="flex flex-col gap-0.5">
-            <span className="text-sm text-foreground">Reasoning</span>
-            <span className="text-xs font-normal text-muted-foreground">Off is the default and the faster choice.</span>
-          </Label>
-          <Switch
-            id="run-reasoning"
-            checked={!runSettings.disableThinking}
-            onCheckedChange={(checked) => setRunSettings({ ...runSettings, disableThinking: !checked })}
-          />
-        </div>
         {!isDefault && (
-          <Callout tone="warning">Only the default model with reasoning off has a measured accuracy. Other settings give drafts of unknown quality.</Callout>
+          <Callout tone="warning">Only the default model has a measured accuracy. Other models give drafts of unknown quality.</Callout>
         )}
       </PopoverContent>
     </Popover>

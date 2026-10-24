@@ -101,8 +101,6 @@ export function RunPanel() {
       <dl className="m-0 grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-2 text-[13px] leading-[18px]">
         <dt className="text-muted-foreground">Model</dt>
         <dd className="m-0 font-medium break-words">{run.model || 'Default'}{run.provider ? ` on ${run.provider.toUpperCase()}` : ''}</dd>
-        <dt className="text-muted-foreground">Reasoning</dt>
-        <dd className="m-0 font-medium">{run.disableThinking ? 'Off' : 'On'}</dd>
         <dt className="text-muted-foreground">Schema</dt>
         <dd className={cn('m-0 flex items-center gap-1.5 font-medium', schemaValid ? 'text-primary-soft-foreground' : 'text-warning-foreground')}>
           {schemaValid ? <CheckIcon className="size-3.5" aria-hidden="true" /> : <AlertTriangleIcon className="size-3.5" aria-hidden="true" />}
@@ -111,9 +109,6 @@ export function RunPanel() {
         <dt className="text-muted-foreground">Finished</dt>
         <dd className="m-0 font-medium">{new Date(run.finishedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</dd>
       </dl>
-      <p className="m-0 rounded-[10px] bg-surface-2 px-3 py-2.5 text-xs leading-[17px] text-text-2">
-        In the service’s held-out test (24 variables), the default setup got 3 exactly right and 7 scored zero. Treat every result as a draft and check it.
-      </p>
     </section>
   );
 }
@@ -332,7 +327,7 @@ export function DecomposeProgress() {
         <div className="overflow-hidden rounded-2xl border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-4 py-2.5 text-xs text-muted-foreground">
             <span className="flex items-center gap-2 font-semibold text-text-2"><span aria-hidden="true" className="size-[7px] animate-pulse rounded-full bg-primary" />Live model output</span>
-            <span className="font-mono">{runSettings.model}{runSettings.disableThinking ? ' · reasoning off' : ''}</span>
+            <span className="font-mono">{runSettings.model}</span>
           </div>
           <pre aria-live="off" className="m-0 max-h-[420px] min-h-[220px] overflow-auto px-4 py-3.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap">
             {rawOutput}

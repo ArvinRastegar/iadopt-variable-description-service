@@ -20,7 +20,6 @@ import { useAuth } from '@/shared/auth';
 export interface RunSettings {
   provider: string;
   model: string;
-  disableThinking: boolean;
 }
 
 export interface RunInfo extends RunSettings {
@@ -148,7 +147,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [decomposeStartedAt, setDecomposeStartedAt] = React.useState<number | null>(null);
   const [run, setRun] = React.useState<RunInfo | null>(draft?.run ?? null);
   const [modelOptions, setModelOptions] = React.useState<ModelOptions | null>(null);
-  const [runSettings, setRunSettings] = React.useState<RunSettings>({ provider: 'psnc', model: '', disableThinking: true });
+  const [runSettings, setRunSettings] = React.useState<RunSettings>({ provider: 'psnc', model: '' });
   const [preparationOptions, setPreparationOptions] = React.useState<PreparationOptions | null>(null);
   const [preparationError, setPreparationError] = React.useState<string | null>(null);
 
@@ -402,7 +401,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     const provider = modelOptions?.providers[runSettings.provider] ? runSettings.provider : modelOptions?.defaultProvider ?? runSettings.provider;
     const model = runSettings.model || modelOptions?.providers[provider]?.default_model_name || '';
-    const settings: RunSettings = { provider, model, disableThinking: runSettings.disableThinking };
+    const settings: RunSettings = { provider, model };
 
     decomposingRef.current = true;
     setDecomposing(true);
@@ -410,7 +409,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setDecomposeStartedAt(Date.now());
     try {
       const result = await runProtected(() => streamDecomposition(
-        { definition: text, model_provider: provider, model_name: model, disable_thinking: settings.disableThinking },
+        // Always without reasoning, the default setup; the page offers no switch for it.
+        { definition: text, model_provider: provider, model_name: model, disable_thinking: true },
         {
           onStart: () => {
             setRawOutput('');

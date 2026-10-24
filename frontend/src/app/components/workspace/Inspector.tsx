@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AlertTriangleIcon, CheckIcon, ExternalLinkIcon, InfoIcon, MousePointerClickIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { AlertTriangleIcon, CheckIcon, ExternalLinkIcon, InfoIcon, MousePointerClickIcon, PlusIcon, RefreshCwIcon, Trash2Icon, Undo2Icon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -43,16 +43,42 @@ export function Inspector() {
 
   if (!item) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2.5 p-8 text-center">
-        <span aria-hidden="true" className="flex size-11 items-center justify-center rounded-xl bg-surface-2 text-muted-foreground">
-          <MousePointerClickIcon className="size-5" />
-        </span>
-        <div className="font-semibold">Select a component</div>
-        <p className="m-0 max-w-60 text-[13px] text-muted-foreground">Click a box in the diagram, or a row in the list, to check its label and vocabulary link.</p>
+      <div className="flex flex-1 flex-col">
+        <TurtleChanges className="mx-[18px] mt-[18px]" />
+        <div className="flex flex-1 flex-col items-center justify-center gap-2.5 p-8 text-center">
+          <span aria-hidden="true" className="flex size-11 items-center justify-center rounded-xl bg-surface-2 text-muted-foreground">
+            <MousePointerClickIcon className="size-5" />
+          </span>
+          <div className="font-semibold">Select a component</div>
+          <p className="m-0 max-w-60 text-[13px] text-muted-foreground">Click a box in the diagram, or a row in the list, to check its label and vocabulary link.</p>
+        </div>
       </div>
     );
   }
   return <InspectorFor key={componentKeyOf(item)} item={item} />;
+}
+
+/** Edits made in the Turtle tab are saved here too, where the diagram's own edits are saved. */
+function TurtleChanges({ className }: { className?: string }) {
+  const workspace = useWorkspace();
+  if (!workspace.turtleDirty || workspace.decomposing) return null;
+  const error = workspace.turtleError;
+  return (
+    <Callout
+      tone={error ? 'danger' : 'warning'}
+      title={error ? `Error during ${error.phase.toLowerCase()}` : 'The Turtle has unsaved edits'}
+      className={className}
+    >
+      <div className="flex flex-col gap-2.5">
+        <span className={cn(error && 'font-mono text-xs break-words')}>
+          {error ? error.message : 'Update the diagram to save them. Editing here waits until then.'}
+        </span>
+        <Button size="sm" className="self-start" disabled={workspace.rendering} onClick={() => void workspace.visualize(workspace.turtle)}>
+          <RefreshCwIcon aria-hidden="true" /> Update diagram
+        </Button>
+      </div>
+    </Callout>
+  );
 }
 
 function constraintsOf(comp: ComponentInfo['comp']): ComponentInfo['comp'][] {
@@ -76,6 +102,7 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
   const [adding, setAdding] = React.useState<AddableToVariable | 'Constraint' | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const checkButton = React.useRef<HTMLButtonElement>(null);
 
   React.useEffect(() => setFields(initialFields), [initialFields]);
   React.useEffect(() => setShape(initialShape), [initialShape]);
@@ -129,9 +156,7 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
         {item.relation && <p className="m-0 text-[13px] text-text-2">Part of a system, linked with <code className="font-mono text-xs">{item.relation}</code>.</p>}
       </div>
 
-      {locked && workspace.turtleDirty && (
-        <Callout tone="warning">The Turtle has edits the diagram does not show yet. Update the diagram from the Turtle tab before editing here.</Callout>
-      )}
+      <TurtleChanges />
 
       <form
         className="flex flex-col gap-4"
@@ -221,16 +246,35 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
       )}
 
       <div className="flex flex-col gap-2.5 border-t border-border pt-4">
-        <Button
-          variant={checked ? 'secondary' : 'outline'}
-          size="lg"
-          aria-pressed={checked}
-          className={cn(checked && 'bg-primary-soft text-primary-soft-foreground hover:bg-primary-soft')}
-          onClick={() => workspace.toggleChecked(comp)}
-        >
-          <CheckIcon strokeWidth={2.6} aria-hidden="true" />
-          {checked ? 'Checked' : 'Looks right'}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            ref={checkButton}
+            variant={checked ? 'secondary' : 'outline'}
+            size="lg"
+            aria-disabled={checked || undefined}
+            className={cn('flex-1', checked && 'cursor-default bg-primary-soft text-primary-soft-foreground hover:bg-primary-soft')}
+            onClick={() => {
+              // Only "Undo" takes a check back; clicking "Checked" keeps it.
+              if (!checked) workspace.toggleChecked(comp);
+            }}
+          >
+            <CheckIcon strokeWidth={2.6} aria-hidden="true" />
+            {checked ? 'Checked' : 'Looks right'}
+          </Button>
+          {checked && (
+            <Button
+              variant="outline"
+              size="lg"
+              aria-label="Undo check"
+              onClick={() => {
+                workspace.toggleChecked(comp);
+                checkButton.current?.focus();
+              }}
+            >
+              <Undo2Icon aria-hidden="true" /> Undo
+            </Button>
+          )}
+        </div>
         {canDelete(comp) && (
           <Button variant="ghost" className="text-destructive-soft-foreground" disabled={locked} onClick={() => setConfirmDelete(true)}>
             <Trash2Icon aria-hidden="true" /> Delete {KIND_NAMES[item.kind].toLowerCase()}

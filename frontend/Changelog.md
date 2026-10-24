@@ -6,11 +6,12 @@
 * Rebuilt the main, sign-in and admin pages in React + TypeScript with Tailwind CSS and shadcn/ui; Bootstrap is gone
 * New flow: a start page to describe a variable, a workspace with the diagram, a component list, a Turtle editor (CodeMirror) and the raw model output, and a publications page
 * The diagram keeps the existing layout engine and gets a new look: colours per I-ADOPT component, vocabulary-link and review marks, zoom, keyboard selection
-* An inspector replaces the editor overlay for labels, IRIs, descriptions, shapes, constraints, additions and deletions, and has a "checked" mark per component
+* An inspector replaces the editor overlay for labels, IRIs, descriptions, shapes, constraints, additions and deletions, and has a "checked" mark per component that can be undone; unsaved Turtle edits can be applied from it too
 * Publishing is a three-step dialog (check, ORCID iD, confirm) that shows the result links instead of opening a new tab; the nanopublication metadata can be added from the dialog or the Turtle tab
 * Retracting happens from the publications list (or by pasting a reference) and keeps retracted entries, marked as retracted
 * Light and dark themes, bundled fonts (no requests to other hosts), drafts kept in this browser; a shared `?ttl=` link offers to restore the draft it replaced
 * The sign-in page only returns to same-site addresses after signing in
+* The reasoning switch is gone: decompositions always run without reasoning, the default setup (the request still sends `disable_thinking: true`)
 * `remote.html`, the page URLs, the API requests, the activity events and the stored publications are unchanged
 
 ### Bugfixes
