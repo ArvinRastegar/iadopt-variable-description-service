@@ -25,9 +25,14 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import HTTPException, Request, Response, status
+
+from .schemas.common import canonical_orcid_uri
+
+MAX_SAVED_ORCIDS = 20
+"""How many ORCID iDs one account can keep for publishing and retracting."""
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -150,7 +155,7 @@ class AuthStore:
         return conn
 
     def _create_schema(self, conn: sqlite3.Connection) -> None:
-        """Create the ``users``, ``sessions``, and ``audit_events`` tables if absent.
+        """Create the ``users``, ``sessions``, ``audit_events`` and ``saved_orcids`` tables if absent.
 
         Args:
             conn: An open SQLite connection.
@@ -197,6 +202,15 @@ class AuthStore:
                 response_payload TEXT,
                 metadata TEXT,
                 error TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS saved_orcids (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                orcid TEXT NOT NULL,
+                name TEXT,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, orcid)
             );
 
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
@@ -643,6 +657,89 @@ class AuthStore:
         if not row:
             raise ValueError("User not found.")
         return self._user_from_row(row)
+
+    def list_orcids(self, user_id: int) -> List[Dict[str, Any]]:
+        """Return the ORCID iDs a user saved, most recently used first.
+
+        Args:
+            user_id: The account owner.
+
+        Returns:
+            Dicts with ``orcid`` (canonical URI), ``name`` (public ORCID name or ``None``),
+            ``created_at`` and ``last_used_at``.
+        """
+        with self._lock, self._connect() as conn:
+            return self._list_orcids(conn, user_id)
+
+    def save_orcid(self, user_id: int, orcid: str, name: Optional[str] = None) -> Tuple[List[Dict[str, Any]], bool]:
+        """Save an ORCID iD to an account, or mark an already saved one as just used.
+
+        Args:
+            user_id: The account owner (a real account; the routes refuse the
+                auth-disabled development user).
+            orcid: A bare iD or orcid.org URL; it is stored in canonical form.
+            name: The public ORCID name, if known; an unknown name never replaces one
+                saved earlier.
+
+        Returns:
+            The account's saved iDs after the change (see :meth:`list_orcids`), and whether
+            the iD was newly saved.
+
+        Raises:
+            ValueError: If the iD is malformed or its check digit is wrong, or the account
+                already holds ``MAX_SAVED_ORCIDS`` other iDs.
+        """
+        orcid = canonical_orcid_uri(orcid)
+        now = utc_iso()
+        with self._lock, self._connect() as conn:
+            updated = conn.execute(
+                "UPDATE saved_orcids SET last_used_at = ?, name = COALESCE(?, name) WHERE user_id = ? AND orcid = ?",
+                (now, name, user_id, orcid),
+            )
+            created = not updated.rowcount
+            if created:
+                count = conn.execute("SELECT COUNT(*) FROM saved_orcids WHERE user_id = ?", (user_id,)).fetchone()[0]
+                if count >= MAX_SAVED_ORCIDS:
+                    raise ValueError(f"You can save up to {MAX_SAVED_ORCIDS} ORCID iDs. Remove one first.")
+                conn.execute(
+                    "INSERT INTO saved_orcids (user_id, orcid, name, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, orcid, name, now, now),
+                )
+            return self._list_orcids(conn, user_id), created
+
+    def remove_orcid(self, user_id: int, orcid: str) -> List[Dict[str, Any]]:
+        """Remove a saved ORCID iD from an account.
+
+        Args:
+            user_id: The account owner.
+            orcid: A bare iD or orcid.org URL; a malformed one makes
+                :func:`canonical_orcid_uri` raise ``ValueError``.
+
+        Returns:
+            The account's saved iDs after the change (see :meth:`list_orcids`).
+
+        Raises:
+            LookupError: If the account has not saved that iD.
+        """
+        orcid = canonical_orcid_uri(orcid)
+        with self._lock, self._connect() as conn:
+            deleted = conn.execute("DELETE FROM saved_orcids WHERE user_id = ? AND orcid = ?", (user_id, orcid))
+            if not deleted.rowcount:
+                raise LookupError("That ORCID iD is not saved to your account.")
+            return self._list_orcids(conn, user_id)
+
+    def _list_orcids(self, conn: sqlite3.Connection, user_id: int) -> List[Dict[str, Any]]:
+        """Read a user's saved iDs on an open connection, most recently used first."""
+        rows = conn.execute(
+            """
+            SELECT orcid, name, created_at, last_used_at
+              FROM saved_orcids
+             WHERE user_id = ?
+             ORDER BY last_used_at DESC, orcid ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def audit_event(
         self,

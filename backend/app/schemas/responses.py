@@ -165,6 +165,28 @@ class AuthUserResponse(BaseModel):
     auth_enabled: bool
 
 
+class SavedOrcid(BaseModel):
+    """One ORCID iD saved to the signed-in account.
+
+    Attributes:
+        orcid: Canonical ``https://orcid.org/<iD>`` URI.
+        name: Public name from the ORCID record, when it could be resolved.
+        created_at: When the iD was saved (ISO-8601 UTC).
+        last_used_at: When it was last saved or used to publish or retract (ISO-8601 UTC).
+    """
+
+    orcid: str
+    name: Optional[str]
+    created_at: str
+    last_used_at: str
+
+
+class SavedOrcidsResponse(BaseModel):
+    """Body of the ``/api/auth/me/orcids`` routes: the account's iDs, most recently used first."""
+
+    orcids: List[SavedOrcid]
+
+
 class StatusOkResponse(BaseModel):
     """A bare ``{"status": "ok"}`` acknowledgement (logout, events, livez, health)."""
 

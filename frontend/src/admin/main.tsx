@@ -13,6 +13,7 @@ import { adminApi, ApiError, AuthRequiredError, fetchCurrentUser, signOut, type 
 import { Brand } from '@/shared/AppHeader';
 import { displayName } from '@/shared/auth';
 import { ThemeProvider, ThemeToggle, useTheme } from '@/shared/theme';
+import { NewPasswordFields } from './NewPasswordFields';
 
 /* Admin dashboard over the existing admin API: statistics, readiness, users and the audit log. */
 
@@ -351,9 +352,14 @@ function ResetPasswordDialog({ user, onClose, onSubmit }: { user: User | null; o
             <DialogTitle>Reset password</DialogTitle>
             <DialogDescription>Set a new password for {user?.username}. Tell them through a secure channel.</DialogDescription>
           </DialogHeader>
-          <DialogBody className="flex flex-col gap-1.5">
-            <Label htmlFor="reset-password">New password, at least 8 characters</Label>
-            <Input id="reset-password" type="password" autoComplete="new-password" minLength={8} required value={password} onChange={(event) => setPassword(event.target.value)} />
+          <DialogBody className="flex flex-col gap-4">
+            <NewPasswordFields
+              idPrefix="reset-password"
+              password={password}
+              onPasswordChange={setPassword}
+              passwordLabel="New password, at least 8 characters"
+              confirmationLabel="Confirm the new password"
+            />
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
@@ -410,13 +416,17 @@ function CreateUserDialog({ open, onOpenChange, onCreated }: { open: boolean; on
               <Input id="new-username" required autoComplete="off" value={fields.username} onChange={(event) => setFields({ ...fields, username: event.target.value })} />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-password">Password</Label>
-              <Input id="new-password" type="password" minLength={8} required autoComplete="new-password" value={fields.password} onChange={(event) => setFields({ ...fields, password: event.target.value })} />
-            </div>
-            <div className="flex flex-col gap-1.5">
               <Label htmlFor="new-display-name">Display name</Label>
               <Input id="new-display-name" value={fields.display_name} onChange={(event) => setFields({ ...fields, display_name: event.target.value })} />
             </div>
+            {/* Password and confirmation sit side by side in the two-column grid. */}
+            <NewPasswordFields
+              idPrefix="new-password"
+              password={fields.password}
+              onPasswordChange={(password) => setFields({ ...fields, password })}
+              passwordLabel="Password, at least 8 characters"
+              confirmationLabel="Confirm password"
+            />
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="new-email">Email</Label>
               <Input id="new-email" type="email" value={fields.email} onChange={(event) => setFields({ ...fields, email: event.target.value })} />

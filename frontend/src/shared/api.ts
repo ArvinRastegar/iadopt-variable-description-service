@@ -1,8 +1,10 @@
 import { readNdjson } from '@/lib/ndjson';
+import { bareOrcid } from '@/lib/orcid';
 
 /*
  * Thin client for the backend API. Request bodies and paths are exactly the ones the previous
- * frontend sent, so the backend and its audit log see no difference.
+ * frontend sent, so the backend and its audit log see no difference; the saved ORCID iD routes
+ * (`/auth/me/orcids`, D-035) are the only new ones.
  */
 
 export const API_BASE = '/api';
@@ -141,6 +143,40 @@ export async function signIn(username: string, password: string): Promise<User> 
 export async function signOut(): Promise<void> {
   const response = await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
   if (!response.ok && response.status !== 401) throw new ApiError('Could not sign out. Please try again.', response.status);
+}
+
+/** One ORCID iD saved to the signed-in account; `orcid` is the canonical https://orcid.org/ URI. */
+export interface SavedOrcid {
+  orcid: string;
+  name: string | null;
+  created_at: string;
+  last_used_at: string;
+}
+
+/** The account's saved ORCID iDs, most recently used first. */
+export async function fetchSavedOrcids(): Promise<SavedOrcid[]> {
+  const data = await requestJson<{ orcids?: SavedOrcid[] }>('/auth/me/orcids', {}, 'Could not load your saved ORCID iDs.');
+  return data.orcids ?? [];
+}
+
+/** Save an ORCID iD to the account, or mark a saved one as just used; returns the new list. */
+export async function saveOrcid(orcidUri: string): Promise<SavedOrcid[]> {
+  const data = await requestJson<{ orcids?: SavedOrcid[] }>(
+    '/auth/me/orcids',
+    { method: 'POST', body: JSON.stringify({ orcid: orcidUri }) },
+    'Could not save the ORCID iD to your account.',
+  );
+  return data.orcids ?? [];
+}
+
+/** Remove a saved ORCID iD from the account; returns the new list. */
+export async function removeSavedOrcid(orcidUri: string): Promise<SavedOrcid[]> {
+  const data = await requestJson<{ orcids?: SavedOrcid[] }>(
+    `/auth/me/orcids/${encodeURIComponent(bareOrcid(orcidUri))}`,
+    { method: 'DELETE' },
+    'Could not remove the ORCID iD from your account.',
+  );
+  return data.orcids ?? [];
 }
 
 /* ------------------------------ Configuration ----------------------------- */

@@ -15,6 +15,7 @@ echoed back into the audit log — a behavior change.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Optional
 
 from pydantic import Field
@@ -78,3 +79,41 @@ def orcid_suffix(orcid_id: Optional[str]) -> Optional[str]:
     if not normalized:
         return None
     return normalized.rstrip("/").rsplit("/", 1)[-1]
+
+
+# ASCII digits only: ``\d`` would also accept other scripts' digits, which int() reads.
+_ORCID_ID_PATTERN = re.compile(r"[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X]")
+
+
+def _orcid_check_digit(base_digits: str) -> str:
+    """Return the ISO 7064 MOD 11-2 check digit ORCID computes over the first 15 digits."""
+    total = 0
+    for digit in base_digits:
+        total = (total + int(digit)) * 2
+    result = (12 - total % 11) % 11
+    return "X" if result == 10 else str(result)
+
+
+def canonical_orcid_uri(value: Optional[str]) -> str:
+    """Validate an ORCID iD strictly and return its canonical ``https://orcid.org/`` URI.
+
+    Unlike :func:`normalize_orcid`, which keeps the legacy pass-through for any URL, this
+    accepts only a bare iD or an orcid.org URL whose check digit matches. It is the one
+    check for saved iDs, used by the auth store and its routes alike.
+
+    Args:
+        value: A bare iD (``0000-0002-1825-0097``) or ``http(s)://orcid.org/<iD>``.
+
+    Returns:
+        The canonical URI, e.g. ``https://orcid.org/0000-0002-1825-0097``.
+
+    Raises:
+        ValueError: If the value is not a well-formed ORCID iD or its check digit is wrong.
+    """
+    suffix = re.sub(r"^https?://orcid\.org/", "", (value or "").strip(), flags=re.IGNORECASE).upper()
+    if not _ORCID_ID_PATTERN.fullmatch(suffix):
+        raise ValueError("Enter a valid ORCID iD such as 0000-0002-1825-0097.")
+    digits = suffix.replace("-", "")
+    if _orcid_check_digit(digits[:15]) != digits[15]:
+        raise ValueError("The ORCID check digit is invalid.")
+    return f"https://orcid.org/{suffix}"

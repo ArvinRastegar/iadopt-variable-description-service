@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import '@/styles/globals.css';
 import { Button } from '@/components/ui/button';
-import { Input, Label } from '@/components/ui/fields';
+import { Input, Label, PasswordInput } from '@/components/ui/fields';
 import { safeRedirect } from '@/lib/safeRedirect';
 import { fetchCurrentUser, signIn } from '@/shared/api';
 import { Brand } from '@/shared/AppHeader';
@@ -65,7 +65,7 @@ function LoginPage() {
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+            <PasswordInput id="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
           </div>
           <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">{error}</p>
           <Button type="submit" size="lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>

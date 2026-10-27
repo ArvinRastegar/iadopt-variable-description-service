@@ -6,36 +6,17 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/controls';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Callout, Spinner } from '@/components/ui/feedback';
-import { Input, Label } from '@/components/ui/fields';
-import { applyCreatorOrcidToTurtle, normalizeOrcid, readCreatorOrcidFromTurtle, validatePreNanopubTurtle } from '@/lib/applyPreNanopubSettingsToTurtle.js';
-import { readString, REMEMBERED_ORCID_KEY, writeString } from '@/lib/storage';
+import { applyCreatorOrcidToTurtle, readCreatorOrcidFromTurtle, validatePreNanopubTurtle } from '@/lib/applyPreNanopubSettingsToTurtle.js';
 import { cn } from '@/lib/utils';
 import { AuthRequiredError, publishNanopub, type PublishResult } from '@/shared/api';
 import { useAuth } from '@/shared/auth';
 import { navigate } from '../router';
 import { usePublications } from '../state/publications';
 import { useWorkspace, variableTitle } from '../state/workspace';
+import { OrcidMark, OrcidPicker, useOrcidChoice } from './OrcidPicker';
 import { needsLink } from './workspace/panels';
 
 type Step = 'check' | 'creator' | 'confirm' | 'publishing' | 'done';
-
-export function OrcidMark({ className }: { className?: string }) {
-  return (
-    <span aria-hidden="true" className={cn('inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[#A6CE39] text-[10px] font-bold tracking-tight text-white', className)}>
-      iD
-    </span>
-  );
-}
-
-/** Checks an ORCID iD as it is typed; the messages are the ones the previous page showed. */
-export function orcidStatus(value: string): { uri: string | null; error: string | null } {
-  if (!value.trim()) return { uri: null, error: null };
-  try {
-    return { uri: normalizeOrcid(value), error: null };
-  } catch (error) {
-    return { uri: null, error: error instanceof Error ? error.message : String(error) };
-  }
-}
 
 export function usePublishDialog() {
   const auth = useAuth();
@@ -56,9 +37,6 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const [step, setStep] = React.useState<Step>('check');
   const [missing, setMissing] = React.useState<string[] | null>(null);
   const [checkError, setCheckError] = React.useState<string | null>(null);
-  const [orcid, setOrcid] = React.useState('');
-  const [touched, setTouched] = React.useState(false);
-  const [remember, setRemember] = React.useState(false);
   const [agree, setAgree] = React.useState(false);
   const [publishError, setPublishError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<PublishResult | null>(null);
@@ -69,6 +47,9 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     ? { conformsToUri: workspace.preparationOptions.conforms_to_uri, createdWithLabel: workspace.preparationOptions.created_with_label }
     : null;
 
+  // The creator iD a draft already carries is preselected when it is one of the saved iDs.
+  const orcid = useOrcidChoice(open ? 'publish' : null, 'Please put in your ORCID for nanopublication.', () => readCreatorOrcidFromTurtle(workspace.turtle));
+
   // Every time the dialog opens: start over and check the metadata of the visible Turtle.
   React.useEffect(() => {
     if (!open) return;
@@ -76,15 +57,6 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     setAgree(false);
     setPublishError(null);
     setResult(null);
-    setTouched(false);
-    const remembered = readString(REMEMBERED_ORCID_KEY);
-    setRemember(Boolean(remembered));
-    setOrcid(remembered?.replace(/^https?:\/\/orcid\.org\//i, '') ?? '');
-    if (!remembered) {
-      readCreatorOrcidFromTurtle(workspace.turtle)
-        .then((uri: string | null) => uri && setOrcid(uri.replace(/^https?:\/\/orcid\.org\//i, '')))
-        .catch(() => {});
-    }
     // eslint-style exhaustive deps are not wanted here: this runs once per opening.
   }, [open]); // eslint-disable-line
 
@@ -114,24 +86,24 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const total = workspace.components.length;
   const unchecked = total - workspace.checkedCount;
   const unlinked = workspace.components.filter(needsLink);
-  const orcidState = orcidStatus(orcid);
-  const orcidError = orcidState.error ?? (touched && !orcid.trim() ? 'Please put in your ORCID for nanopublication.' : null);
+  const creatorName = orcid.saved.find((item) => item.orcid === orcid.uri)?.name;
   const canContinueCheck = !workspace.turtleDirty && missing !== null && missing.length === 0 && !checkError;
 
   async function publish() {
-    if (!settings || !orcidState.uri) return;
+    if (!settings || !orcid.uri) return;
+    const creatorOrcid = orcid.uri;
     setBusy(true);
     setPublishError(null);
     setStep('publishing');
     try {
       const before = workspace.turtle.trim();
-      const creatorSettings = { ...settings, creatorOrcid: orcidState.uri };
+      const creatorSettings = { ...settings, creatorOrcid };
       // Write the ORCID into the visible Turtle so what is published is what the user sees.
       const ttl = (await applyCreatorOrcidToTurtle(before, creatorSettings)).trim();
       const prepared = await validatePreNanopubTurtle(ttl, creatorSettings);
       if (ttl !== before) workspace.replaceTurtleQuietly(ttl);
 
-      const published = await auth.runProtected(() => publishNanopub(ttl, prepared.creatorOrcidUri ?? orcidState.uri as string), 'publish a nanopublication');
+      const published = await auth.runProtected(() => publishNanopub(ttl, prepared.creatorOrcidUri ?? creatorOrcid), 'publish a nanopublication');
       if (!published.nanopub_url) throw new Error('Backend did not return the nanopub URL.');
       publications.remember({
         variableIdentifier: published.variable_identifier || published.variable_uri || published.nanopub_url,
@@ -142,7 +114,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
         label: variableTitle(workspace.variable),
         creatorOrcid: prepared.creatorOrcidUri ?? undefined,
       });
-      writeString(REMEMBERED_ORCID_KEY, remember ? orcidState.uri : null);
+      void orcid.remember(prepared.creatorOrcidUri ?? creatorOrcid);
       setResult(published);
       setStep('done');
     } catch (error) {
@@ -264,35 +236,10 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
 
           {step === 'creator' && (
             <>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="publish-orcid" className={cn(orcidError && 'text-destructive-soft-foreground')}>Your ORCID iD</Label>
-                <div className="relative">
-                  <OrcidMark className="absolute top-3 left-3" />
-                  <Input
-                    id="publish-orcid"
-                    autoComplete="off"
-                    spellCheck={false}
-                    autoFocus
-                    placeholder="0000-0000-0000-0000"
-                    value={orcid}
-                    aria-invalid={Boolean(orcidError)}
-                    aria-describedby="publish-orcid-message publish-orcid-help"
-                    onChange={(event) => setOrcid(event.target.value)}
-                    onBlur={() => setTouched(true)}
-                    className="h-11 pl-10 font-mono text-[15px] tracking-[0.02em]"
-                  />
-                </div>
-                <div id="publish-orcid-message" role="alert" className={cn('min-h-[18px] text-[13px] leading-[18px]', orcidError ? 'text-destructive-soft-foreground' : 'text-primary-soft-foreground')}>
-                  {orcidError ?? (orcidState.uri ? 'Valid ORCID iD. The check digit matches.' : '')}
-                </div>
-              </div>
+              <OrcidPicker choice={orcid} idPrefix="publish" describedBy="publish-orcid-help" autoFocus />
               <Callout tone="neutral" id="publish-orcid-help">
                 Your iD is written as <code className="font-mono text-xs">dct:creator</code> and <code className="font-mono text-xs">prov:wasAttributedTo</code>. The service’s key only signs the nanopublication; it is never recorded as the creator.
               </Callout>
-              <div className="flex items-center gap-2.5 text-[13px] text-text-2">
-                <Checkbox id="publish-remember" checked={remember} onCheckedChange={(value) => setRemember(value === true)} />
-                <label htmlFor="publish-remember">Remember my ORCID iD on this device</label>
-              </div>
             </>
           )}
 
@@ -302,7 +249,11 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                 <SummaryRow term="Variable">{variableTitle(workspace.variable)}</SummaryRow>
                 <SummaryRow term="Identifier" mono>{workspace.variable?.getIri() ?? '—'}</SummaryRow>
                 <SummaryRow term="Creator" mono>
-                  <span className="flex items-center gap-2"><OrcidMark className="size-[18px] text-[9px]" />{orcidState.uri}</span>
+                  <span className="flex items-center gap-2">
+                    <OrcidMark className="size-[18px] text-[9px]" />
+                    {creatorName && <span className="font-sans text-[13px] font-semibold">{creatorName}</span>}
+                    {orcid.uri}
+                  </span>
                 </SummaryRow>
                 <SummaryRow term="Signed by" last>The service’s signing key</SummaryRow>
               </dl>
@@ -357,9 +308,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
               <Button variant="ghost" onClick={() => setStep('check')}>Back</Button>
               <Button
                 onClick={() => {
-                  setTouched(true);
-                  if (orcidState.uri) setStep('confirm');
-                  else document.getElementById('publish-orcid')?.focus();
+                  if (orcid.require()) setStep('confirm');
                 }}
               >
                 Continue
@@ -369,7 +318,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
           {step === 'confirm' && (
             <>
               <Button variant="ghost" onClick={() => setStep('creator')}>Back</Button>
-              <Button disabled={!agree || !orcidState.uri || busy} onClick={() => void publish()}>Publish nanopublication</Button>
+              <Button disabled={!agree || !orcid.uri || busy} onClick={() => void publish()}>Publish nanopublication</Button>
             </>
           )}
           {step === 'done' && result && (

@@ -5,12 +5,12 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Segmented, SegmentedItem } from '@/components/ui/controls';
 import { Callout, Pill, Spinner } from '@/components/ui/feedback';
-import { Input, Label } from '@/components/ui/fields';
+import { Input } from '@/components/ui/fields';
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { readString, REMEMBERED_ORCID_KEY, type PublishedNanopub } from '@/lib/storage';
+import { type PublishedNanopub } from '@/lib/storage';
 import { AuthRequiredError, retractNanopub } from '@/shared/api';
 import { useAuth } from '@/shared/auth';
-import { OrcidMark, orcidStatus } from '../components/PublishDialog';
+import { OrcidPicker, useOrcidChoice } from '../components/OrcidPicker';
 import { usePublications } from '../state/publications';
 
 type Filter = 'all' | 'published' | 'retracted';
@@ -217,33 +217,24 @@ function RetractSheet({
 }) {
   const auth = useAuth();
   const publications = usePublications();
-  const [orcid, setOrcid] = React.useState('');
-  const [touched, setTouched] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // The publication's own creator iD is preselected when it is one of the saved iDs.
+  const orcid = useOrcidChoice(target ? target.reference : null, 'Please put in your ORCID for the retraction.', async () => target?.entry?.creatorOrcid ?? null);
 
   React.useEffect(() => {
-    if (!target) return;
-    setTouched(false);
-    setError(null);
-    const remembered = readString(REMEMBERED_ORCID_KEY) ?? target.entry?.creatorOrcid ?? '';
-    setOrcid(remembered.replace(/^https?:\/\/orcid\.org\//i, ''));
+    if (target) setError(null);
   }, [target]);
 
-  const status = orcidStatus(orcid);
-  const orcidError = status.error ?? (touched && !orcid.trim() ? 'Please put in your ORCID for the retraction.' : null);
-
   async function confirm() {
-    setTouched(true);
-    if (!target || !status.uri) {
-      document.getElementById('retract-orcid')?.focus();
-      return;
-    }
+    const creatorOrcid = orcid.require();
+    if (!target || !creatorOrcid) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await auth.runProtected(() => retractNanopub(target.reference, status.uri as string), 'retract a nanopublication');
+      const result = await auth.runProtected(() => retractNanopub(target.reference, creatorOrcid), 'retract a nanopublication');
       if (!result.retraction_url) throw new Error('Backend did not return the retraction nanopub URL.');
+      void orcid.remember(creatorOrcid);
       publications.markRetracted([result.retracted_nanopub_url, target.reference], {
         retractionUrl: result.retraction_url,
         retractedAt: new Date().toISOString(),
@@ -280,27 +271,7 @@ function RetractSheet({
               {target.entry && <span className="text-xs text-muted-foreground">Published {formatDate(target.entry.savedAt)}</span>}
             </div>
           )}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="retract-orcid" className={orcidError ? 'text-destructive-soft-foreground' : undefined}>Your ORCID iD</Label>
-            <div className="relative">
-              <OrcidMark className="absolute top-2.5 left-3 size-[18px] text-[9px]" />
-              <Input
-                id="retract-orcid"
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="0000-0000-0000-0000"
-                value={orcid}
-                aria-invalid={Boolean(orcidError)}
-                aria-describedby="retract-orcid-message"
-                onChange={(event) => setOrcid(event.target.value)}
-                onBlur={() => setTouched(true)}
-                className="h-10 pl-10 font-mono"
-              />
-            </div>
-            <span id="retract-orcid-message" role="alert" className={orcidError ? 'text-xs text-destructive-soft-foreground' : 'text-xs text-muted-foreground'}>
-              {orcidError ?? 'Recorded as the creator of the retraction.'}
-            </span>
-          </div>
+          <OrcidPicker choice={orcid} idPrefix="retract" hint="Recorded as the creator of the retraction." disabled={busy} />
           <Callout tone="danger" title="A retraction cannot be undone">
             It is a new, public nanopublication that marks this one as retracted. Tools that respect retractions stop showing the variable; the original stays readable.
           </Callout>
