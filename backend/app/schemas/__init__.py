@@ -37,6 +37,7 @@ from .requests import (
     LoginRequest,
     PublishNanopubRequest,
     RetractNanopubRequest,
+    SaveOrcidRequest,
 )
 from .responses import (
     AdminStatsResponse,
@@ -52,6 +53,8 @@ from .responses import (
     ReadinessSummary,
     ReadyzResponse,
     RetractNanopubResponse,
+    SavedOrcid,
+    SavedOrcidsResponse,
     StatusOkResponse,
     UserResponse,
     UsersResponse,
@@ -85,6 +88,7 @@ __all__ = [
     "LoginRequest",
     "PublishNanopubRequest",
     "RetractNanopubRequest",
+    "SaveOrcidRequest",
     # responses
     "AdminStatsResponse",
     "AuditEvent",
@@ -99,6 +103,8 @@ __all__ = [
     "ReadinessSummary",
     "ReadyzResponse",
     "RetractNanopubResponse",
+    "SavedOrcid",
+    "SavedOrcidsResponse",
     "StatusOkResponse",
     "UserResponse",
     "UsersResponse",

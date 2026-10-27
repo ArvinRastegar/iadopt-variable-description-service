@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input, Label } from '@/components/ui/fields';
+import { Input, Label, PasswordInput } from '@/components/ui/fields';
 import { AuthRequiredError, fetchCurrentUser, postEvent, signIn, signOut, type User } from './api';
 
 /*
@@ -204,10 +204,9 @@ function SignInDialog({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="sign-in-password">Password</Label>
-              <Input
+              <PasswordInput
                 id="sign-in-password"
                 name="password"
-                type="password"
                 autoComplete="current-password"
                 required
                 value={password}

@@ -83,6 +83,17 @@ class LoginRequest(BaseModel):
     password: NonEmptyStr
 
 
+class SaveOrcidRequest(BaseModel):
+    """Input for ``POST /api/auth/me/orcids``.
+
+    Attributes:
+        orcid: The ORCID iD to save (bare id or https://orcid.org/ URI); the route checks
+            its form and check digit.
+    """
+
+    orcid: NonEmptyStr = Field(..., description="ORCID iD to save (bare id or https://orcid.org/ URI)")
+
+
 class FrontendEventRequest(BaseModel):
     """A frontend analytics/audit event for ``POST /api/events``.
 

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Label as LabelPrimitive } from 'radix-ui';
+import { EyeIcon, EyeOffIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
@@ -8,6 +9,37 @@ const fieldBase =
 
 function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
   return <input type={type} data-slot="input" className={cn(fieldBase, 'h-9', className)} {...props} />;
+}
+
+/**
+ * Password field with an eye button that shows or hides what was typed. Spelling and
+ * autocorrection stay off, so a shown password is never sent to a spelling service.
+ */
+function PasswordInput({ className, ...props }: Omit<React.ComponentProps<'input'>, 'type'>) {
+  const [visible, setVisible] = React.useState(false);
+  return (
+    <div className="relative">
+      <Input
+        type={visible ? 'text' : 'password'}
+        spellCheck={false}
+        autoCapitalize="none"
+        autoCorrect="off"
+        className={cn('block pr-10', className)}
+        {...props}
+      />
+      <button
+        type="button"
+        aria-controls={props.id}
+        disabled={props.disabled}
+        onClick={() => setVisible((current) => !current)}
+        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-50"
+      >
+        {visible ? <EyeOffIcon aria-hidden="true" className="size-4" /> : <EyeIcon aria-hidden="true" className="size-4" />}
+        {/* Text rather than aria-label, so the button never counts as a label of the field. */}
+        <span className="sr-only">{visible ? 'Hide password' : 'Show password'}</span>
+      </button>
+    </div>
+  );
 }
 
 function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
@@ -46,4 +78,4 @@ function Kbd({ className, ...props }: React.ComponentProps<'kbd'>) {
   );
 }
 
-export { Input, Kbd, Label, SectionLabel, Textarea };
+export { Input, Kbd, Label, PasswordInput, SectionLabel, Textarea };

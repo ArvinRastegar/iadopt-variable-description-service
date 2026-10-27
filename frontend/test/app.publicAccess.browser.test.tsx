@@ -53,6 +53,8 @@ test('public tools keep local work while sign-in gates protected actions', async
     const method = options.method || 'GET';
     calls.push({ path, method, body: typeof options.body === 'string' ? options.body : undefined });
     if (path === '/api/auth/me') return sessionActive ? json({ user }) : json({ detail: 'Authentication required.' }, 401);
+    // No saved ORCID iDs, so the publish and retract dialogs show the single typed field.
+    if (path === '/api/auth/me/orcids' && method === 'GET') return json({ orcids: [] });
     if (path === '/api/model-options') {
       return json({ default_model_provider: 'psnc', providers: { psnc: { label: 'PSNC', default_model_name: 'public-model', model_names: ['public-model'] } } });
     }

@@ -7,7 +7,8 @@ and the shared normalization helpers in ``schemas.common`` — never on the nano
 or rdf_ttl services (which depend on it).
 
 The ORCID/URI normalization rules live in ``schemas.common`` (``normalize_orcid`` /
-``orcid_suffix``) and are re-exported here for the rest of the backend.
+``orcid_suffix`` / ``canonical_orcid_uri``) and are re-exported here for the rest of the
+backend.
 """
 
 from __future__ import annotations
@@ -19,11 +20,13 @@ from typing import Any, Optional, Tuple
 from ..clients.http import get_http_session
 from ..core.config import settings
 from ..core.text import normalize_text
-from ..schemas.common import normalize_orcid, orcid_suffix
+from ..schemas.common import canonical_orcid_uri, normalize_orcid, orcid_suffix
 
 __all__ = [
     "normalize_orcid",
     "orcid_suffix",
+    "canonical_orcid_uri",
+    "cached_orcid_display_name",
     "extract_orcid_display_name",
     "lookup_orcid_display_name",
     "resolve_creator_metadata",
@@ -31,7 +34,6 @@ __all__ = [
 
 # Process-wide cache of resolved ORCID display names (None = looked up, not found).
 _orcid_name_cache: dict[str, Optional[str]] = {}
-
 
 def extract_orcid_display_name(payload: Any) -> Optional[str]:
     """Pull a human-readable name from ORCID public JSON-LD or record-style JSON.
@@ -149,6 +151,22 @@ def lookup_orcid_display_name(orcid_id: Optional[str]) -> Optional[str]:
 
     _orcid_name_cache[normalized_orcid] = resolved_name
     return resolved_name
+
+
+def cached_orcid_display_name(orcid_id: Optional[str]) -> Optional[str]:
+    """Return an ORCID display name only if this process already resolved it; never fetches.
+
+    Publishing and retracting resolve the creator's name, so an iD saved right after them
+    finds its name here without another request to ORCID.
+
+    Args:
+        orcid_id: A bare ORCID, full ORCID URI, or ``None``.
+
+    Returns:
+        The cached display name, or ``None`` when it was never resolved or has none.
+    """
+    normalized_orcid = normalize_orcid(orcid_id)
+    return _orcid_name_cache.get(normalized_orcid) if normalized_orcid else None
 
 
 def resolve_creator_metadata(creator_orcid_id: Optional[str]) -> Tuple[str, str]:
