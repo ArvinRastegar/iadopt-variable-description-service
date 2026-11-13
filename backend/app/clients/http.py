@@ -1,4 +1,4 @@
-"""Shared ``requests`` session used by all outbound HTTP (ORCID, vocabularies, PSNC).
+"""Shared ``requests`` session for outbound HTTP (ORCID, vocabularies, PSNC, OpenRouter linking).
 
 A single pooled session with a descriptive User-Agent is created lazily and reused, so
 connection pooling and headers are consistent across services. Callers must go

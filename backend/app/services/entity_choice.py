@@ -12,8 +12,13 @@ prompt was written there on invented slots only and is frozen. Changing any part
 the service no longer runs what was measured; see ``decisions.md`` D-032 in the private
 workflow repository. A golden test pins the request byte for byte.
 
+The question goes to the model that made the decomposition (``decisions.md`` D-038). ``MODEL``
+on PSNC, the default, is the measured configuration; any other model, on PSNC or OpenRouter,
+gets the same question and the same answer check, unmeasured.
+
 Everything here is pure: no I/O, no clock, no randomness. Depends on ``clients.psnc_client``
-(the request body) and ``services.vocabularies`` (the candidate type).
+and ``clients.openai_client`` (the request bodies), ``core.config`` (the provider names) and
+``services.vocabularies`` (the candidate type).
 """
 
 from __future__ import annotations
@@ -22,7 +27,9 @@ import hashlib
 import unicodedata
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..clients.openai_client import build_openrouter_entity_link_payload
 from ..clients.psnc_client import build_entity_link_payload
+from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER
 from ..core.text import normalize_text
 from .vocabularies import Candidate
 
@@ -178,23 +185,39 @@ def user_message(term: str, definition: str, shown: Sequence[Candidate]) -> str:
     return f"term: {term}\nvariable_definition: {definition}\n\ncandidates:\n" + "\n".join(lines) + f"\n\n{ANSWER_LINE}"
 
 
-def build_request(term: str, definition: str, shown: Sequence[Candidate]) -> Dict[str, Any]:
+def build_request(
+    term: str,
+    definition: str,
+    shown: Sequence[Candidate],
+    *,
+    provider: str = PSNC_MODEL_PROVIDER,
+    model: str = MODEL,
+) -> Dict[str, Any]:
     """Build the chat-completions request for one term.
 
     Args:
         term: The normalised term.
         definition: The variable definition.
         shown: The candidates in presentation order.
+        provider: The provider of the model that answers; PSNC by default.
+        model: The model that answers; ``MODEL``, the measured one, by default.
 
     Returns:
-        The request body.
+        The request body for that provider: the measured PSNC body, or the same question in
+        OpenRouter's form.
 
     Raises:
-        ValueError: If there is nothing to choose from, or too many candidates for the labels.
+        ValueError: If there is nothing to choose from, too many candidates for the labels, or
+            a provider entity linking cannot ask.
     """
     if not shown:
         raise ValueError("There is nothing to ask about an empty pool")
-    return build_entity_link_payload(MODEL, SYSTEM_PROMPT, user_message(term, definition, shown))
+    message = user_message(term, definition, shown)
+    if provider == PSNC_MODEL_PROVIDER:
+        return build_entity_link_payload(model, SYSTEM_PROMPT, message)
+    if provider == OPENROUTER_MODEL_PROVIDER:
+        return build_openrouter_entity_link_payload(model, SYSTEM_PROMPT, message)
+    raise ValueError(f"Entity linking cannot ask a model from provider {provider!r}")
 
 
 def read_choice(data: Any, count: int) -> int:

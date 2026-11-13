@@ -4,7 +4,8 @@ For each label in a prediction (simple entities and the parts of asymmetric and 
 systems), asks ``entity_linking`` which Wikidata item, QUDT quantity kind or OM quantity names
 the same concept, and attaches a ``*URI`` / ``*URIs`` field when one is named. The traversal
 and the keys it adds are those documented in ``components/entity-linking.md``; what changed is
-how one label is linked (``decisions.md`` D-032, which supersedes D-006).
+how one label is linked (``decisions.md`` D-032, which supersedes D-006) and, since D-038, that
+the model asked is the one that made the decomposition.
 
 Depends on ``services.entity_linking``, ``services.entity_choice``, ``services.vocabularies`` and
 ``services.prompts`` (for ``strip_all_uri_fields``).
@@ -17,7 +18,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from .entity_choice import normalise_term
-from .entity_linking import choose_candidate
+from .entity_linking import MEASURED_LINKER, Linker, choose_candidate
 from .prompts import strip_all_uri_fields
 from .vocabularies import WIKIDATA, Candidate
 
@@ -73,7 +74,7 @@ def candidate_link(candidate: Candidate) -> str:
     return candidate.iri
 
 
-def enrich_with_uris(pred: Dict[str, Any]) -> Dict[str, Any]:
+def enrich_with_uris(pred: Dict[str, Any], linker: Linker = MEASURED_LINKER) -> Dict[str, Any]:
     """Return a deep copy of the prediction with ``*URI`` fields added.
 
     Links simple-entity labels and the components of asymmetric/symmetric systems. A label
@@ -83,15 +84,17 @@ def enrich_with_uris(pred: Dict[str, Any]) -> Dict[str, Any]:
 
     Args:
         pred: The prediction dict.
+        linker: The model that answers the linking question: the decomposition's (D-038), or
+            the measured one by default.
 
     Returns:
         A new dict with ``*URI`` / ``*URIs`` keys added where a vocabulary entry was chosen.
         The input is never mutated.
 
     Side effects:
-        Searches the vocabularies and asks PSNC once per distinct linkable label. A
-        ``RuntimeError`` from ``entity_linking`` (PSNC unusable) is not caught here; the
-        pipeline falls back to the prediction without URIs.
+        Searches the vocabularies and asks the linker's model once per distinct linkable
+        label. A ``RuntimeError`` from ``entity_linking`` (its provider unusable) is not
+        caught here; the pipeline falls back to the prediction without URIs.
     """
     out = strip_all_uri_fields(json.loads(json.dumps(pred)))
     definition = pred.get("definition", "")
@@ -103,7 +106,7 @@ def enrich_with_uris(pred: Dict[str, Any]) -> Dict[str, Any]:
             return None
         key = normalise_term(label)
         if key not in answers:
-            candidate = choose_candidate(label, definition)
+            candidate = choose_candidate(label, definition, linker=linker)
             answers[key] = candidate_link(candidate) if candidate else None
         return answers[key]
 

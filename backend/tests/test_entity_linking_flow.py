@@ -390,3 +390,59 @@ def test_logs_never_carry_the_label_or_the_definition(world, caplog):
     assert fake.post_calls
     assert "distinctivelabel" not in caplog.text and "distinctive definition" not in caplog.text
     assert "test-key" not in caplog.text
+
+
+# --- the model that answers: the decomposition's (D-038) ------------------------ #
+
+OPENROUTER_RUN = entity_linking.Linker("openrouter", "qwen/qwen3.5-flash-02-23")
+
+
+def test_an_openrouter_run_asks_openrouter_with_its_key_and_model(world, monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
+    fake = world([FakeResponse(chat(label_of("om:Depth"), reasoning=None))])
+    chosen = entity_linking.choose_candidate(TERM, DEFINITION, OPENROUTER_RUN)
+    assert chosen.key == "om:Depth"
+    (call,) = fake.post_calls
+    assert call["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert call["headers"]["Authorization"] == "Bearer test-openrouter-key"
+    assert call["json"]["model"] == "qwen/qwen3.5-flash-02-23"
+    assert call["json"]["reasoning"] == {"effort": "none"} and "chat_template_kwargs" not in call["json"]
+
+
+def test_a_psnc_run_on_another_model_asks_that_model(world):
+    fake = world([FakeResponse(chat("0"))])
+    entity_linking.choose_candidate(TERM, DEFINITION, entity_linking.Linker("psnc", "Qwen3.5-397B-A17B"))
+    (call,) = fake.post_calls
+    assert call["json"]["model"] == "Qwen3.5-397B-A17B"
+    assert call["url"].endswith("/v1/chat/completions") and "openrouter" not in call["url"]
+
+
+def test_the_default_run_still_asks_the_measured_model_on_psnc(world):
+    fake = world([FakeResponse(chat("0"))])
+    entity_linking.choose_candidate(TERM, DEFINITION)
+    (call,) = fake.post_calls
+    assert call["json"]["model"] == "Qwen3.8-27B" and call["json"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_an_openrouter_refusal_aborts_linking_and_names_openrouter(world, monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
+    fake = world([FakeResponse(status_code=401)])
+    with pytest.raises(RuntimeError, match=r"^OpenRouter refused the entity-linking request \(HTTP 401\)\.$"):
+        entity_linking.choose_candidate(TERM, DEFINITION, OPENROUTER_RUN)
+    assert len(fake.post_calls) == 1
+
+
+def test_an_openrouter_run_without_a_key_asks_nobody(world, monkeypatch):
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+    fake = world([FakeResponse(chat("0"))])
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY is not set"):
+        entity_linking.choose_candidate(TERM, DEFINITION, OPENROUTER_RUN)
+    assert fake.post_calls == []
+
+
+def test_a_provider_linking_cannot_ask_aborts_before_any_request(world):
+    fake = world([FakeResponse(chat("0"))])
+    with pytest.raises(RuntimeError, match="cannot ask"):
+        entity_linking.choose_candidate(TERM, DEFINITION, entity_linking.Linker("elsewhere", "m"))
+    assert fake.post_calls == []
+

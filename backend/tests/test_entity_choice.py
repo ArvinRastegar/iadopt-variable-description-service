@@ -258,3 +258,41 @@ def test_provider_specific_fields_with_null_reasoning_are_accepted():
 
 def test_invalid_answer_is_a_value_error():
     assert issubclass(InvalidAnswer, ValueError)
+
+
+# --- the model that answers: the decomposition's (D-038) ------------------------ #
+
+def test_the_default_request_is_the_measured_psnc_one():
+    case = GOLDEN["cases"][0]
+    shown = candidates_of(case)
+    assert entity_choice.build_request(case["term"], case["definition"], shown) == entity_choice.build_request(
+        case["term"], case["definition"], shown, provider="psnc", model=entity_choice.MODEL
+    ) == case["request"]
+
+
+def test_another_psnc_model_gets_the_measured_body_with_its_own_name():
+    case = GOLDEN["cases"][0]
+    built = entity_choice.build_request(case["term"], case["definition"], candidates_of(case),
+                                        provider="psnc", model="Qwen3.5-397B-A17B")
+    assert built == dict(case["request"], model="Qwen3.5-397B-A17B")
+
+
+def test_an_openrouter_model_gets_the_same_question_with_reasoning_off():
+    case = GOLDEN["cases"][0]
+    built = entity_choice.build_request(case["term"], case["definition"], candidates_of(case),
+                                        provider="openrouter", model="qwen/qwen3.5-flash-02-23")
+    assert built == {
+        "model": "qwen/qwen3.5-flash-02-23",
+        "messages": case["request"]["messages"],
+        "stream": False,
+        "temperature": 0,
+        "max_tokens": 1,
+        "reasoning": {"effort": "none"},
+    }
+
+
+def test_a_provider_linking_cannot_ask_is_refused():
+    case = GOLDEN["cases"][0]
+    with pytest.raises(ValueError, match="cannot ask"):
+        entity_choice.build_request(case["term"], case["definition"], candidates_of(case), provider="other", model="m")
+

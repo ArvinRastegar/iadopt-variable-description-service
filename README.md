@@ -78,13 +78,15 @@ checkout and is not needed to build or run the service.
 Step 7 links each label of the decomposition (property, object of interest, matrix,
 context object, statistical modifier, and the parts of systems) to a controlled-vocabulary
 entry. For every label the backend searches **Wikidata** items, **QUDT** quantity kinds and
-**OM** quantities (at most ten candidates from each), then asks `Qwen3.8-27B` on PSNC, with
-reasoning off, which candidate is the same concept as the label, or none of them. The answer
+**OM** quantities (at most ten candidates from each), then asks the model that made the
+decomposition, with reasoning off, which candidate is the same concept as the label, or none
+of them. By default that is `Qwen3.8-27B` on PSNC, the configuration that was measured; a run
+on another PSNC or OpenRouter model asks that model the same question. The answer
 is a single character, so it is checked strictly: if it is not exactly one of the offered
 labels, the identical request is sent again, up to three more times. A label the model
 matches to nothing, or never answers validly, is left unlinked (so is a label longer than
-200 characters), and if PSNC cannot be reached no label is linked and the decomposition is
-returned without links. Links the decomposition model wrote itself are discarded; only links
+200 characters), and if the model's provider cannot be reached or refuses the key, no label
+is linked and the decomposition is returned without links. Links the decomposition model wrote itself are discarded; only links
 chosen here are kept. The links appear as
 `*URI` fields in `enriched_json` and as IRIs in the Turtle, where a property can now point
 at a QUDT or OM quantity kind.

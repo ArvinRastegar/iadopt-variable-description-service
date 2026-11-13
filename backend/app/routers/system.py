@@ -40,8 +40,9 @@ def readiness_checks() -> Dict[str, bool]:
             }[provider]
             for provider in settings.enabled_model_providers
         ),
-        # The key keeps its old name: contract fixtures and clients read it. It now covers the PSNC
-        # chat model that entity linking asks, which is what needs the key.
+        # The key keeps its old name: contract fixtures and clients read it. It reports PSNC's key,
+        # which linking needs on PSNC runs; since D-038 an OpenRouter run's linking needs OpenRouter's
+        # key instead, which this check does not look at.
         "wikidata_reranker_ready": not settings.enable_wikidata_linking or bool(settings.psnc_api_key),
     }
 

@@ -24,6 +24,7 @@ from .clients.openai_client import get_openai_client
 from .core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from .core.state import app_state
 from .services.enrichment import enrich_with_uris
+from .services.entity_linking import Linker
 from .services.label_comment import generate_label_and_comment
 from .services.llm import (
     build_chat_completion_request_kwargs,
@@ -102,12 +103,16 @@ def warmup_assets() -> None:
 def _finalize_pipeline_output(
     raw_llm_output: str,
     pred: Dict[str, Any],
+    *,
+    linker: Linker,
 ) -> Dict[str, Any]:
     """Validate, enrich, and serialize a prediction into the response payload.
 
     Args:
         raw_llm_output: The raw model text to echo back.
         pred: The parsed prediction.
+        linker: The model that made the decomposition, which also answers the linking
+            question (D-038).
 
     Returns:
         The ``DecomposeResponse``-shaped dict.
@@ -116,7 +121,7 @@ def _finalize_pipeline_output(
         RuntimeError: If ``pred`` is empty.
 
     Side effects:
-        May call Wikidata, QUDT, EBI OLS and PSNC (entity linking).
+        May call Wikidata, QUDT, EBI OLS and the linker's provider (entity linking).
     """
     if not pred:
         raise RuntimeError("Could not extract valid JSON from the model output.")
@@ -127,7 +132,7 @@ def _finalize_pipeline_output(
 
     if settings.enable_wikidata_linking:
         try:
-            enriched = enrich_with_uris(pred)
+            enriched = enrich_with_uris(pred, linker=linker)
         except Exception as e:
             print(f"Entity linking failed: {e}")
             enriched = pred
@@ -330,7 +335,7 @@ def stream_pipeline_events(
         NDJSON event line strings (``raw_delta`` / ``final`` / ``error``).
 
     Side effects:
-        Performs LLM and entity-linking (vocabulary search and PSNC) calls.
+        Performs LLM and entity-linking (vocabulary search and the run's model provider) calls.
     """
     try:
         definition = definition.strip()
@@ -426,6 +431,7 @@ def stream_pipeline_events(
                 final_payload = _finalize_pipeline_output(
                     "".join(all_display_parts),
                     pred,
+                    linker=Linker(selected_model_provider, selected_model_name),
                 )
                 yield stream_event("final", data=final_payload)
                 return
@@ -471,6 +477,7 @@ def stream_pipeline_events(
                         final_payload = _finalize_pipeline_output(
                             "".join(all_display_parts),
                             pred,
+                            linker=Linker(selected_model_provider, selected_model_name),
                         )
                         yield stream_event("final", data=final_payload)
                         return
@@ -507,7 +514,7 @@ def run_pipeline(
         The ``DecomposeResponse``-shaped dict.
 
     Side effects:
-        Performs LLM and entity-linking (vocabulary search and PSNC) calls.
+        Performs LLM and entity-linking (vocabulary search and the run's model provider) calls.
     """
     definition = definition.strip()
     prompt, selected_model_provider, selected_model_name = _prepare_pipeline_inputs(
@@ -534,4 +541,5 @@ def run_pipeline(
     return _finalize_pipeline_output(
         raw_llm_output,
         pred,
+        linker=Linker(selected_model_provider, selected_model_name),
     )
