@@ -16,6 +16,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
 from ..auth import AuthStore
+from ..records import RecordStore
 from .config import settings
 
 API_PREFIX = "/api"
@@ -30,6 +31,9 @@ auth_store = AuthStore(
     audit_retention_days=settings.audit_retention_days,
     audit_max_payload_bytes=settings.audit_max_payload_bytes,
 )
+
+# Decomposition records (D-036) share the auth database and follow its path.
+record_store = RecordStore(auth_store)
 
 # API paths that bypass the authentication middleware.
 PUBLIC_API_PATHS = {

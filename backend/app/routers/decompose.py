@@ -1,22 +1,102 @@
-"""Decomposition routes: model options, non-streaming and streaming decompose."""
+"""Decomposition routes: model options, non-streaming and streaming decompose.
+
+For a signed-in account every run starts a decomposition record (D-036): the run and its
+draft as version 0. The audit log keeps the model choice, timing and errors of a run, and
+no longer the definition or the result, which the record holds (D-024).
+"""
 
 from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from typing import Any, Dict, Iterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ..auth import utc_now
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
-from ..core.dependencies import API_PREFIX, auth_store, require_current_user
-from ..pipeline import run_pipeline, stream_pipeline_events
+from ..core.dependencies import API_PREFIX, auth_store, record_store, require_current_user
+from ..core.logging import get_logger
+from ..pipeline import prompt_setup, run_pipeline, stream_pipeline_events
 from ..schemas import DecomposeResponse, ModelOptionsResponse
 from ..schemas.responses import ProviderConfig
 from ..schemas.requests import DecomposeRequest
+from ..services.llm import resolve_model_name, resolve_model_provider, stream_event
 
 router = APIRouter()
+logger = get_logger(__name__)
+
+
+def _audit_metadata(req: DecomposeRequest, record_id: Optional[str]) -> Dict[str, Any]:
+    """Return what the audit log keeps about a run: the model choice and its record, not the content."""
+    return {
+        "model_provider": req.model_provider,
+        "model_name": req.model_name,
+        "disable_thinking": req.disable_thinking,
+        "record_id": record_id,
+    }
+
+
+def _is_bad_request(req: DecomposeRequest) -> bool:
+    """Return whether the pipeline refuses this request before any model runs.
+
+    Such requests (a blank definition, an unknown provider or model) are answered with an
+    error but not recorded, on the streaming route as on the JSON route.
+    """
+    if not req.definition.strip():
+        return True
+    try:
+        resolve_model_name(req.model_name, resolve_model_provider(req.model_provider))
+    except ValueError:
+        return True
+    return False
+
+
+def _record_run(
+    *,
+    user: Dict[str, Any],
+    request: Request,
+    req: DecomposeRequest,
+    started_at: datetime,
+    result: Optional[Dict[str, Any]],
+    error: Optional[str],
+) -> Optional[str]:
+    """Write a run to the account's decomposition record; a failure here never fails the run.
+
+    Returns:
+        The new record's id, or ``None`` when nothing was recorded.
+    """
+    try:
+        provider = resolve_model_provider(req.model_provider)
+        model = resolve_model_name(req.model_name, provider)
+    except ValueError:
+        provider, model = req.model_provider or "", req.model_name or ""
+    try:
+        setup, prompt_sha256 = prompt_setup(provider)
+    except Exception:
+        logger.exception("Could not fingerprint the prompt setup.")
+        setup, prompt_sha256 = "", None
+    try:
+        return record_store.record_decomposition(
+            user=user,
+            request=request,
+            definition=req.definition,
+            provider=provider,
+            model=model,
+            disable_thinking=req.disable_thinking,
+            prompt_setup=setup,
+            prompt_sha256=prompt_sha256,
+            started_at=started_at,
+            ended_at=utc_now(),
+            result=result,
+            error=error,
+            client=req.client.model_dump(exclude_none=True) if req.client else None,
+        )
+    except Exception:
+        logger.exception("Could not write the decomposition record.")
+        return None
 
 
 @router.get(f"{API_PREFIX}/model-options", response_model=ModelOptionsResponse, tags=["Decomposition"])
@@ -69,15 +149,22 @@ def decompose_stream(
     request: Request,
     user: Dict[str, Any] = Depends(require_current_user),
 ) -> StreamingResponse:
-    """Stream raw LLM output chunks first, then emit the final structured decompose payload."""
+    """Stream raw LLM output chunks first, then emit the final structured decompose payload.
+
+    The final event's ``data`` has the ``DecomposeResponse`` shape, including the
+    ``record_id`` of the decomposition record the run started (``null`` when nothing is
+    recorded).
+    """
     start = time.perf_counter()
-    request_payload = req.model_dump()
+    started_at = utc_now()
+    bad_request = _is_bad_request(req)
 
     def audited_events() -> Iterator[str]:
-        """Yield pipeline NDJSON lines, then audit the stream outcome in a finally block."""
+        """Yield pipeline NDJSON lines, then record and audit the stream outcome in a finally block."""
         final_payload: Optional[Dict[str, Any]] = None
         error_detail: Optional[str] = None
         status_code = 200
+        record_id: Optional[str] = None
         try:
             for line in stream_pipeline_events(
                 req.definition,
@@ -89,6 +176,11 @@ def decompose_stream(
                     event = json.loads(line)
                     if event.get("type") == "final":
                         final_payload = event.get("data")
+                        record_id = _record_run(
+                            user=user, request=request, req=req, started_at=started_at, result=final_payload, error=None
+                        )
+                        if isinstance(final_payload, dict):
+                            line = stream_event("final", data={**final_payload, "record_id": record_id})
                     elif event.get("type") == "error":
                         error_detail = event.get("detail") or "Streaming backend error."
                         status_code = 500
@@ -100,19 +192,22 @@ def decompose_stream(
             status_code = 500
             raise
         finally:
+            if final_payload is None and not bad_request:
+                record_id = _record_run(
+                    user=user,
+                    request=request,
+                    req=req,
+                    started_at=started_at,
+                    result=None,
+                    error=error_detail or "The decomposition stopped before it finished.",
+                )
             auth_store.audit_event(
                 action="decompose.stream",
                 user=user,
                 request=request,
                 status_code=status_code,
                 latency_ms=round((time.perf_counter() - start) * 1000),
-                request_payload=request_payload,
-                response_payload=final_payload,
-                metadata={
-                    "model_provider": req.model_provider,
-                    "model_name": req.model_name,
-                    "disable_thinking": req.disable_thinking,
-                },
+                metadata=_audit_metadata(req, record_id),
                 error=error_detail,
             )
 
@@ -139,13 +234,14 @@ def decompose(
     request: Request,
     user: Dict[str, Any] = Depends(require_current_user),
 ) -> DecomposeResponse:
-    """Run the full decomposition pipeline and return one final payload; audit the outcome.
+    """Run the full decomposition pipeline and return one final payload; record and audit the outcome.
 
     Raises:
         HTTPException: 400 on a ValueError (bad model/provider/empty definition),
             500 on a RuntimeError or unexpected backend error.
     """
     start = time.perf_counter()
+    started_at = utc_now()
     try:
         result = run_pipeline(
             req.definition,
@@ -153,21 +249,16 @@ def decompose(
             model_provider=req.model_provider,
             model_name=req.model_name,
         )
+        record_id = _record_run(user=user, request=request, req=req, started_at=started_at, result=result, error=None)
         auth_store.audit_event(
             action="decompose",
             user=user,
             request=request,
             status_code=200,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
-            response_payload=result,
-            metadata={
-                "model_provider": req.model_provider,
-                "model_name": req.model_name,
-                "disable_thinking": req.disable_thinking,
-            },
+            metadata=_audit_metadata(req, record_id),
         )
-        return DecomposeResponse(**result)
+        return DecomposeResponse(**result, record_id=record_id)
     except ValueError as e:
         auth_store.audit_event(
             action="decompose",
@@ -175,32 +266,32 @@ def decompose(
             request=request,
             status_code=400,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
-            metadata={"model_provider": req.model_provider, "model_name": req.model_name},
+            metadata=_audit_metadata(req, None),
             error=str(e),
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
+        record_id = _record_run(user=user, request=request, req=req, started_at=started_at, result=None, error=str(e))
         auth_store.audit_event(
             action="decompose",
             user=user,
             request=request,
             status_code=500,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
-            metadata={"model_provider": req.model_provider, "model_name": req.model_name},
+            metadata=_audit_metadata(req, record_id),
             error=str(e),
         )
         raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
+        detail = f"Unexpected backend error: {e}"
+        record_id = _record_run(user=user, request=request, req=req, started_at=started_at, result=None, error=detail)
         auth_store.audit_event(
             action="decompose",
             user=user,
             request=request,
             status_code=500,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
-            metadata={"model_provider": req.model_provider, "model_name": req.model_name},
-            error=f"Unexpected backend error: {e}",
+            metadata=_audit_metadata(req, record_id),
+            error=detail,
         )
-        raise HTTPException(status_code=500, detail=f"Unexpected backend error: {e}") from e
+        raise HTTPException(status_code=500, detail=detail) from e

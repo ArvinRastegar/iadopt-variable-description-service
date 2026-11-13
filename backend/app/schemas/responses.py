@@ -35,6 +35,8 @@ class DecomposeResponse(BaseModel):
         enriched_json: The prediction plus dynamic entity-link ``*URI`` keys: Wikidata, QUDT
             or OM IRIs (free-form).
         ttl: The generated I-ADOPT Turtle serialization.
+        record_id: The decomposition record this run started, whose version 0 is ``ttl``;
+            ``None`` when nothing is recorded (D-036).
     """
 
     raw_llm_output: str
@@ -43,6 +45,7 @@ class DecomposeResponse(BaseModel):
     validation_errors: List[str]
     enriched_json: Dict[str, Any]
     ttl: str
+    record_id: Optional[str] = None
 
 
 class ProviderConfig(BaseModel):
@@ -185,6 +188,95 @@ class SavedOrcidsResponse(BaseModel):
     """Body of the ``/api/auth/me/orcids`` routes: the account's iDs, most recently used first."""
 
     orcids: List[SavedOrcid]
+
+
+# --------------------------------------------------------------------------- #
+# Decomposition records (D-036)
+# --------------------------------------------------------------------------- #
+
+
+class RecordStartedResponse(BaseModel):
+    """Body of ``POST /api/records``.
+
+    Attributes:
+        record_id: The new record's id.
+        version: Its first version number (always 0).
+    """
+
+    record_id: str
+    version: int
+
+
+class RecordEventResponse(BaseModel):
+    """Body of ``POST /api/records/{record_id}/events``.
+
+    Attributes:
+        record_id: The record's id.
+        event: The step's number in the record.
+        version: The version the record is on after the step.
+    """
+
+    record_id: str
+    event: int
+    version: int
+
+
+class RecordVersion(BaseModel):
+    """One version of a record.
+
+    Attributes:
+        number: The version number (0, 1, 2, ...).
+        kind: ``model_draft``, ``imported``, ``edited`` or ``metadata``.
+        content_sha256: SHA-256 of the version's canonical graph.
+        parent: The number of the version it was made from, or ``None`` for version 0.
+        created_at: When it was stored (ISO-8601 UTC).
+    """
+
+    number: int
+    kind: str
+    content_sha256: str
+    parent: Optional[int]
+    created_at: str
+
+
+class RecordPublication(BaseModel):
+    """One publication of a record's version.
+
+    Attributes:
+        version: The published version number.
+        nanopub_uri: The nanopublication's URI.
+        orcid: The ORCID iD the nanopublication names as its creator.
+        published_at: When it was published (ISO-8601 UTC).
+    """
+
+    version: int
+    nanopub_uri: str
+    orcid: str
+    published_at: str
+
+
+class RecordSummaryResponse(BaseModel):
+    """Body of ``GET /api/records/{record_id}``.
+
+    Attributes:
+        record_id: The record's id.
+        origin: ``decompose`` or ``import``.
+        created_at: When the record started (ISO-8601 UTC).
+        current_version: The latest version number, or ``None`` before the first version.
+        best_version: The version most recently marked as best, or ``None``.
+        versions: Every version, oldest first.
+        publications: Every publication, oldest first.
+        event_count: How many steps and milestones the record holds.
+    """
+
+    record_id: str
+    origin: str
+    created_at: str
+    current_version: Optional[int]
+    best_version: Optional[int]
+    versions: List[RecordVersion]
+    publications: List[RecordPublication]
+    event_count: int
 
 
 class StatusOkResponse(BaseModel):

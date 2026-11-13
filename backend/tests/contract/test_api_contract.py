@@ -139,9 +139,15 @@ def test_decompose_stream_event_sequence(base_url, auth_cookies):
     assert types[-1] in {"final", "error"}
     if types[-1] == "final":
         assert types.count("final") == 1
-        assert {"raw_llm_output", "parsed_json", "schema_valid", "validation_errors", "enriched_json", "ttl"} == set(
-            events[-1]["data"].keys()
-        )
+        assert {
+            "raw_llm_output",
+            "parsed_json",
+            "schema_valid",
+            "validation_errors",
+            "enriched_json",
+            "ttl",
+            "record_id",
+        } == set(events[-1]["data"].keys())
         for e in events[:-1]:
             assert e["type"] == "raw_delta"
             assert set(e.keys()) == {"type", "delta"}

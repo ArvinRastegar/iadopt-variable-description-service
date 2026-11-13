@@ -12,6 +12,7 @@ routers and the app factory, so the dependency graph stays acyclic.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import httpx
@@ -278,6 +279,32 @@ def _prepare_pipeline_inputs(
     prompt = build_prompt(definition, prompt_version=prompt_version, examples=examples_5)
 
     return prompt, selected_model_provider, selected_model_name
+
+
+PROMPT_PLACEHOLDER = "{definition}"
+"""Stands in for the definition when a prompt setup is fingerprinted."""
+
+
+def prompt_setup(model_provider: Optional[str] = None) -> Tuple[str, str]:
+    """Name and fingerprint the prompt a run with this provider gets, without its definition.
+
+    The fingerprint is the SHA-256 of the prompt rendered for :data:`PROMPT_PLACEHOLDER`,
+    so it changes exactly when the instructions, schema or examples change. Errors are those
+    of :func:`_prepare_pipeline_inputs`.
+
+    Args:
+        model_provider: The requested provider; ``None`` uses the default.
+
+    Returns:
+        ``(setup, sha256)``: ``"measured"`` or ``"few-shot:<prompt version>"``, and the fingerprint.
+    """
+    prompt, provider, _ = _prepare_pipeline_inputs(PROMPT_PLACEHOLDER, model_provider=model_provider)
+    if use_measured_path(provider):
+        setup = "measured"
+    else:
+        versions = list_prompt_versions(settings.prompt_dir)
+        setup = f"few-shot:{app_state.prompt_version_cache or (versions[0] if versions else '')}"
+    return setup, hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
 def stream_pipeline_events(

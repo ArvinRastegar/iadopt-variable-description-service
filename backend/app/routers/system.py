@@ -19,6 +19,9 @@ from ..schemas.requests import FrontendEventRequest
 
 router = APIRouter()
 
+TURTLE_PAYLOAD_KEYS = frozenset({"ttl", "input_turtle", "output_turtle"})
+"""Event payload keys that carry whole Turtle files; the audit log drops them (D-024, D-036)."""
+
 
 def readiness_checks() -> Dict[str, bool]:
     """Return per-check readiness booleans (schema/prompt/example files + keys).
@@ -67,13 +70,18 @@ def record_frontend_event(
     request: Request,
     user: Dict[str, Any] = Depends(require_current_user),
 ) -> Dict[str, str]:
-    """Record a frontend analytics/audit event."""
+    """Record a frontend analytics/audit event, without any whole Turtle it carries.
+
+    The decomposition record keeps each version once (D-036), so the audit log keeps only
+    the action and its small details, such as an export's format.
+    """
+    payload = {key: value for key, value in (req.payload or {}).items() if key not in TURTLE_PAYLOAD_KEYS}
     auth_store.audit_event(
         action=f"frontend.{req.action}",
         user=user,
         request=request,
         status_code=200,
-        request_payload=req.payload or {},
+        request_payload=payload,
         metadata=req.metadata or {},
     )
     return {"status": "ok"}

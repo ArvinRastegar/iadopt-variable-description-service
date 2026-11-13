@@ -15,11 +15,13 @@ from rdflib import Graph, Literal
 from rdflib.namespace import RDFS
 
 from ..core.config import settings
-from ..core.dependencies import API_PREFIX, auth_store, require_current_user
+from ..core.dependencies import API_PREFIX, auth_store, record_store, require_current_user
+from ..core.logging import get_logger
 from ..schemas import (
     NanopubPreparationOptionsResponse,
     PublishNanopubResponse,
     RetractNanopubResponse,
+    normalize_orcid,
 )
 from ..schemas.requests import PublishNanopubRequest, RetractNanopubRequest
 from ..services.nanopub_service import (
@@ -36,6 +38,7 @@ from ..services.nanopub_service import (
 )
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 @router.get(
@@ -63,11 +66,18 @@ def publish_nanopub(
 ) -> PublishNanopubResponse:
     """Publish the exact TTL currently shown in the frontend as a signed nanopublication.
 
+    Publishing needs a signed-in account and the record ``record_id``: the TTL must be the
+    version most recently marked as best in that record, plus at most nanopublication
+    metadata (D-036). The publication is then added to the record. The audit entry keeps
+    the ORCID iD and record, not the Turtle, which the record holds (D-024).
+
     Raises:
-        HTTPException: 400 on an empty/unparseable TTL payload; 500 on a publish
+        HTTPException: 400 on an empty/unparseable TTL payload; 409 without an account or
+            when the TTL is not the version marked as best; 500 on a record or publish
             failure (e.g. missing signing configuration or a registry error).
     """
     start = time.perf_counter()
+    audit_payload = req.model_dump(exclude={"ttl"})
     ttl = req.ttl.strip()
     if not ttl:
         auth_store.audit_event(
@@ -76,7 +86,7 @@ def publish_nanopub(
             request=request,
             status_code=400,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
+            request_payload=audit_payload,
             error="TTL payload is empty.",
         )
         raise HTTPException(status_code=400, detail="TTL payload is empty.")
@@ -91,10 +101,42 @@ def publish_nanopub(
             request=request,
             status_code=400,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
+            request_payload=audit_payload,
             error=f"Could not parse Turtle payload: {e}",
         )
         raise HTTPException(status_code=400, detail=f"Could not parse Turtle payload: {e}") from e
+
+    try:
+        if not record_store.applies_to(user):
+            raise HTTPException(
+                status_code=409,
+                detail="Publishing needs a signed-in account, so that the version can be marked as best first.",
+            )
+        if not req.record_id:
+            raise HTTPException(status_code=409, detail="Mark this version as best before publishing.")
+        record_target = record_store.publish_target(user=user, record_id=req.record_id, graph=assertion_graph)
+    except HTTPException as e:
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=e.status_code,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=audit_payload,
+            error=str(e.detail),
+        )
+        raise
+    except Exception as e:
+        auth_store.audit_event(
+            action="nanopub.publish",
+            user=user,
+            request=request,
+            status_code=500,
+            latency_ms=round((time.perf_counter() - start) * 1000),
+            request_payload=audit_payload,
+            error=f"Could not check the record: {e}",
+        )
+        raise HTTPException(status_code=500, detail=f"Could not check the record: {e}") from e
 
     try:
         profile = get_nanopub_profile()
@@ -135,13 +177,26 @@ def publish_nanopub(
             variable_identifier=variable_identifier,
             variable_uri=str(variable_uri),
         )
+        # The nanopublication exists now, whatever happens here: a failed record write is logged, not raised.
+        try:
+            record_store.record_publish(
+                user=user,
+                request=request,
+                target=record_target,
+                turtle=ttl,
+                nanopub_uri=nanopub_url,
+                orcid=normalize_orcid(req.creator_orcid_id) or req.creator_orcid_id,
+                client=req.client.model_dump(exclude_none=True) if req.client else None,
+            )
+        except Exception:
+            logger.exception("Could not add the publication to record %s.", req.record_id)
         auth_store.audit_event(
             action="nanopub.publish",
             user=user,
             request=request,
             status_code=200,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
+            request_payload=audit_payload,
             response_payload=response_payload.model_dump(),
             metadata={"variable_identifier": variable_identifier, "variable_uri": str(variable_uri)},
         )
@@ -155,7 +210,7 @@ def publish_nanopub(
             request=request,
             status_code=500,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
+            request_payload=audit_payload,
             error=str(e),
         )
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -166,7 +221,7 @@ def publish_nanopub(
             request=request,
             status_code=500,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload=req.model_dump(),
+            request_payload=audit_payload,
             error=f"Nanopub publish failed: {e}",
         )
         raise HTTPException(status_code=500, detail=f"Nanopub publish failed: {e}") from e
