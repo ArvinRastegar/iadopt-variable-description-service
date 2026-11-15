@@ -51,7 +51,6 @@ DEFAULT_MODEL_NAMES = [
     "qwen/qwen3.5-flash-02-23",
     "qwen/qwen3-32b",
     "qwen/qwen3.5-397b-a17b",
-    "google/gemini-3-flash-preview",
 ]
 # The measured configuration's model (D-001). The previous default,
 # Qwen3.5-397B-A17B, stays in the allow-list so it remains selectable (D-004).
