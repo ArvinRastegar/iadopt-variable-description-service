@@ -6,15 +6,19 @@ import extract from '@/lib/extract.js';
 import mergeCurrentTurtle from '@/lib/mergeCurrentTurtle.js';
 import { applyPreNanopubSettingsToTurtle } from '@/lib/applyPreNanopubSettingsToTurtle.js';
 import type { Concept, Variable } from '@/model/models.js';
+import { clientInfo } from '@/lib/clientInfo';
+import { componentName, recordRole, snapshotComponents, type ComponentState } from '@/lib/iadopt/changes';
 import { DEFAULT_ORDER, layoutVariable, type Layout } from '@/lib/iadopt/layout';
 import { labelOf, listComponents, stableKey, type ComponentInfo } from '@/lib/iadopt/model';
 import { readJson, WORKSPACE_DRAFT_KEY, writeJson, writeString } from '@/lib/storage';
 import { AuthRequiredError, fetchModelOptions, fetchPreparationOptions, streamDecomposition, type ModelOptions, type PreparationOptions } from '@/shared/api';
 import { useAuth } from '@/shared/auth';
+import { markStatusOf, restoredRecord, sameTurtle, useRecorder, type MarkResult, type MarkStatus, type RecordState } from './recording';
 
 /*
  * Everything the workspace shows and edits. The visible Turtle is the source of truth for export
  * and publishing, as before; the diagram model is rebuilt from it whenever the user applies it.
+ * For a signed-in account, the work is also recorded step by step (D-037, see ./recording).
  */
 
 export interface RunSettings {
@@ -42,6 +46,8 @@ interface Draft {
   checks: Record<string, true>;
   run: RunInfo | null;
   savedAt: string;
+  /** The record of this work, for the account it belongs to (D-037). */
+  record?: RecordState | null;
 }
 
 interface WorkspaceValue {
@@ -85,11 +91,26 @@ interface WorkspaceValue {
   openedFromUrl: boolean;
   decompose: () => Promise<void>;
   visualize: (turtle: string, options?: { log?: boolean }) => Promise<boolean>;
+  /** "Update diagram": draw the visible Turtle and record it as an applied change. */
+  applyTurtle: () => Promise<boolean>;
   openTurtle: (turtle: string) => Promise<boolean>;
   mutate: (change: () => { syncVariableLabels?: boolean } | void) => Promise<void>;
   applyNanopubMetadata: () => Promise<boolean>;
-  replaceTurtleQuietly: (turtle: string) => void;
   reset: () => void;
+
+  /** The record of this work, when the signed-in account is recorded (D-037). */
+  record: RecordState | null;
+  /** Whether the version the person sees is the one marked as best. */
+  markStatus: MarkStatus;
+  /** Mark the drawn version as best, with an optional note. */
+  markBest: (note: string) => Promise<MarkResult>;
+  /**
+   * Make the visible Turtle the one about to be published (with the creator written in), record
+   * that metadata step, and resolve with the record id once every step was sent.
+   */
+  preparePublication: (turtle: string) => Promise<string | null>;
+  /** The backend refused a publication: the best mark does not hold, or the record is gone. */
+  publicationRefused: (reason: 'outdated' | 'gone') => void;
 }
 
 const WorkspaceContext = React.createContext<WorkspaceValue | null>(null);
@@ -113,11 +134,6 @@ function initialTurtleFromUrl(): string | null {
   } catch {
     return null;
   }
-}
-
-/** Line endings and surrounding whitespace do not count as edits. */
-function sameTurtle(a: string, b: string): boolean {
-  return a.replace(/\r\n?/g, '\n').trim() === b.replace(/\r\n?/g, '\n').trim();
 }
 
 function parsesAsTurtle(text: string): boolean {
@@ -152,7 +168,26 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [preparationError, setPreparationError] = React.useState<string | null>(null);
 
   const [turtle, setTurtle] = React.useState(urlTurtle ?? draft?.turtle ?? '');
-  const [renderedTurtle, setRenderedTurtle] = React.useState('');
+  const [renderedTurtle, setRenderedTurtleState] = React.useState('');
+  // The Turtle the diagram was drawn from, readable at once after it changes.
+  const renderedRef = React.useRef('');
+  const setRenderedTurtle = React.useCallback((value: string) => {
+    renderedRef.current = value;
+    setRenderedTurtleState(value);
+  }, []);
+  const initialRecord = React.useMemo(() => (draft ? restoredRecord(draft.record, draft.turtle ?? '') : null), [draft]);
+  const recorder = useRecorder(auth, initialRecord);
+  // The recorder's functions never change, so callbacks can depend on them.
+  const {
+    opened: recordOpened,
+    adopted: recordAdopted,
+    restored: recordRestored,
+    applied: recordApplied,
+    checked: recordChecked,
+    markBest: recordBest,
+    flush: flushRecord,
+    refused: recordRefused,
+  } = recorder;
   const [layout, setLayout] = React.useState<Layout | null>(null);
   const [renderError, setRenderError] = React.useState<RenderError | null>(null);
   const [rendering, setRendering] = React.useState(false);
@@ -166,6 +201,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const decomposingRef = React.useRef(false);
   const turtleRef = React.useRef(turtle);
   turtleRef.current = turtle;
+  const checksRef = React.useRef(checks);
+  checksRef.current = checks;
+  /** The components of the drawn variable now, for the record. */
+  const currentStates = React.useCallback((): ComponentState[] | null => (variableRef.current ? snapshotComponents(variableRef.current) : null), []);
+  // Whether a shared ?ttl= link's record was started or is no longer due (see below).
+  const urlRecordHandled = React.useRef(urlTurtle === null);
   // Counts drawings: only the latest one may change what the workspace shows.
   const renderSeq = React.useRef(0);
   // Maps a component of the current model to its review key (set below, once components exist).
@@ -247,7 +288,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     } finally {
       if (latest()) setRendering(false);
     }
-  }, [logEvent]);
+  }, [logEvent, setRenderedTurtle]);
 
   const clearDiagram = React.useCallback(() => {
     renderSeq.current += 1;
@@ -258,7 +299,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setRendering(false);
     setSelected(null);
     setVersion((value) => value + 1);
-  }, []);
+  }, [setRenderedTurtle]);
 
   // Show the Turtle that came from the URL or the restored draft.
   const initialTurtle = React.useRef(turtle);
@@ -275,9 +316,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setChecks(next.checks ?? {});
     setDecomposeError(null);
     setTurtle(next.turtle ?? '');
+    urlRecordHandled.current = true;
+    recordRestored(restoredRecord(next.record, next.turtle ?? ''));
     clearDiagram();
     if (next.turtle?.trim()) void visualize(next.turtle, { log: false });
-  }, [clearDiagram, visualize]);
+  }, [clearDiagram, recordRestored, visualize]);
 
   // A shared link: drop ?ttl= from the address, so a reload keeps later edits (they are in the
   // draft), and offer the draft it replaced.
@@ -304,6 +347,14 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [restoreDraft, savedDraft, urlTurtle]);
 
+  // A shared ?ttl= link opens Turtle. For an account signed in when the page loads, its record
+  // starts as soon as both the drawing and the sign-in check are done, if nothing changed meanwhile.
+  React.useEffect(() => {
+    if (urlRecordHandled.current || urlTurtle === null || !auth.ready || !renderedTurtle) return;
+    urlRecordHandled.current = true;
+    if (auth.recorded && sameTurtle(renderedTurtle, urlTurtle)) recordOpened(urlTurtle, currentStates());
+  }, [auth.ready, auth.recorded, currentStates, recordOpened, renderedTurtle, urlTurtle]);
+
   const setOrder = React.useCallback((next: string) => {
     orderRef.current = next;
     setOrderState(next);
@@ -314,7 +365,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [logEvent, relayout]);
 
-  /** Open a file, pasted Turtle or the example: like a new document, it replaces the workspace. */
+  /**
+   * Open a file, pasted Turtle or the example: like a new document, it replaces the workspace.
+   * For a signed-in account it starts a record, with the opened Turtle as version 0.
+   */
   const openTurtle = React.useCallback(async (text: string) => {
     setDefinition('');
     setRawOutput('');
@@ -325,8 +379,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setDecomposeError(null);
     setTurtle(text);
     clearDiagram();
-    return visualize(text);
-  }, [clearDiagram, visualize]);
+    const drawn = await visualize(text);
+    // Turtle that cannot be drawn is no variable description yet; its record starts once it is.
+    recordOpened(drawn ? text : null, drawn ? currentStates() : null);
+    return drawn;
+  }, [clearDiagram, currentStates, recordOpened, visualize]);
 
   /* --------------------------------- edits -------------------------------- */
 
@@ -334,6 +391,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     const variable = variableRef.current;
     if (!variable) return;
     const before = turtleRef.current;
+    const beforeTurtle = renderedRef.current;
+    const beforeStates = snapshotComponents(variable);
     let result: { syncVariableLabels?: boolean } | void;
     try {
       result = change();
@@ -353,14 +412,21 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
     setTurtle(merged);
     setRenderedTurtle(merged);
+    // One applied change, one recorded step with its component changes.
+    void recordApplied({ type: 'edit', beforeTurtle, before: beforeStates, afterTurtle: merged, after: snapshotComponents(variable) });
     await relayout(variable);
-  }, [relayout, visualize]);
+  }, [recordApplied, relayout, setRenderedTurtle, visualize]);
 
-  const replaceTurtleQuietly = React.useCallback((next: string) => {
-    // Used when publishing writes the creator into the Turtle: the diagram does not change.
-    setTurtle(next);
-    setRenderedTurtle(next);
-  }, []);
+  const applyTurtle = React.useCallback(async () => {
+    const source = turtleRef.current;
+    const beforeTurtle = renderedRef.current;
+    const beforeStates = currentStates();
+    const drawn = await visualize(source);
+    if (drawn && !sameTurtle(beforeTurtle, source)) {
+      void recordApplied({ type: 'edit', beforeTurtle, before: beforeStates, afterTurtle: source, after: currentStates() });
+    }
+    return drawn;
+  }, [currentStates, recordApplied, visualize]);
 
   const applyNanopubMetadata = React.useCallback(async () => {
     if (!preparationOptions) {
@@ -368,6 +434,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
     const input = turtleRef.current;
+    const beforeTurtle = renderedRef.current;
+    const beforeStates = currentStates();
     const settings = {
       conformsToUri: preparationOptions.conforms_to_uri,
       createdWithLabel: preparationOptions.created_with_label,
@@ -377,7 +445,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setTurtle(output);
       logEvent('apply_pre_nanopub_settings', { input_turtle: input, output_turtle: output, settings });
       // Redraw for a new IRI; the previous page logged only the apply event here.
-      await visualize(output, { log: false });
+      const drawn = await visualize(output, { log: false });
+      if (drawn && !sameTurtle(beforeTurtle, output)) {
+        // Only metadata, unless it was added to Turtle edits that had not been drawn yet.
+        void recordApplied({
+          type: sameTurtle(input, beforeTurtle) ? 'metadata' : 'edit',
+          beforeTurtle,
+          before: beforeStates,
+          afterTurtle: output,
+          after: currentStates(),
+        });
+      }
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -385,7 +463,20 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       toast.error(message || 'Could not apply pre-nanopublication settings.');
       return false;
     }
-  }, [logEvent, preparationError, preparationOptions, visualize]);
+  }, [currentStates, logEvent, preparationError, preparationOptions, recordApplied, visualize]);
+
+  const preparePublication = React.useCallback(async (next: string) => {
+    const beforeTurtle = renderedRef.current;
+    if (!sameTurtle(beforeTurtle, next)) {
+      // Publishing writes the creator into the Turtle: the diagram does not change, the record gets a metadata step.
+      setTurtle(next);
+      setRenderedTurtle(next);
+      const states = currentStates();
+      void recordApplied({ type: 'metadata', beforeTurtle, before: states, afterTurtle: next, after: states });
+    }
+    const current = await flushRecord();
+    return current?.id ?? null;
+  }, [currentStates, recordApplied, flushRecord, setRenderedTurtle]);
 
   /* ------------------------------ decomposition ---------------------------- */
 
@@ -409,8 +500,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setDecomposeStartedAt(Date.now());
     try {
       const result = await runProtected(() => streamDecomposition(
-        // Always without reasoning, the default setup; the page offers no switch for it.
-        { definition: text, model_provider: provider, model_name: model, disable_thinking: true },
+        // Always without reasoning, the default setup; the page offers no switch for it. The
+        // device and screen go with the run's record (D-037).
+        { definition: text, model_provider: provider, model_name: model, disable_thinking: true, client: clientInfo() },
         {
           onStart: () => {
             setRawOutput('');
@@ -431,6 +523,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setSelected(null);
       const ttl = result.ttl || '';
       setTurtle(ttl);
+      // The backend started the run's record, with this draft as version 0. The previous diagram
+      // goes, so that nothing of the earlier work is shown, checked or recorded under this record.
+      recordAdopted(result.record_id ?? null, ttl);
+      clearDiagram();
       if (ttl.trim()) await visualize(ttl);
     } catch (error) {
       console.error(error);
@@ -443,7 +539,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setDecomposing(false);
       setDecomposeStartedAt(null);
     }
-  }, [definition, modelOptions, requireUser, runProtected, runSettings, visualize]);
+  }, [clearDiagram, definition, modelOptions, recordAdopted, requireUser, runProtected, runSettings, visualize]);
 
   /* --------------------------------- review -------------------------------- */
 
@@ -459,27 +555,51 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const isChecked = React.useCallback((comp: Concept) => Boolean(checks[keyOf(comp)]), [checks, keyOf]);
   const toggleChecked = React.useCallback((comp: Concept) => {
     const key = keyOf(comp);
+    const checked = !checksRef.current[key];
     setChecks((current) => {
       const next = { ...current };
       if (next[key]) delete next[key];
       else next[key] = true;
       return next;
     });
-  }, [keyOf]);
+    // "Looks right" and its Undo are steps of the record, on the version the diagram shows.
+    recordChecked({
+      checked,
+      role: recordRole(comp),
+      component: componentName({
+        iri: comp.isBlank() ? null : comp.getIri() ?? null,
+        label: comp.getLabel() ?? '',
+        group: components.find((item) => item.comp === comp)?.relation ?? comp.getRole(),
+      }),
+      turtle: renderedRef.current,
+      states: currentStates(),
+    });
+  }, [components, currentStates, keyOf, recordChecked]);
   const checkedCount = components.filter((item) => checks[item.key]).length;
+
+  const markBest = React.useCallback((note: string) => recordBest({
+    note,
+    unchecked: components.length - components.filter((item) => checksRef.current[item.key]).length,
+    turtle: renderedRef.current,
+    states: currentStates(),
+  }), [components, currentStates, recordBest]);
+
+  const publicationRefused = React.useCallback((reason: 'outdated' | 'gone') => recordRefused(reason), [recordRefused]);
 
   /* --------------------------------- drafts -------------------------------- */
 
   // A drawn diagram counts too: clearing the editor to paste new text keeps the workspace open.
   const hasContent = Boolean(definition.trim() || turtle.trim() || rawOutput.trim() || layout);
 
+  const record = recorder.record;
+  const ownRecord = record && auth.user?.id === record.ownerId ? record : null;
   React.useEffect(() => {
     const save = () => {
       if (!hasContent) {
         writeString(WORKSPACE_DRAFT_KEY, null);
         return;
       }
-      const next: Draft = { definition, rawOutput, validationErrors, schemaValid, turtle, checks, run, savedAt: new Date().toISOString() };
+      const next: Draft = { definition, rawOutput, validationErrors, schemaValid, turtle, checks, run, savedAt: new Date().toISOString(), record };
       writeJson(WORKSPACE_DRAFT_KEY, next);
     };
     const handle = window.setTimeout(save, 600);
@@ -489,7 +609,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       window.clearTimeout(handle);
       window.removeEventListener('pagehide', save);
     };
-  }, [checks, definition, hasContent, rawOutput, run, schemaValid, turtle, validationErrors]);
+  }, [checks, definition, hasContent, rawOutput, record, run, schemaValid, turtle, validationErrors]);
 
   const reset = React.useCallback(() => {
     setDefinition('');
@@ -500,9 +620,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setRun(null);
     setTurtle('');
     setChecks({});
+    recordOpened(null, null);
     clearDiagram();
     writeString(WORKSPACE_DRAFT_KEY, null);
-  }, [clearDiagram]);
+  }, [clearDiagram, recordOpened]);
 
   const value: WorkspaceValue = {
     definition,
@@ -540,11 +661,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     openedFromUrl: urlTurtle !== null,
     decompose,
     visualize,
+    applyTurtle,
     openTurtle,
     mutate,
     applyNanopubMetadata,
-    replaceTurtleQuietly,
     reset,
+    // Another account's record (a draft left in this browser) is not this person's.
+    record: ownRecord,
+    markStatus: markStatusOf(ownRecord, renderedTurtle, recorder.pendingMetadata),
+    markBest,
+    preparePublication,
+    publicationRefused,
   };
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

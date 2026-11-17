@@ -15,13 +15,21 @@ signing in, press the intended action again. Anonymous tool use sends no activit
 Administration and account APIs remain protected. Keep `IADOPT_AUTH_ENABLED=true` in
 hosted deployments; disabling authentication is only for local development.
 
+For a signed-in account the workspace keeps a record of the work: the decomposition or the
+opened Turtle, each applied change, each "Looks right", and the version the person marks as
+**best**, with the account and the IP address, browser, device and screen of each step.
+Publishing needs that mark: only the version marked as best can be published. Anonymous
+visitors are never recorded, and a deployment with authentication disabled records nothing
+and cannot publish.
+
 The user can:
 
 1. describe a variable in plain text on the start page and click **Decompose**, watching the model output stream in
 2. review the draft in the **Workspace**: the **I-ADOPT diagram**, the list of components with their Wikidata, QUDT or OM links, the **Turtle**, and the **raw model output** with the **JSON schema validation** result
 3. correct components in the inspector (label, IRI, description, shape, constraints) and mark each one as checked
 4. open or paste existing Turtle to visualize, edit and export it, without an account
-5. export SVG, PNG or Turtle, or publish a **nanopublication** with their ORCID iD, and retract it later under **Publications**
+5. mark the version they stand behind as **best**, with an optional note on what they changed and why
+6. export SVG, PNG or Turtle, or publish the version marked as best as a **nanopublication** with their ORCID iD, and retract it later under **Publications**
 
 ---
 
@@ -302,9 +310,13 @@ My system is measuring air temperature at a height of 1.7m
    link in the inspector; fix it there or in the **Turtle** tab, then mark it as checked.
    The **Model output** tab shows the raw response and the JSON schema validation.
 
-5. Click **Export** for SVG, PNG or Turtle, or **Publish** to sign and publish a nanopublication:
-   the dialog checks the draft, asks for your ORCID iD and asks you to confirm, because
-   publishing is permanent and public. Retract it later under **Publications**.
+5. When the decomposition is right, click **Mark as best** next to **Publish**. A note on what you
+   changed and why is optional. Components without "Looks right" bring a warning, not a block.
+
+6. Click **Export** for SVG, PNG or Turtle, or **Publish** to sign and publish a nanopublication:
+   the dialog checks the draft, including that this version is the one marked as best, asks for
+   your ORCID iD and asks you to confirm, because publishing is permanent and public. Retract it
+   later under **Publications**.
 
 ---
 

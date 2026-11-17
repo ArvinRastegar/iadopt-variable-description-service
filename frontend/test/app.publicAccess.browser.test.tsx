@@ -6,7 +6,9 @@ import { Parser } from 'n3';
  * Replaces the previous publicAccess.browser.test.js, which drove the old page's element ids.
  * It checks the same promises on the new interface: public tools work without an account and
  * send nothing, protected actions ask for a sign-in in place and keep the work, a sign-in never
- * repeats a protected action, the ORCID rules and the publish/retract payloads are unchanged.
+ * repeats a protected action, and the ORCID rules and the retract payload are unchanged. Since
+ * D-037 publishing needs the version marked as best, so the publish payload also names the
+ * record and the browser's device and screen (app.record.browser.test.tsx covers the record).
  * No request reaches a real API.
  */
 
@@ -38,7 +40,10 @@ test('public tools keep local work while sign-in gates protected actions', async
   localStorage.clear();
   window.location.hash = '#/';
 
-  const user = { username: 'reader', display_name: 'Local reader', roles: ['user'] };
+  // The backend always sends the account id; a session without one is never recorded (D-037).
+  const user = { id: 7, username: 'reader', display_name: 'Local reader', roles: ['user'] };
+  const recordId = '0123456789abcdef';
+  let recordVersion = 0;
   const calls: Array<{ path: string; method: string; body?: string }> = [];
   const unexpected: string[] = [];
   let sessionActive = false;
@@ -52,7 +57,7 @@ test('public tools keep local work while sign-in gates protected actions', async
     const path = new URL(String(url), window.location.href).pathname;
     const method = options.method || 'GET';
     calls.push({ path, method, body: typeof options.body === 'string' ? options.body : undefined });
-    if (path === '/api/auth/me') return sessionActive ? json({ user }) : json({ detail: 'Authentication required.' }, 401);
+    if (path === '/api/auth/me') return sessionActive ? json({ user, auth_enabled: true }) : json({ detail: 'Authentication required.' }, 401);
     // No saved ORCID iDs, so the publish and retract dialogs show the single typed field.
     if (path === '/api/auth/me/orcids' && method === 'GET') return json({ orcids: [] });
     if (path === '/api/model-options') {
@@ -81,6 +86,16 @@ test('public tools keep local work while sign-in gates protected actions', async
       sessionActive = false;
       return json({ detail: 'Session expired.' }, 401);
     }
+    if (path === '/api/records' && method === 'POST') {
+      if (!sessionActive) return json({ detail: 'Authentication required.' }, 401);
+      recordVersion = 0;
+      return json({ record_id: recordId, version: 0 }, 201);
+    }
+    if (path === `/api/records/${recordId}/events` && method === 'POST') {
+      if (!sessionActive) return json({ detail: 'Authentication required.' }, 401);
+      if (typeof JSON.parse(String(options.body)).turtle === 'string') recordVersion += 1;
+      return json({ record_id: recordId, event: 1, version: recordVersion }, 201);
+    }
     if (path === '/api/nanopub/publish') {
       return json({ nanopub_url: publishedUrl, published_to: 'test', variable_identifier: 'guest-edited-variable', variable_uri: 'https://w3id.org/iadopt/variable/guest' });
     }
@@ -96,6 +111,7 @@ test('public tools keep local work while sign-in gates protected actions', async
     if (!this.download) anchorClick.call(this);
   });
   const events = () => calls.filter((call) => call.path === '/api/events');
+  const recordCalls = () => calls.filter((call) => call.path.startsWith('/api/records'));
   const protectedCalls = () => calls.filter((call) => ['/api/decompose/stream', '/api/nanopub/publish', '/api/nanopub/retract'].includes(call.path));
 
   // The layout engine measures text with this element, as on the real page.
@@ -133,6 +149,7 @@ test('public tools keep local work while sign-in gates protected actions', async
   await expect.poll(() => objectURL.mock.calls.length).toBe(1);
   expect(await (objectURL.mock.calls[0][0] as Blob).text()).toContain('Guest edited variable');
   expect(events()).toEqual([]);
+  expect(recordCalls()).toEqual([]);
 
   // Protected actions ask for a sign-in in place, send nothing and keep the work.
   // The example has no definition yet, so the definition field is already open.
@@ -149,6 +166,7 @@ test('public tools keep local work while sign-in gates protected actions', async
   await expect.element(signInDialog).toBeVisible();
   await cancelSignIn();
   expect(protectedCalls()).toEqual([]);
+  expect(recordCalls()).toEqual([]);
   expect(popup).not.toHaveBeenCalled();
   expect((page.getByLabelText('Variable definition').element() as HTMLTextAreaElement).value).toBe('Keep this variable definition');
 
@@ -202,6 +220,11 @@ test('public tools keep local work while sign-in gates protected actions', async
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
   const publishDialog = page.getByRole('dialog', { name: 'Publish as a nanopublication' });
   await expect.element(publishDialog.getByText('Nanopublication metadata is in place')).toBeVisible();
+  // Publishing needs the version marked as best (D-037); the check offers the mark in place.
+  await expect.element(publishDialog.getByRole('button', { name: 'Continue' })).toBeDisabled();
+  await publishDialog.getByRole('button', { name: 'Mark as best' }).click();
+  await page.getByRole('dialog', { name: 'Mark this as the best decomposition?' }).getByRole('button', { name: 'Mark as best' }).click();
+  await expect.element(publishDialog.getByText(/You marked this version as best/)).toBeVisible();
   await publishDialog.getByRole('button', { name: 'Continue' }).click();
   await publishDialog.getByRole('button', { name: 'Continue' }).click();
   await expect.element(publishDialog.getByText('Please put in your ORCID for nanopublication.')).toBeVisible();
@@ -221,7 +244,8 @@ test('public tools keep local work while sign-in gates protected actions', async
   const publishCalls = calls.filter((call) => call.path === '/api/nanopub/publish');
   expect(publishCalls).toHaveLength(1);
   const publishBody = JSON.parse(publishCalls[0].body ?? '{}');
-  expect(Object.keys(publishBody).sort()).toEqual(['creator_orcid_id', 'ttl']);
+  expect(Object.keys(publishBody).sort()).toEqual(['client', 'creator_orcid_id', 'record_id', 'ttl']);
+  expect(publishBody.record_id).toBe(recordId);
   expect(publishBody.creator_orcid_id).toBe('https://orcid.org/0000-0002-1825-0097');
   expect(creatorQuads(publishBody.ttl).map((quad: Quad) => quad.object.value)).toEqual([
     'https://orcid.org/0000-0002-1825-0097', 'https://orcid.org/0000-0002-1825-0097',

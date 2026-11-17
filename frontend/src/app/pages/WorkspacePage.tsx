@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Callout, Pill } from '@/components/ui/feedback';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/controls';
 import { EXAMPLE_TURTLE } from '@/lib/iadopt/example';
+import { MarkBestButton, MarkBestDialog, useMarkBestDialog } from '../components/MarkBestDialog';
 import { OpenTurtleButtons, useOpenTurtle } from '../components/OpenTurtle';
 import { PublishDialog, usePublishDialog } from '../components/PublishDialog';
 import { DiagramView } from '../components/workspace/DiagramView';
@@ -21,6 +22,7 @@ type Tab = 'diagram' | 'components' | 'turtle' | 'output';
 export function WorkspacePage() {
   const workspace = useWorkspace();
   const publish = usePublishDialog();
+  const markBest = useMarkBestDialog();
   const [tab, setTab] = React.useState<Tab>('diagram');
   const [noticeClosed, setNoticeClosed] = React.useState(false);
   const inspectorRef = React.useRef<HTMLElement>(null);
@@ -58,6 +60,7 @@ export function WorkspacePage() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="hidden text-xs text-muted-foreground md:inline">Draft saved on this device</span>
           <ExportMenu />
+          <MarkBestButton onRequest={() => void markBest.request()} />
           <Button onClick={() => void publish.request()} disabled={!workspace.layout || workspace.decomposing}>
             <CloudUploadIcon aria-hidden="true" /> Publish
           </Button>
@@ -68,7 +71,7 @@ export function WorkspacePage() {
         <aside aria-label="Definition and review" className="order-2 flex flex-col gap-6 border-t border-border bg-surface px-4 pt-[18px] pb-6 lg:order-1 lg:w-[296px] lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-r">
           <DefinitionPanel />
           <RunPanel />
-          <ReviewPanel />
+          <ReviewPanel onMarkBest={() => void markBest.request()} />
         </aside>
 
         <section aria-label="Decomposition" className="order-1 flex min-h-[560px] min-w-0 flex-1 flex-col lg:order-2 lg:min-h-0">
@@ -128,6 +131,7 @@ export function WorkspacePage() {
       </div>
 
       <PublishDialog open={publish.open} onOpenChange={publish.setOpen} />
+      <MarkBestDialog open={markBest.open} onOpenChange={markBest.setOpen} />
     </main>
   );
 }
@@ -153,7 +157,7 @@ function TurtlePanel() {
         </div>
         <div className="flex flex-wrap gap-2">
           {workspace.turtleDirty && (
-            <Button size="sm" disabled={workspace.rendering} onClick={() => void workspace.visualize(workspace.turtle)}>
+            <Button size="sm" disabled={workspace.rendering} onClick={() => void workspace.applyTurtle()}>
               <RefreshCwIcon aria-hidden="true" /> Update diagram
             </Button>
           )}
