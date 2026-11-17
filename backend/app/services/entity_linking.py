@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Optional, Sequence, Tuple
 
 import requests
@@ -36,6 +36,7 @@ from ..clients.http import get_http_session
 from ..clients.openai_client import openrouter_chat_completions_url, openrouter_chat_headers
 from ..clients.psnc_client import psnc_chat_completions_url, psnc_chat_headers
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER
+from .call_log import CallLog, start_call
 from .entity_choice import (
     MODEL,
     InvalidAnswer,
@@ -71,10 +72,13 @@ class Linker:
     Attributes:
         provider: ``psnc`` or ``openrouter``.
         model: The model name, as the decomposition request resolved it.
+        calls: The run's call log, where each linking request is recorded (D-037, stage 2);
+            not part of the linker's identity.
     """
 
     provider: str
     model: str
+    calls: Optional[CallLog] = field(default=None, compare=False, repr=False)
 
 
 # The configuration D-032 measured; it answers when no run names a model, as in direct calls.
@@ -143,7 +147,8 @@ def ask_for_choice(
 
     Side effects:
         Up to ``MAX_ATTEMPTS`` HTTP POSTs to the linker's provider, all with the identical
-        body, and sleeps between failed attempts.
+        body, and sleeps between failed attempts. Each POST is recorded in the linker's call
+        log, numbered per term.
     """
     name, url, headers = _endpoint(linker)
     payload = build_request(term, definition, shown, provider=linker.provider, model=linker.model)
@@ -151,21 +156,30 @@ def ask_for_choice(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response: Optional[requests.Response] = None
         problem = ""
+        pending = start_call(linker.calls, "linking", linker.provider, linker.model, key=term)
         try:
             response = get_http_session().post(url, headers=headers, json=payload, timeout=CHAT_TIMEOUT_S)
         except requests.RequestException as exc:
             problem = type(exc).__name__
+            pending.finish("error", error=problem)
         else:
             if response.status_code == 200:
                 answered = True
+                usage = None
                 try:
-                    return read_choice(response.json(), len(shown))
+                    data = response.json()
+                    usage = data.get("usage") if isinstance(data, dict) else None
+                    choice = read_choice(data, len(shown))
                 except ValueError as exc:
                     reason = str(exc) if isinstance(exc, InvalidAnswer) else "the body is not JSON"
+                    pending.finish("unusable", error=reason, usage=usage)
                     logger.warning(
                         "entity linking: attempt %d of %d gave no valid answer (%s)", attempt, MAX_ATTEMPTS, reason
                     )
                     continue
+                pending.finish("ok", usage=usage)
+                return choice
+            pending.finish("error", error=f"HTTP {response.status_code}")
             if response.status_code not in RETRYABLE_STATUSES and response.status_code < 500:
                 raise RuntimeError(f"{name} refused the entity-linking request (HTTP {response.status_code}).")
             problem = f"HTTP {response.status_code}"

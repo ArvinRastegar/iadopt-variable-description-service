@@ -1,8 +1,9 @@
 """Decomposition routes: model options, non-streaming and streaming decompose.
 
-For a signed-in account every run starts a decomposition record (D-036): the run and its
-draft as version 0. The audit log keeps the model choice, timing and errors of a run, and
-no longer the definition or the result, which the record holds (D-024).
+For a signed-in account every run starts a decomposition record (D-036): the run, every
+request it sent to a model (D-037, stage 2), and its draft as version 0. The audit log keeps
+the model choice, timing and errors of a run, and no longer the definition or the result,
+which the record holds (D-024).
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -23,6 +24,7 @@ from ..pipeline import prompt_setup, run_pipeline, stream_pipeline_events
 from ..schemas import DecomposeResponse, ModelOptionsResponse
 from ..schemas.responses import ProviderConfig
 from ..schemas.requests import DecomposeRequest
+from ..services.call_log import CallLog, ModelCall
 from ..services.llm import resolve_model_name, resolve_model_provider, stream_event
 
 router = APIRouter()
@@ -62,8 +64,11 @@ def _record_run(
     started_at: datetime,
     result: Optional[Dict[str, Any]],
     error: Optional[str],
+    calls: Sequence[ModelCall] = (),
 ) -> Optional[str]:
     """Write a run to the account's decomposition record; a failure here never fails the run.
+
+    ``calls`` are the requests the run sent to a model, recorded with it.
 
     Returns:
         The new record's id, or ``None`` when nothing was recorded.
@@ -93,6 +98,7 @@ def _record_run(
             result=result,
             error=error,
             client=req.client.model_dump(exclude_none=True) if req.client else None,
+            calls=calls,
         )
     except Exception:
         logger.exception("Could not write the decomposition record.")
@@ -165,19 +171,28 @@ def decompose_stream(
         error_detail: Optional[str] = None
         status_code = 200
         record_id: Optional[str] = None
+        calls = CallLog()
+        events = stream_pipeline_events(
+            req.definition,
+            disable_thinking=req.disable_thinking,
+            model_provider=req.model_provider,
+            model_name=req.model_name,
+            calls=calls,
+        )
         try:
-            for line in stream_pipeline_events(
-                req.definition,
-                disable_thinking=req.disable_thinking,
-                model_provider=req.model_provider,
-                model_name=req.model_name,
-            ):
+            for line in events:
                 try:
                     event = json.loads(line)
                     if event.get("type") == "final":
                         final_payload = event.get("data")
                         record_id = _record_run(
-                            user=user, request=request, req=req, started_at=started_at, result=final_payload, error=None
+                            user=user,
+                            request=request,
+                            req=req,
+                            started_at=started_at,
+                            result=final_payload,
+                            error=None,
+                            calls=calls.calls(),
                         )
                         if isinstance(final_payload, dict):
                             line = stream_event("final", data={**final_payload, "record_id": record_id})
@@ -192,6 +207,10 @@ def decompose_stream(
             status_code = 500
             raise
         finally:
+            # Closing the pipeline first records a try the client interrupted mid-answer.
+            close = getattr(events, "close", None)
+            if close is not None:
+                close()
             if final_payload is None and not bad_request:
                 record_id = _record_run(
                     user=user,
@@ -200,6 +219,7 @@ def decompose_stream(
                     started_at=started_at,
                     result=None,
                     error=error_detail or "The decomposition stopped before it finished.",
+                    calls=calls.calls(),
                 )
             auth_store.audit_event(
                 action="decompose.stream",
@@ -242,14 +262,18 @@ def decompose(
     """
     start = time.perf_counter()
     started_at = utc_now()
+    calls = CallLog()
     try:
         result = run_pipeline(
             req.definition,
             disable_thinking=req.disable_thinking,
             model_provider=req.model_provider,
             model_name=req.model_name,
+            calls=calls,
         )
-        record_id = _record_run(user=user, request=request, req=req, started_at=started_at, result=result, error=None)
+        record_id = _record_run(
+            user=user, request=request, req=req, started_at=started_at, result=result, error=None, calls=calls.calls()
+        )
         auth_store.audit_event(
             action="decompose",
             user=user,
@@ -271,7 +295,9 @@ def decompose(
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
-        record_id = _record_run(user=user, request=request, req=req, started_at=started_at, result=None, error=str(e))
+        record_id = _record_run(
+            user=user, request=request, req=req, started_at=started_at, result=None, error=str(e), calls=calls.calls()
+        )
         auth_store.audit_event(
             action="decompose",
             user=user,
@@ -284,7 +310,9 @@ def decompose(
         raise HTTPException(status_code=500, detail=str(e)) from e
     except Exception as e:
         detail = f"Unexpected backend error: {e}"
-        record_id = _record_run(user=user, request=request, req=req, started_at=started_at, result=None, error=detail)
+        record_id = _record_run(
+            user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls()
+        )
         auth_store.audit_event(
             action="decompose",
             user=user,

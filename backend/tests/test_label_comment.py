@@ -20,7 +20,7 @@ def stub_call(monkeypatch):
     calls = []
 
     def make(response=None, raises=None):
-        def fake(model, prompt, temperature, disable_thinking=True):
+        def fake(model, prompt, temperature, disable_thinking=True, **_call_log):
             calls.append(prompt)
             if raises is not None:
                 raise raises

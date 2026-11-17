@@ -13,7 +13,7 @@ routers and the app factory, so the dependency graph stays acyclic.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import httpx
 from jsonschema import Draft202012Validator
@@ -23,11 +23,13 @@ from .clients.http import get_http_session
 from .clients.openai_client import get_openai_client
 from .core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from .core.state import app_state
+from .services.call_log import CallLog, PendingCall, mark_unusable, start_call
 from .services.enrichment import enrich_with_uris
 from .services.entity_linking import Linker
 from .services.label_comment import generate_label_and_comment
 from .services.llm import (
     build_chat_completion_request_kwargs,
+    call_error,
     call_llm_loose,
     coerce_prediction,
     call_model,
@@ -202,6 +204,7 @@ def _labelled_prediction(
     provider: str,
     model: str,
     definition: str,
+    calls: Optional[CallLog] = None,
 ) -> Dict[str, Any]:
     """Add label and comment to a measured prediction, leaving others untouched.
 
@@ -213,6 +216,7 @@ def _labelled_prediction(
         provider: The resolved provider.
         model: The resolved model name.
         definition: The stripped caller definition.
+        calls: The run's call log; the label call is recorded there.
 
     Returns:
         The eight-field prediction on the measured path, otherwise ``pred``
@@ -229,6 +233,7 @@ def _labelled_prediction(
         model_provider=provider,
         model=model,
         temperature=settings.temperature,
+        calls=calls,
     )
     return merge_measured_prediction(pred, label=label, comment=comment, definition=definition)
 
@@ -312,12 +317,32 @@ def prompt_setup(model_provider: Optional[str] = None) -> Tuple[str, str]:
     return setup, hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
+def _openrouter_deltas(chunks: Iterable[Any], usage: Dict[str, Any]) -> Iterator[Tuple[str, str]]:
+    """Turn OpenRouter stream chunks into deltas, keeping the token counts of the last chunk.
+
+    Args:
+        chunks: The chunks of a streamed chat completion.
+        usage: Filled with ``prompt_tokens`` and ``completion_tokens`` from any chunk that
+            carries ``usage``.
+
+    Yields:
+        ``(reasoning_delta, content_delta)`` per chunk.
+    """
+    for chunk in chunks:
+        chunk_usage = getattr(chunk, "usage", None)
+        if chunk_usage is not None:
+            usage["prompt_tokens"] = getattr(chunk_usage, "prompt_tokens", None)
+            usage["completion_tokens"] = getattr(chunk_usage, "completion_tokens", None)
+        yield extract_stream_text_deltas(chunk)
+
+
 def stream_pipeline_events(
     definition: str,
     *,
     disable_thinking: bool = True,
     model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
+    calls: Optional[CallLog] = None,
 ) -> Iterator[str]:
     """Run the decomposition pipeline, yielding NDJSON event lines.
 
@@ -330,6 +355,7 @@ def stream_pipeline_events(
         disable_thinking: Forwarded to the provider call.
         model_provider: Optional provider override.
         model_name: Optional model override.
+        calls: The run's call log; every request to a model is recorded there.
 
     Yields:
         NDJSON event line strings (``raw_delta`` / ``final`` / ``error``).
@@ -359,6 +385,9 @@ def stream_pipeline_events(
                 all_display_parts.append(retry_note)
                 yield stream_event("raw_delta", delta=retry_note)
 
+            # A try is recorded once its request is about to go out: a missing key fails before.
+            pending: Optional[PendingCall] = None
+            usage: Dict[str, Any] = {}
             try:
                 if selected_model_provider == PSNC_MODEL_PROVIDER:
                     stream = stream_psnc_model(
@@ -367,12 +396,14 @@ def stream_pipeline_events(
                         settings.temperature,
                         disable_thinking=disable_thinking,
                         measured=use_measured_path(selected_model_provider),
+                        usage=usage,
                     )
+                    pending = start_call(calls, "decomposition", selected_model_provider, selected_model_name)
                 else:
                     client = get_openai_client()
-                    stream = (
-                        extract_stream_text_deltas(chunk)
-                        for chunk in client.chat.completions.create(
+                    pending = start_call(calls, "decomposition", selected_model_provider, selected_model_name)
+                    stream = _openrouter_deltas(
+                        client.chat.completions.create(
                             **build_chat_completion_request_kwargs(
                                 selected_model_name,
                                 prompt,
@@ -380,7 +411,8 @@ def stream_pipeline_events(
                                 disable_thinking=disable_thinking,
                                 stream=True,
                             )
-                        )
+                        ),
+                        usage,
                     )
 
                 for reasoning_delta, content_delta in stream:
@@ -410,41 +442,61 @@ def stream_pipeline_events(
                 stripped_content = attempt_content.strip()
                 if stripped_content.startswith("<!DOCTYPE html") or stripped_content.startswith("<html"):
                     last_error_message = "The model returned HTML instead of JSON."
+                    pending.finish("unusable", error=last_error_message, usage=usage or None)
                     continue
                 if not stripped_content:
                     last_error_message = "The streamed model response was empty."
+                    pending.finish("unusable", error=last_error_message, usage=usage or None)
                     continue
 
                 try:
                     pred = parse_llm_json(attempt_content, definition)
                 except Exception as e:
                     last_error_message = str(e)
+                    pending.finish("unusable", error=f"Not valid JSON: {e}", usage=usage or None)
                     print(f"LLM parse attempt {attempt} failed: {e}")
                     continue
 
-                pred = _labelled_prediction(
-                    pred,
-                    provider=selected_model_provider,
-                    model=selected_model_name,
-                    definition=definition,
-                )
-                final_payload = _finalize_pipeline_output(
-                    "".join(all_display_parts),
-                    pred,
-                    linker=Linker(selected_model_provider, selected_model_name),
-                )
+                pending.finish("ok", usage=usage or None)
+                try:
+                    pred = _labelled_prediction(
+                        pred,
+                        provider=selected_model_provider,
+                        model=selected_model_name,
+                        definition=definition,
+                        calls=calls,
+                    )
+                    final_payload = _finalize_pipeline_output(
+                        "".join(all_display_parts),
+                        pred,
+                        linker=Linker(selected_model_provider, selected_model_name, calls=calls),
+                    )
+                except Exception as e:
+                    mark_unusable(calls, "decomposition", f"The answer could not be used: {type(e).__name__}")
+                    raise
                 yield stream_event("final", data=final_payload)
                 return
 
             except APIStatusError as e:
                 last_error_message = str(e)
+                if pending is not None:
+                    pending.finish("error", error=call_error(e), usage=usage or None)
                 print(f"APIStatusError attempt {attempt}: {e}")
             except (OpenAIError, httpx.HTTPError) as e:
                 last_error_message = str(e)
+                if pending is not None:
+                    pending.finish("error", error=call_error(e), usage=usage or None)
                 print(f"Transport error attempt {attempt}: {e}")
             except Exception as e:
                 last_error_message = str(e)
+                if pending is not None:
+                    pending.finish("error", error=call_error(e), usage=usage or None)
                 print(f"Unexpected streaming error attempt {attempt}: {e}")
+            finally:
+                # A stream the client closes mid-answer ends here with GeneratorExit, which no
+                # handler above catches; every other exit has finished the call already.
+                if pending is not None:
+                    pending.finish("error", error="The stream closed before the answer was complete.", usage=usage or None)
 
             if not streamed_any_chunk:
                 fallback_raw = (
@@ -453,6 +505,7 @@ def stream_pipeline_events(
                         prompt,
                         settings.temperature,
                         disable_thinking=disable_thinking,
+                        calls=calls,
                     )
                     if selected_model_provider == PSNC_MODEL_PROVIDER
                     else call_model(
@@ -460,6 +513,7 @@ def stream_pipeline_events(
                         prompt,
                         settings.temperature,
                         disable_thinking=disable_thinking,
+                        calls=calls,
                     )
                 )
                 fallback_display = fallback_raw or ""
@@ -468,22 +522,31 @@ def stream_pipeline_events(
                     yield stream_event("raw_delta", delta=fallback_display)
                     try:
                         pred = parse_llm_json(fallback_raw, definition)
+                    except Exception as e:
+                        mark_unusable(calls, "decomposition", f"Not valid JSON: {e}")
+                        last_error_message = str(e)
+                        print(f"Fallback parse attempt {attempt} failed: {e}")
+                        continue
+                    try:
                         pred = _labelled_prediction(
                             pred,
                             provider=selected_model_provider,
                             model=selected_model_name,
                             definition=definition,
+                            calls=calls,
                         )
                         final_payload = _finalize_pipeline_output(
                             "".join(all_display_parts),
                             pred,
-                            linker=Linker(selected_model_provider, selected_model_name),
+                            linker=Linker(selected_model_provider, selected_model_name, calls=calls),
                         )
-                        yield stream_event("final", data=final_payload)
-                        return
                     except Exception as e:
+                        mark_unusable(calls, "decomposition", f"The answer could not be used: {type(e).__name__}")
                         last_error_message = str(e)
                         print(f"Fallback parse attempt {attempt} failed: {e}")
+                        continue
+                    yield stream_event("final", data=final_payload)
+                    return
 
         yield stream_event(
             "error", detail=f"Could not extract valid JSON from the model output. Last error: {last_error_message}"
@@ -501,6 +564,7 @@ def run_pipeline(
     disable_thinking: bool = True,
     model_provider: Optional[str] = None,
     model_name: Optional[str] = None,
+    calls: Optional[CallLog] = None,
 ) -> Dict[str, Any]:
     """Run the decomposition pipeline and return one final payload (non-streaming).
 
@@ -509,6 +573,7 @@ def run_pipeline(
         disable_thinking: Forwarded to the provider call.
         model_provider: Optional provider override.
         model_name: Optional model override.
+        calls: The run's call log; every request to a model is recorded there.
 
     Returns:
         The ``DecomposeResponse``-shaped dict.
@@ -531,15 +596,22 @@ def run_pipeline(
         temperature=settings.temperature,
         disable_thinking=disable_thinking,
         measured=use_measured_path(selected_model_provider),
+        calls=calls,
     )
-    pred = _labelled_prediction(
-        pred,
-        provider=selected_model_provider,
-        model=selected_model_name,
-        definition=definition,
-    )
-    return _finalize_pipeline_output(
-        raw_llm_output,
-        pred,
-        linker=Linker(selected_model_provider, selected_model_name),
-    )
+    try:
+        pred = _labelled_prediction(
+            pred,
+            provider=selected_model_provider,
+            model=selected_model_name,
+            definition=definition,
+            calls=calls,
+        )
+        return _finalize_pipeline_output(
+            raw_llm_output,
+            pred,
+            linker=Linker(selected_model_provider, selected_model_name, calls=calls),
+        )
+    except Exception as e:
+        # The decomposition call returned text, but no result could be made from it.
+        mark_unusable(calls, "decomposition", f"The answer could not be used: {type(e).__name__}")
+        raise

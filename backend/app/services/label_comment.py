@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from ..core.config import PSNC_MODEL_PROVIDER
+from .call_log import CallLog, mark_unusable
 from .llm import call_model, call_psnc_model
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?", re.MULTILINE)
@@ -133,6 +134,7 @@ def generate_label_and_comment(
     model_provider: str,
     model: str,
     temperature: float,
+    calls: Optional[CallLog] = None,
 ) -> Tuple[str, str]:
     """Generate a label and comment via one LLM call, falling back per field.
 
@@ -145,6 +147,7 @@ def generate_label_and_comment(
         model_provider: The resolved provider the decomposition used.
         model: The resolved model name the decomposition used.
         temperature: The sampling temperature the decomposition used.
+        calls: The run's call log; the call is recorded there as a ``label`` call.
 
     Returns:
         A ``(label, comment)`` tuple, both non-empty; label at most 80 characters.
@@ -162,11 +165,14 @@ def generate_label_and_comment(
         # One attempt from here: call_psnc_model / call_model already retry 3 times
         # internally, and a second retry layer would stall a user-facing request.
         raw = (
-            call_psnc_model(model, prompt, temperature)
+            call_psnc_model(model, prompt, temperature, calls=calls, purpose="label")
             if model_provider == PSNC_MODEL_PROVIDER
-            else call_model(model, prompt, temperature)
+            else call_model(model, prompt, temperature, calls=calls, purpose="label")
         )
         parsed = _parse_label_comment(raw)
+        if not _usable(parsed.get("label")) and not _usable(parsed.get("comment")):
+            # The call returned text, but none of it can be used: record why (D-037, stage 2).
+            mark_unusable(calls, "label", "The answer held no usable label or comment.")
     except Exception as exc:  # noqa: BLE001 - labelling must never break a decomposition
         print(f"Label/comment generation failed: {exc}")
         return fallback_label, fallback_comment

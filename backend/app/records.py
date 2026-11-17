@@ -45,6 +45,7 @@ from rdflib.compare import to_canonical_graph
 from rdflib.namespace import DCTERMS, PROV, RDF, RDFS
 
 from .auth import AuthStore, utc_iso, utc_now
+from .services.call_log import ModelCall
 
 RECORD_SCHEMA_VERSION = 1
 """Version of the record tables. Raise it with every change to their shape."""
@@ -489,6 +490,7 @@ class RecordStore:
         result: Optional[Dict[str, Any]],
         error: Optional[str],
         client: Optional[Dict[str, Any]] = None,
+        calls: Sequence[ModelCall] = (),
     ) -> Optional[str]:
         """Start a record from a decomposition: the run, a draft event, and the draft as version 0.
 
@@ -510,6 +512,8 @@ class RecordStore:
             result: The pipeline's final payload, or ``None`` when the run failed.
             error: The failure detail, or ``None``.
             client: Device and screen sent by the browser, if any.
+            calls: Every request the run sent to a model, in order (stage 2); kept with the
+                run, so a failed run keeps them too.
 
         Returns:
             The new record's id, or ``None`` when this user is not recorded.
@@ -559,6 +563,30 @@ class RecordStore:
                     None if schema_valid is None else int(bool(schema_valid)),
                     None if errors is None else json.dumps(errors, ensure_ascii=False),
                 ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO record_llm_calls (
+                    item_id, purpose, attempt, provider, model, started_at, latency_ms,
+                    input_tokens, output_tokens, status, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item_id,
+                        call.purpose,
+                        call.attempt,
+                        call.provider,
+                        call.model,
+                        call.started_at,
+                        call.latency_ms,
+                        call.input_tokens,
+                        call.output_tokens,
+                        call.status,
+                        call.error,
+                    )
+                    for call in calls
+                ],
             )
             version_id: Optional[int] = None
             if content is not None:
