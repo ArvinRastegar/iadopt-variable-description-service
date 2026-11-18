@@ -798,6 +798,21 @@ class RecordStore:
     # Reads
     # ------------------------------------------------------------------ #
 
+    @contextmanager
+    def snapshot(self) -> Iterator[sqlite3.Connection]:
+        """Open a read-only view in which every query sees the record tables at the same moment.
+
+        The admin CSV export (D-040) reads all tables through it, so a step stored while the
+        export runs never shows up in one table and not in another. Writes through it fail.
+
+        Yields:
+            The open connection, inside one read transaction.
+        """
+        with self._transaction() as conn:
+            conn.execute("PRAGMA query_only = ON")
+            conn.execute("BEGIN")
+            yield conn
+
     def summary(self, *, user: Dict[str, Any], record_id: str) -> Dict[str, Any]:
         """Return a record's versions, best mark and publications.
 

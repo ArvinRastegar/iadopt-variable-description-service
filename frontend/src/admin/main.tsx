@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
-import { AlertTriangleIcon, ArrowLeftIcon, CircleCheckIcon, LogOutIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
+import { AlertTriangleIcon, ArrowLeftIcon, CircleCheckIcon, DownloadIcon, LogOutIcon, PlusIcon, RefreshCwIcon } from 'lucide-react';
 
 import '@/styles/globals.css';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Callout, Pill, Toaster } from '@/components/ui/feedback';
 import { Input, Label } from '@/components/ui/fields';
+import { downloadBlob } from '@/lib/download';
 import { cn } from '@/lib/utils';
 import { adminApi, ApiError, AuthRequiredError, fetchCurrentUser, signOut, type AdminStats, type AuditEvent, type User } from '@/shared/api';
 import { Brand } from '@/shared/AppHeader';
@@ -51,6 +52,7 @@ function AdminPage() {
   const [events, setEvents] = React.useState<AuditEvent[]>([]);
   const [status, setStatus] = React.useState<{ text: string; error?: boolean } | null>({ text: 'Loading…' });
   const [creating, setCreating] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setStatus({ text: 'Loading…' });
@@ -91,6 +93,20 @@ function AdminPage() {
     } catch (error) {
       if (error instanceof AuthRequiredError) return toLogin();
       setStatus({ text: error instanceof Error ? error.message : 'Could not update user.', error: true });
+    }
+  }
+
+  async function downloadRecords() {
+    setExporting(true);
+    setStatus(null);
+    try {
+      const { blob, fileName } = await adminApi.exportRecords();
+      downloadBlob(blob, fileName);
+    } catch (error) {
+      if (error instanceof AuthRequiredError) return toLogin();
+      setStatus({ text: error instanceof Error ? error.message : 'Could not export the records.', error: true });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -191,6 +207,24 @@ function AdminPage() {
             action={<Button size="sm" onClick={() => setCreating(true)}><PlusIcon aria-hidden="true" />Create user</Button>}
           >
             <UsersTable users={users} onUpdate={update} />
+          </Card>
+        )}
+
+        {!denied && stats && (
+          <Card
+            title="Decomposition records"
+            subtitle="Every record as CSV tables, for analysis offline"
+            action={
+              <Button size="sm" variant="outline" disabled={exporting} onClick={() => void downloadRecords()}>
+                <DownloadIcon aria-hidden="true" />{exporting ? 'Preparing…' : 'Download CSV'}
+              </Button>
+            }
+          >
+            <p className="m-0 max-w-[80ch] text-[13px] text-muted-foreground">
+              A ZIP with records, steps, changes, versions and model calls, joined by record_id, and columns.csv saying
+              what every column means. It includes each person&apos;s name, username and email, so keep it as carefully
+              as the user list. Read it with pandas or R; in Excel, use Data &gt; From Text/CSV.
+            </p>
           </Card>
         )}
 

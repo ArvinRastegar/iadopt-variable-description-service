@@ -489,4 +489,12 @@ export const adminApi = {
     requestJson<{ user: User }>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
   updateUser: (id: number, updates: Record<string, unknown>) =>
     requestJson<{ user: User }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
+  /** Every decomposition record as a ZIP of CSV tables (D-040), named as the server names it. */
+  exportRecords: async (): Promise<{ blob: Blob; fileName: string }> => {
+    const response = await fetch(`${API_BASE}/admin/records/export`);
+    if (response.status === 401) throw new AuthRequiredError();
+    if (!response.ok) throw new ApiError(detailOf(await readBody(response), 'Could not export the records.'), response.status);
+    const fileName = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'iadopt-records.zip';
+    return { blob: await response.blob(), fileName };
+  },
 };
