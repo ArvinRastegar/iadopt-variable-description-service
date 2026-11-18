@@ -1,12 +1,15 @@
 """Byte-exactness tests for the measured prompt renderer.
 
-Contract: iadopt-variable-description-service-docs/components/measured-prompt.md
+Contracts: iadopt-variable-description-service-docs/components/measured-prompt.md, with the
+examples layout of components/measured-prompt-output-layout.md (D-042).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
+import re
 
 import pytest
 
@@ -16,6 +19,10 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 GOLDEN = (BACKEND / "tests/fixtures/measured_prompt_golden.txt").read_text(encoding="utf-8")
 TARGET = (BACKEND / "tests/fixtures/measured_target_definition.txt").read_text(encoding="utf-8").rstrip("\n")
 
+# The examples block the 2026-11-18 side test sent (D-042), 13,121 characters.
+SIDE_TEST_BLOCK_SHA256 = "691caf47264f071ba5c7dca1ade48c66d8a928e8fa1821f73df727d20708eef3"
+EXAMPLE_RE = re.compile(r"Example (\d+)\nDefinition: ([^\n]*)\nOutput:\n(\{.*?\n\})(?:\n\n|$)", re.S)
+
 
 def test_rendering_reproduces_the_golden_prompt_byte_for_byte():
     """The test this module exists for."""
@@ -23,7 +30,7 @@ def test_rendering_reproduces_the_golden_prompt_byte_for_byte():
 
 
 def test_rendered_prompt_is_the_recorded_length():
-    assert len(mp.render_measured_prompt(TARGET)) == 15_791
+    assert len(mp.render_measured_prompt(TARGET)) == 17_393
 
 
 def test_encoded_demonstrations_appear_verbatim_in_the_golden():
@@ -31,10 +38,34 @@ def test_encoded_demonstrations_appear_verbatim_in_the_golden():
     assert encoded in GOLDEN
 
 
-def test_default_separators_would_not_appear_in_the_golden():
-    """Guards the previous test against passing vacuously."""
+def test_examples_block_is_the_one_the_side_test_sent():
+    encoded = mp.encode_demonstrations(mp.load_demonstrations())
+    assert len(encoded) == 13_121
+    assert hashlib.sha256(encoded.encode("utf-8")).hexdigest() == SIDE_TEST_BLOCK_SHA256
+
+
+def test_each_example_shows_its_definition_then_its_answer_in_answer_order():
+    demonstrations = mp.load_demonstrations()
+    examples = EXAMPLE_RE.findall(mp.encode_demonstrations(demonstrations))
+    assert [int(number) for number, _, _ in examples] == list(range(1, 26))
+    for (_, definition, answer), demonstration in zip(examples, demonstrations, strict=True):
+        assert definition == demonstration["definition"]
+        parsed = json.loads(answer)
+        assert parsed == demonstration["decomposition"]
+        assert list(parsed) == [key for key in mp.ANSWER_KEY_ORDER if key in parsed]
+        for constraint in parsed.get("hasConstraint") or []:
+            assert list(constraint) == [key for key in mp.NESTED_KEY_ORDER if key in constraint]
+
+
+def test_other_layouts_would_not_appear_in_the_golden():
+    """Guards the tests above against passing vacuously: the earlier compact line and
+    sorted keys are both absent from the golden."""
     demos = mp.load_demonstrations()
-    assert json.dumps(demos, ensure_ascii=False, sort_keys=True) not in GOLDEN
+    compact = json.dumps(demos, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    assert compact not in GOLDEN
+    sorted_answer = json.dumps(demos[0]["decomposition"], ensure_ascii=False, sort_keys=True, indent=2)
+    assert sorted_answer != json.dumps(mp.in_answer_order(demos[0]["decomposition"]), ensure_ascii=False, indent=2)
+    assert f"Output:\n{sorted_answer}\n" not in GOLDEN
 
 
 def test_substitution_is_a_single_pass():

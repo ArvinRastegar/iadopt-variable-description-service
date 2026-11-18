@@ -64,14 +64,23 @@ It performs the following steps:
 By default the decomposition step (2–4) runs a configuration measured on a
 held-out set by the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
 `matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
-examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Held-out
-micro Close F1 **0.4890 ± 0.0252** over 24 variables and 15 repetitions.
+examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Each example
+is shown as its definition followed by its answer as indented JSON, in the shape of
+the output the model is asked for. Micro Close F1 **0.6117 ± 0.0190** over 15
+repetitions on the 24 variables held out from example selection, in an exploratory
+side test of 2026-11-18. In the same test the earlier layout, one compact JSON line
+with every answer before its definition, scored 0.4924 (0.4890 when it was first
+measured).
 
-Read that figure carefully before relying on it. It beats a deliberately-bad and a
-domain-stratified example selection decisively, but it is *not* significantly
-better than the best of three random 25-example draws. In absolute terms 3 of 24
-held-out items were exactly right and 7 of 24 scored zero. **Decompositions are
-drafts for review, not answers.**
+Read that figure carefully before relying on it. It comes from a side test, not
+from the lab's official experiment, and that test chose the new layout on the same
+24 variables, so for this prompt they are no longer strictly held out. It covers one
+set of 25 examples, which were selected with the earlier layout, and the new layout
+changes three things at once (order, field order and layout). The first measurement found that this example selection
+beat a deliberately-bad and a domain-stratified selection decisively, but was *not*
+significantly better than the best of three random 25-example draws; in that
+measurement 3 of 24 held-out items were exactly right and 7 of 24 scored zero.
+**Decompositions are drafts for review, not answers.**
 
 That prompt returns six lexical fields and forbids regenerating the label,
 comment, or definition, which is why step 5 exists as a separate call. Changing the

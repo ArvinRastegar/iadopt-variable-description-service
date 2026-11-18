@@ -1,13 +1,20 @@
-"""Provenance tests for the measured-configuration artifacts.
+"""Provenance tests for the measured-configuration artifacts and the golden prompt.
 
-These guard the one failure a byte-exactness suite cannot catch by itself: a
-golden fixture extracted wrongly, which every other test then agrees with. See
+These guard the one failure a byte-exactness suite cannot catch by itself: a golden
+fixture produced wrongly, which every other test then agrees with. See
 ``backend/tests/fixtures/PROVENANCE.md`` and
-``iadopt-variable-description-service-docs/decisions.md`` D-008.
+``iadopt-variable-description-service-docs/decisions.md`` D-008 and D-042.
 
-Three of the four checks need only files committed to this repo and always run.
-The fourth compares against the lab source document and skips when no lab checkout
-is reachable.
+The three artifacts (template, schema and the 25 demonstrations) were extracted from the
+lab's study document in September. The earlier prompt rebuilt from them in that layout
+(layout A) must still equal the prompt printed there. The golden is the layout-B prompt of
+D-042: it must rebuild from the same artifacts under the layout-B rules, implemented here
+independently of the app, and carry the checksum of the prompt the 2026-11-18 side test
+sent. That the side test sent exactly these bytes was verified against the lab's stored call
+records, which the lab does not track in git; PROVENANCE.md records it and how to re-check.
+
+Most checks need only files committed to this repo and always run. The check against the
+lab document skips when no lab checkout is reachable.
 """
 
 from __future__ import annotations
@@ -30,18 +37,29 @@ DEMOS = MEASURED / "demonstrations-top25.json"
 GOLDEN = FIXTURES / "measured_prompt_golden.txt"
 TARGET = FIXTURES / "measured_target_definition.txt"
 
-EXPECTED_PROMPT_CHARS = 15_791
+GOLDEN_CHARS = 17_393
+LAYOUT_A_CHARS = 15_791
 EXPECTED_DEMONSTRATIONS = 25
 
-# Recorded 2026-09-14 by backend/tools/extract_measured_artifacts.py.
 CHECKSUMS = {
-    "prompt": "4cf16c956a267ea1a063ec01b7c8f12db572f2996b305045ad0b4ebc45b2a79b",
+    # Layout B (D-042): the prompt the side test sent for TARGET, and its examples block.
+    "prompt": "6b6f4823ca76178b027d1b07436140b9915eb66229a7f6369a07c310beff8da4",
+    "examples_block": "691caf47264f071ba5c7dca1ade48c66d8a928e8fa1821f73df727d20708eef3",
+    # Recorded 2026-09-14 by backend/tools/extract_measured_artifacts.py.
+    "layout_a_prompt": "4cf16c956a267ea1a063ec01b7c8f12db572f2996b305045ad0b4ebc45b2a79b",
     "demonstrations": "019b953878d776140edc36862512ef2b7342c402a9303b5d14fe6faf46da8e2d",
     "schema": "a3b5ec8ae6bcde4bd79c5ba29b5f8947ad5537f7b9517b499d053926c34c7a8b",
     "template": "689447d848fc86c94c7c1d32e314a876d288fff2580b8ae49d34cf6a387425f5",
 }
 
+# Layout A: the encoding the lab document uses for the demonstrations.
 ENCODING = dict(ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(",", ":"))
+
+# Layout B's key order, written out here again so the rebuild does not trust the app.
+TOP_KEYS = ("hasStatisticalModifier", "hasProperty", "hasObjectOfInterest", "hasMatrix",
+            "hasContextObject", "hasConstraint")
+NESTED_KEYS = ("SymmetricSystem", "hasPart", "AsymmetricSystem", "hasSource", "hasTarget",
+               "hasNumerator", "hasDenominator", "label", "on")
 
 DEFAULT_LAB = pathlib.Path.home() / "Documents/GitHub/i-adopt-llm-based-service/iadopt-lab"
 DOC_RELPATH = "few-shot-selection/example_selection/best-configuration-session.md"
@@ -61,6 +79,37 @@ def lab_document() -> str | None:
     root = pathlib.Path(configured).expanduser() if configured else DEFAULT_LAB
     doc = root / DOC_RELPATH
     return read(doc) if doc.exists() else None
+
+
+def ordered(value, order=TOP_KEYS):
+    if isinstance(value, dict):
+        keys = [k for k in order if k in value] + sorted(k for k in value if k not in order)
+        return {k: ordered(value[k], NESTED_KEYS) for k in keys}
+    if isinstance(value, list):
+        return [ordered(item, NESTED_KEYS) for item in value]
+    return value
+
+
+def layout_b_block(**dumps) -> str:
+    demos = json.loads(read(DEMOS))
+    return "\n\n".join(
+        f"Example {n}\nDefinition: {d['definition']}\nOutput:\n"
+        + json.dumps(ordered(d["decomposition"]), **{"ensure_ascii": False, "indent": 2, **dumps})
+        for n, d in enumerate(demos, 1)
+    )
+
+
+def rebuild(demonstrations: str) -> str:
+    return (
+        read(TEMPLATE)
+        .replace("{{schema}}", read(SCHEMA))
+        .replace("{{demonstrations}}", demonstrations)
+        .replace("{{target_definition}}", read(TARGET).rstrip("\n"))
+    )
+
+
+def layout_a_prompt() -> str:
+    return rebuild(json.dumps(json.loads(read(DEMOS)), **ENCODING))
 
 
 # --------------------------------------------------------------------------- #
@@ -86,9 +135,16 @@ def test_demonstrations_encode_to_the_recorded_checksum():
     assert sha256(encoded) == CHECKSUMS["demonstrations"]
 
 
+def test_artifacts_still_rebuild_the_september_prompt():
+    """The extracted artifacts are intact: in layout A they rebuild the recorded prompt."""
+    prompt = layout_a_prompt()
+    assert sha256(prompt) == CHECKSUMS["layout_a_prompt"]
+    assert len(prompt) == LAYOUT_A_CHARS
+
+
 def test_golden_is_the_recorded_length_and_ends_in_one_newline():
     golden = read(GOLDEN)
-    assert len(golden) == EXPECTED_PROMPT_CHARS
+    assert len(golden) == GOLDEN_CHARS
     assert golden.endswith("\n")
     assert not golden.endswith("\n\n")
 
@@ -96,17 +152,14 @@ def test_golden_is_the_recorded_length_and_ends_in_one_newline():
 def test_golden_rebuilds_from_the_committed_artifacts():
     """The golden must be derivable from template + schema + demonstrations.
 
-    This is the check that makes the fixture verifiable rather than merely
-    asserted: the prompt is reconstructed from its three independent sources and
-    compared, so a wrongly-extracted golden cannot agree with itself.
+    This is the check that makes the fixture verifiable rather than merely asserted: the
+    prompt is reconstructed from its three independent sources with layout B's rules,
+    implemented in this file, and compared, so a wrongly produced golden cannot agree
+    with itself.
     """
-    rebuilt = (
-        read(TEMPLATE)
-        .replace("{{schema}}", read(SCHEMA))
-        .replace("{{demonstrations}}", json.dumps(json.loads(read(DEMOS)), **ENCODING))
-        .replace("{{target_definition}}", read(TARGET).rstrip("\n"))
-    )
-    assert rebuilt == read(GOLDEN)
+    block = layout_b_block()
+    assert sha256(block) == CHECKSUMS["examples_block"]
+    assert rebuild(block) == read(GOLDEN)
 
 
 def test_golden_keeps_the_three_newline_schema_boundary():
@@ -148,15 +201,21 @@ def test_default_json_separators_would_not_match():
     assert default_spacing not in read(GOLDEN)
 
 
+def test_sorted_keys_would_not_rebuild_the_golden():
+    """Proves the key order is checked: the same layout with sorted keys is another prompt."""
+    assert rebuild(layout_b_block(sort_keys=True)) != read(GOLDEN)
+
+
 # --------------------------------------------------------------------------- #
-# Source-document check: runs only with a lab checkout
+# Source checks: run only with a lab checkout
 # --------------------------------------------------------------------------- #
 
 def test_golden_matches_the_lab_source_document():
-    """Compare the fixture against the prompt printed in the lab document itself.
+    """Compare the golden's sources against the prompt printed in the lab document itself.
 
-    This is the provenance check proper: it does not trust the committed
-    artifacts, it re-reads the document those artifacts were extracted from.
+    The artifacts the golden is rebuilt from are checked against the document they were
+    extracted from: rebuilt in layout A, as the document prints them, they must equal its
+    prompt. This does not trust the committed checksums.
     """
     doc = lab_document()
     if doc is None:
@@ -171,5 +230,5 @@ def test_golden_matches_the_lab_source_document():
     assert body.endswith("\n\n"), "prompt fence did not end with the expected two newlines"
     from_document = body[:-1]  # strip exactly one newline; the fence contributed the other
 
-    assert from_document == read(GOLDEN)
-    assert len(from_document) == EXPECTED_PROMPT_CHARS
+    assert from_document == layout_a_prompt()
+    assert len(from_document) == LAYOUT_A_CHARS

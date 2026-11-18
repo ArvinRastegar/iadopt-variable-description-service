@@ -19,6 +19,11 @@ drifted extraction fails loudly instead of silently shipping a wrong baseline:
   lab template file
 * the rendered prompt is exactly 15,791 characters, as the document records
 
+The document's prompt shows the demonstrations as one compact JSON line (layout A). The
+service has shown them in the shape of the expected answer since D-042 (layout B), so the
+golden prompt fixture is no longer extracted here: it is rendered by the service and
+accepted only by its recorded checksum, the prompt the 2026-11-18 side test sent.
+
 See ``backend/tests/fixtures/PROVENANCE.md`` for the recorded checksums and
 ``backend/tests/test_measured_provenance.py`` for the tests that re-verify them.
 """
@@ -196,7 +201,7 @@ def main() -> int:
     (out_data / "demonstrations-top25.json").write_text(
         json.dumps(demonstrations, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    (out_fixtures / "measured_prompt_golden.txt").write_text(prompt, encoding="utf-8")
+    # The golden prompt is layout B (D-042) and is not written here; see the module docstring.
     (out_fixtures / "measured_target_definition.txt").write_text(target_definition + "\n", encoding="utf-8")
 
     print(f"\nWrote artifacts to {out_data} and fixtures to {out_fixtures}.")
