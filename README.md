@@ -345,6 +345,61 @@ docker compose down
 
 ---
 
+# Release Quality Gate
+
+Before merging `dev` into `prod`, run the quality gate. It checks that the code to be
+released still decomposes the lab's 102 corpus variables at least as well as a threshold.
+It is a command you run locally; CI does not run it, because CI has no model provider key.
+
+It needs:
+
+* the stack running the code to release, started with `docker compose up -d --build`
+* a checkout of the sibling `iadopt-lab` project with its virtual environment, next to this
+  repository or named by `IADOPT_LAB_PATH` (or `--lab`)
+
+From the project root run:
+
+```bash
+../i-adopt-llm-based-service/iadopt-lab/.venv/bin/python backend/tools/quality_gate.py
+```
+
+First the gate asks the backend container what it runs, which calls no model. It stops
+(exit code 2) when the container's `backend/app` and `backend/data` differ from your working
+tree, so rebuild after every change. It also stops when the backend is not the measured
+configuration prod runs by default: PSNC, `Qwen3.8-27B`, the measured prompt, temperature
+0.5, top_p 1.0 and max_tokens 16000. Pass `--any-backend` to measure another configuration
+anyway.
+
+Then it sends all 102 corpus definitions through the backend's own pipeline inside the
+container. Each definition runs the whole pipeline (decomposition, label and linking with its
+vocabulary searches), so one run makes hundreds of calls to the provider; the first run took
+76 seconds. It writes no records. Each answer is scored with the lab's extraction, validation
+and Close F1 scorer, as the lab's example-layout side test scores its answers. An answer the
+app failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's
+official workflow differs: it retries an invalid answer up to three times.)
+
+The gate **passes** when the micro Close F1 of one run on all 102 variables is at least
+**0.60** (exit code 0); below that it fails (1). Definitions the provider never answered,
+or whose answer was lost, also count as empty. With them the run can still pass, but below
+0.60 the gate cannot tell the code from a provider outage, so it does not decide (2, as when
+it could not run). `--threshold`, `--concurrency` (8 at once) and `--report-dir` change the
+defaults. Each run that got answers writes a JSON report to `quality-gate-reports/`, which
+git ignores. The report holds every answer, the commit, and whether the tree had uncommitted
+changes.
+
+Read the verdict with two caveats:
+
+* 25 of the 102 variables are the prompt's own few-shot examples, shown to the model with
+  their answers, so they score far higher than the rest. The gate prints both groups apart,
+  for information. The first run (2026-11-18) scored 0.695 on all 102, **0.571** on the 77
+  variables the prompt does not show, and 0.976 on the 25 examples. The 0.60 on all 102 is a
+  floor against regressions, not a claim that new variables score 0.60.
+* Runs vary. In the lab's side test, repeated runs on 24 variables had a standard deviation
+  of 0.019; the spread on all 102 has not been measured. A result near 0.60 can pass or fail
+  by chance, so run it again before acting on a narrow result.
+
+---
+
 # Project Structure
 
 ```
