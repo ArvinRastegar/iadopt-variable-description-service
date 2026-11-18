@@ -46,7 +46,6 @@ def _reference_values(env: Dict[str, str]) -> dict:
         "qwen/qwen3.5-flash-02-23",
         "qwen/qwen3-32b",
         "qwen/qwen3.5-397b-a17b",
-        "google/gemini-3-flash-preview",
     ]
     DEFAULT_PSNC_MODEL_NAME = "Qwen3.8-27B"
     DEFAULT_PSNC_MODEL_NAMES = [

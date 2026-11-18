@@ -27,7 +27,8 @@ from ..clients.psnc_client import (
     psnc_chat_completions_url,
     psnc_chat_headers,
 )
-from ..core.config import PSNC_MODEL_PROVIDER, settings
+from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
+from .call_log import CallLog, mark_unusable, short_reason, start_call
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?", re.MULTILINE)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -40,6 +41,27 @@ ONTO_KEYS = [
     "hasContextObject",
     "hasConstraint",
 ]
+
+
+def call_error(error: BaseException) -> str:
+    """Say why a model request failed, without repeating the provider's response body.
+
+    An HTTP error keeps only its status: a provider's error body can quote the request, such
+    as the part of a definition a moderation filter flagged (D-037, stage 2).
+
+    Args:
+        error: The exception the request raised.
+
+    Returns:
+        ``HTTP <status>`` for an HTTP error, otherwise the exception's class and message on
+        one short line.
+    """
+    if isinstance(error, APIStatusError):
+        return f"HTTP {error.status_code}"
+    if isinstance(error, requests.HTTPError):
+        status = getattr(error.response, "status_code", None)
+        return f"HTTP {status}" if status else "HTTP error"
+    return short_reason(f"{type(error).__name__}: {error}") or type(error).__name__
 
 
 def build_chat_completion_request_kwargs(
@@ -57,7 +79,8 @@ def build_chat_completion_request_kwargs(
         prompt: User prompt.
         temperature: Sampling temperature.
         disable_thinking: When true, send ``reasoning.effort = none`` via extra_body.
-        stream: Whether to request streaming.
+        stream: Whether to request streaming; a streamed request also asks for the token
+            counts in its last chunk.
 
     Returns:
         The kwargs dict for ``client.chat.completions.create``.
@@ -71,6 +94,8 @@ def build_chat_completion_request_kwargs(
 
     if stream:
         request_kwargs["stream"] = True
+        # The token counts arrive in a last chunk without choices (D-037, stage 2).
+        request_kwargs["stream_options"] = {"include_usage": True}
 
     # The default mode intentionally sends no reasoning override so the provider keeps its normal thinking behavior.
     if disable_thinking:
@@ -83,7 +108,15 @@ def build_chat_completion_request_kwargs(
     return request_kwargs
 
 
-def call_model(model: str, prompt: str, temperature: float, disable_thinking: bool = True) -> str:
+def call_model(
+    model: str,
+    prompt: str,
+    temperature: float,
+    disable_thinking: bool = True,
+    *,
+    calls: Optional[CallLog] = None,
+    purpose: str = "decomposition",
+) -> str:
     """Call the OpenRouter model with up to 3 attempts; return raw text or "".
 
     Args:
@@ -91,6 +124,8 @@ def call_model(model: str, prompt: str, temperature: float, disable_thinking: bo
         prompt: User prompt.
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the request builder.
+        calls: The run's call log; each attempt is recorded there with this purpose.
+        purpose: What the call is for, as the call log names it.
 
     Returns:
         The raw model text, or ``""`` if all attempts fail or return HTML/empty.
@@ -101,6 +136,7 @@ def call_model(model: str, prompt: str, temperature: float, disable_thinking: bo
     client = get_openai_client()
 
     for attempt in range(1, 4):
+        pending = start_call(calls, purpose, OPENROUTER_MODEL_PROVIDER, model)
         try:
             resp = client.chat.completions.create(
                 **build_chat_completion_request_kwargs(
@@ -110,21 +146,28 @@ def call_model(model: str, prompt: str, temperature: float, disable_thinking: bo
                     disable_thinking=disable_thinking,
                 )
             )
+            usage = getattr(resp, "usage", None)
             text = resp.choices[0].message.content or ""
             stripped = text.strip()
 
             if stripped.startswith("<!DOCTYPE html") or stripped.startswith("<html"):
+                pending.finish("unusable", error="The model returned HTML.", usage=usage)
                 continue
             if not stripped:
+                pending.finish("unusable", error="The model returned no text.", usage=usage)
                 continue
 
+            pending.finish("ok", usage=usage)
             return text
 
         except APIStatusError as e:
+            pending.finish("error", error=call_error(e))
             print(f"APIStatusError attempt {attempt}: {e}")
         except (OpenAIError, httpx.HTTPError) as e:
+            pending.finish("error", error=call_error(e))
             print(f"Transport error attempt {attempt}: {e}")
         except Exception as e:
+            pending.finish("error", error=call_error(e))
             print(f"Unexpected error attempt {attempt}: {e}")
 
     return ""
@@ -192,6 +235,8 @@ def call_psnc_model(
     disable_thinking: bool = True,
     *,
     measured: bool = False,
+    calls: Optional[CallLog] = None,
+    purpose: str = "decomposition",
 ) -> str:
     """Call the PSNC model with up to 3 attempts; return raw text or "".
 
@@ -201,6 +246,8 @@ def call_psnc_model(
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the payload builder.
         measured: When true, send the measured request body instead of the legacy one.
+        calls: The run's call log; each attempt is recorded there with this purpose.
+        purpose: What the call is for, as the call log names it.
 
     Returns:
         The raw model text, or ``""`` if all attempts fail or return HTML/empty.
@@ -212,6 +259,7 @@ def call_psnc_model(
     headers = psnc_chat_headers()
 
     for attempt in range(1, 4):
+        pending = start_call(calls, purpose, PSNC_MODEL_PROVIDER, model)
         try:
             response = get_http_session().post(
                 url,
@@ -227,21 +275,29 @@ def call_psnc_model(
                 timeout=120,
             )
             response.raise_for_status()
-            text = _extract_chat_completion_text(response.json())
+            data = response.json()
+            usage = data.get("usage") if isinstance(data, dict) else None
+            text = _extract_chat_completion_text(data)
             stripped = text.strip()
 
             if stripped.startswith("<!DOCTYPE html") or stripped.startswith("<html"):
+                pending.finish("unusable", error="The model returned HTML.", usage=usage)
                 continue
             if not stripped:
+                pending.finish("unusable", error="The model returned no text.", usage=usage)
                 continue
 
+            pending.finish("ok", usage=usage)
             return text
         except requests.HTTPError as e:
+            pending.finish("error", error=call_error(e))
             response_text = getattr(e.response, "text", "")
             print(f"PSNC HTTP error attempt {attempt}: {e} {response_text[:500]}")
         except requests.RequestException as e:
+            pending.finish("error", error=call_error(e))
             print(f"PSNC transport error attempt {attempt}: {e}")
         except Exception as e:
+            pending.finish("error", error=call_error(e))
             print(f"Unexpected PSNC error attempt {attempt}: {e}")
 
     return ""
@@ -463,8 +519,9 @@ def stream_psnc_model(
     *,
     disable_thinking: bool = True,
     measured: bool = False,
+    usage: Optional[Dict[str, Any]] = None,
 ) -> Iterator[Tuple[str, str]]:
-    """Stream a PSNC completion, yielding ``(reasoning_delta, content_delta)`` pairs.
+    """Stream a PSNC completion as ``(reasoning_delta, content_delta)`` pairs.
 
     Args:
         model: PSNC model name.
@@ -472,6 +529,35 @@ def stream_psnc_model(
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the payload builder.
         measured: When true, send the measured request body instead of the legacy one.
+        usage: Filled with the ``usage`` of any event that carries one. The measured body
+            cannot ask for it (D-003), so it stays empty unless PSNC sends it unasked.
+
+    Returns:
+        An iterator of ``(reasoning_delta, content_delta)`` tuples per SSE event. The request
+        is sent when the iterator is first advanced; a missing ``PSNC_API_KEY`` fails here,
+        before anything is sent (:func:`psnc_chat_headers` raises).
+    """
+    headers = psnc_chat_headers()
+    payload = _psnc_payload(
+        model,
+        prompt,
+        temperature,
+        disable_thinking=disable_thinking,
+        stream=True,
+        measured=measured,
+    )
+    return _psnc_stream_events(headers, payload, usage)
+
+
+def _psnc_stream_events(
+    headers: Dict[str, str], payload: Dict[str, Any], usage: Optional[Dict[str, Any]]
+) -> Iterator[Tuple[str, str]]:
+    """Send a streamed PSNC request and yield its deltas, keeping any ``usage`` it reports.
+
+    Args:
+        headers: The request headers, with the key.
+        payload: The request body.
+        usage: Filled with the ``usage`` of any event that carries one, if given.
 
     Yields:
         ``(reasoning_delta, content_delta)`` tuples per SSE event.
@@ -481,15 +567,8 @@ def stream_psnc_model(
     """
     response = get_http_session().post(
         psnc_chat_completions_url(),
-        headers=psnc_chat_headers(),
-        json=_psnc_payload(
-            model,
-            prompt,
-            temperature,
-            disable_thinking=disable_thinking,
-            stream=True,
-            measured=measured,
-        ),
+        headers=headers,
+        json=payload,
         stream=True,
         timeout=120,
     )
@@ -511,6 +590,8 @@ def stream_psnc_model(
         except json.JSONDecodeError:
             continue
 
+        if usage is not None and isinstance(event, dict) and isinstance(event.get("usage"), dict):
+            usage.update(event["usage"])
         yield extract_stream_text_deltas_from_dict(event)
 
 
@@ -523,6 +604,7 @@ def call_llm_loose(
     disable_thinking: bool = True,
     *,
     measured: bool = False,
+    calls: Optional[CallLog] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Call the selected provider up to 3 times and parse JSON from the output.
 
@@ -534,6 +616,7 @@ def call_llm_loose(
         temperature: Sampling temperature.
         disable_thinking: Forwarded to the provider call.
         measured: When true, send the measured PSNC request body.
+        calls: The run's call log; every attempt is recorded as a decomposition call.
 
     Returns:
         A ``(raw_text, prediction)`` tuple; ``prediction`` is ``{}`` if parsing
@@ -546,9 +629,11 @@ def call_llm_loose(
 
     for attempt in range(1, 4):
         raw = (
-            call_psnc_model(model, prompt, temperature, disable_thinking=disable_thinking, measured=measured)
+            call_psnc_model(
+                model, prompt, temperature, disable_thinking=disable_thinking, measured=measured, calls=calls
+            )
             if model_provider == PSNC_MODEL_PROVIDER
-            else call_model(model, prompt, temperature, disable_thinking=disable_thinking)
+            else call_model(model, prompt, temperature, disable_thinking=disable_thinking, calls=calls)
         )
         last_raw = raw
 
@@ -559,6 +644,7 @@ def call_llm_loose(
             data = parse_llm_json(raw, definition)
             return raw, data
         except Exception as e:
+            mark_unusable(calls, "decomposition", f"Not valid JSON: {e}")
             print(f"LLM parse attempt {attempt} failed: {e}")
 
     return last_raw, {}

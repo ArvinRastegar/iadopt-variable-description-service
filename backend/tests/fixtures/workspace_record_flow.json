@@ -1,0 +1,440 @@
+{
+  "provenance": "Requests the workspace sent in frontend/test/app.record.browser.test.tsx (headless Chromium, 2026-11-17), captured from its fake backend and replayed by tests/test_record_workspace_flow.py. 'paste': a signed-in account pastes Turtle, saves one inspector edit, gives 'Looks right', takes it back and gives it again, adds nanopublication metadata, marks the version as best with a note, and publishes (the creator is written as a metadata step first). 'decompose': a decomposition whose record the backend started, a Turtle-tab edit applied with Update diagram, metadata added in the publish dialog, the best mark, the creator and a publication; the fake refused that first publication on purpose, so the workspace marked the version again and published again. 'draft' is the Turtle the fake pipeline returned. Record ids are the fake's: replays map them to real ones. Frozen: after a frontend change, log the fake backend's calls at the end of those two browser tests and compare them with these, ignoring occurred_at, the minted variable IRI and dct:created; done again on 2026-11-17 after the review fixes, with the same requests.",
+  "paste": {
+    "record_id": "0000000000000001",
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/api/records",
+        "body": {
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/1> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"oxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .\n",
+          "occurred_at": "2026-11-17T10:22:21.320Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "edit",
+          "version": 0,
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/>.\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.\n@prefix skos: <http://www.w3.org/2004/02/skos/core#>.\n\n<https://example.org/variable/1> a iop:Variable;\n    rdfs:label \"dissolved oxygen in water\";\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration>;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629>;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283>;\n    iop:hasConstraint _:n3-0.\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property;\n    rdfs:label \"mass concentration\".\n<https://www.wikidata.org/entity/Q629> a iop:Entity;\n    rdfs:label \"oxygen\".\n<https://www.wikidata.org/entity/Q283> a iop:Entity;\n    rdfs:label \"sea water\".\n_:n3-0 a iop:Constraint;\n    rdfs:label \"dissolved\";\n    iop:constrains <https://www.wikidata.org/entity/Q629>.\n",
+          "changes": [
+            {
+              "operation": "relabel",
+              "role": "hasMatrix",
+              "component": "https://www.wikidata.org/entity/Q283",
+              "before": "water",
+              "after": "sea water"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:21.447Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "check",
+          "version": 1,
+          "changes": [
+            {
+              "operation": "confirm",
+              "role": "hasMatrix",
+              "component": "https://www.wikidata.org/entity/Q283"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:21.484Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "uncheck",
+          "version": 1,
+          "changes": [
+            {
+              "operation": "unconfirm",
+              "role": "hasMatrix",
+              "component": "https://www.wikidata.org/entity/Q283"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:21.526Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "check",
+          "version": 1,
+          "changes": [
+            {
+              "operation": "confirm",
+              "role": "hasMatrix",
+              "component": "https://www.wikidata.org/entity/Q283"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:21.567Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "metadata",
+          "version": 1,
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/>.\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.\n@prefix skos: <http://www.w3.org/2004/02/skos/core#>.\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n\n<https://w3id.org/iadopt/variable/20261117T102221-18> a iop:Variable, fdof:FAIRDigitalObject;\n    rdfs:label \"dissolved oxygen in water\";\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration>;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629>;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283>;\n    iop:hasConstraint _:n3-0;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102221-18> ;\n    dct:created \"2026-11-17T10:22:21Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property;\n    rdfs:label \"mass concentration\".\n<https://www.wikidata.org/entity/Q629> a iop:Entity;\n    rdfs:label \"oxygen\".\n<https://www.wikidata.org/entity/Q283> a iop:Entity;\n    rdfs:label \"sea water\".\n_:n3-0 a iop:Constraint;\n    rdfs:label \"dissolved\";\n    iop:constrains <https://www.wikidata.org/entity/Q629>.\n",
+          "changes": [
+            {
+              "operation": "relink",
+              "role": "variable",
+              "component": "https://w3id.org/iadopt/variable/20261117T102221-18",
+              "before": "https://example.org/variable/1",
+              "after": "https://w3id.org/iadopt/variable/20261117T102221-18"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:21.714Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "mark_best",
+          "version": 2,
+          "unchecked_components": 4,
+          "note": "The model used plain water.",
+          "occurred_at": "2026-11-17T10:22:22.028Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/0000000000000001/events",
+        "body": {
+          "type": "metadata",
+          "version": 2,
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/>.\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.\n@prefix skos: <http://www.w3.org/2004/02/skos/core#>.\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix orcid: <https://orcid.org/> .\n\n<https://w3id.org/iadopt/variable/20261117T102221-18> a iop:Variable, fdof:FAIRDigitalObject;\n    rdfs:label \"dissolved oxygen in water\";\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration>;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629>;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283>;\n    iop:hasConstraint _:n3-0;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102221-18> ;\n    dct:created \"2026-11-17T10:22:21Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" ;\n    dct:creator orcid:0000-0002-1825-0097 ;\n    prov:wasAttributedTo orcid:0000-0002-1825-0097 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property;\n    rdfs:label \"mass concentration\".\n<https://www.wikidata.org/entity/Q629> a iop:Entity;\n    rdfs:label \"oxygen\".\n<https://www.wikidata.org/entity/Q283> a iop:Entity;\n    rdfs:label \"sea water\".\n_:n3-0 a iop:Constraint;\n    rdfs:label \"dissolved\";\n    iop:constrains <https://www.wikidata.org/entity/Q629>.",
+          "changes": [],
+          "occurred_at": "2026-11-17T10:22:22.615Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/nanopub/publish",
+        "body": {
+          "ttl": "@prefix iop: <https://w3id.org/iadopt/ont/>.\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.\n@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.\n@prefix skos: <http://www.w3.org/2004/02/skos/core#>.\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix orcid: <https://orcid.org/> .\n\n<https://w3id.org/iadopt/variable/20261117T102221-18> a iop:Variable, fdof:FAIRDigitalObject;\n    rdfs:label \"dissolved oxygen in water\";\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration>;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629>;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283>;\n    iop:hasConstraint _:n3-0;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102221-18> ;\n    dct:created \"2026-11-17T10:22:21Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" ;\n    dct:creator orcid:0000-0002-1825-0097 ;\n    prov:wasAttributedTo orcid:0000-0002-1825-0097 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property;\n    rdfs:label \"mass concentration\".\n<https://www.wikidata.org/entity/Q629> a iop:Entity;\n    rdfs:label \"oxygen\".\n<https://www.wikidata.org/entity/Q283> a iop:Entity;\n    rdfs:label \"sea water\".\n_:n3-0 a iop:Constraint;\n    rdfs:label \"dissolved\";\n    iop:constrains <https://www.wikidata.org/entity/Q629>.",
+          "creator_orcid_id": "https://orcid.org/0000-0002-1825-0097",
+          "record_id": "0000000000000001",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      }
+    ]
+  },
+  "decompose": {
+    "record_id": "aaaaaaaaaaaaaaaa",
+    "draft": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/2> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"oxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .\n",
+    "calls": [
+      {
+        "method": "POST",
+        "path": "/api/decompose/stream",
+        "body": {
+          "definition": "Dissolved oxygen in water",
+          "model_provider": "psnc",
+          "model_name": "test-model",
+          "disable_thinking": true,
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/aaaaaaaaaaaaaaaa/events",
+        "body": {
+          "type": "edit",
+          "version": 0,
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/2> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"dioxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .\n",
+          "changes": [
+            {
+              "operation": "relabel",
+              "role": "hasObjectOfInterest",
+              "component": "https://www.wikidata.org/entity/Q629",
+              "before": "oxygen",
+              "after": "dioxygen"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:22.901Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/aaaaaaaaaaaaaaaa/events",
+        "body": {
+          "type": "metadata",
+          "version": 1,
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n<https://w3id.org/iadopt/variable/20261117T102223-28> a iop:Variable, fdof:FAIRDigitalObject ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 ;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102223-28> ;\n    dct:created \"2026-11-17T10:22:23Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"dioxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .\n",
+          "changes": [
+            {
+              "operation": "relink",
+              "role": "variable",
+              "component": "https://w3id.org/iadopt/variable/20261117T102223-28",
+              "before": "https://example.org/variable/2",
+              "after": "https://w3id.org/iadopt/variable/20261117T102223-28"
+            }
+          ],
+          "occurred_at": "2026-11-17T10:22:23.226Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/aaaaaaaaaaaaaaaa/events",
+        "body": {
+          "type": "mark_best",
+          "version": 2,
+          "unchecked_components": 5,
+          "occurred_at": "2026-11-17T10:22:23.443Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/aaaaaaaaaaaaaaaa/events",
+        "body": {
+          "type": "metadata",
+          "version": 2,
+          "turtle": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix orcid: <https://orcid.org/> .\n<https://w3id.org/iadopt/variable/20261117T102223-28> a iop:Variable, fdof:FAIRDigitalObject ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 ;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102223-28> ;\n    dct:created \"2026-11-17T10:22:23Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" ;\n    dct:creator orcid:0000-0002-1825-0097 ;\n    prov:wasAttributedTo orcid:0000-0002-1825-0097 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"dioxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .",
+          "changes": [],
+          "occurred_at": "2026-11-17T10:22:23.772Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/nanopub/publish",
+        "body": {
+          "ttl": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix orcid: <https://orcid.org/> .\n<https://w3id.org/iadopt/variable/20261117T102223-28> a iop:Variable, fdof:FAIRDigitalObject ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 ;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102223-28> ;\n    dct:created \"2026-11-17T10:22:23Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" ;\n    dct:creator orcid:0000-0002-1825-0097 ;\n    prov:wasAttributedTo orcid:0000-0002-1825-0097 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"dioxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .",
+          "creator_orcid_id": "https://orcid.org/0000-0002-1825-0097",
+          "record_id": "aaaaaaaaaaaaaaaa",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/records/aaaaaaaaaaaaaaaa/events",
+        "body": {
+          "type": "mark_best",
+          "version": 3,
+          "unchecked_components": 5,
+          "occurred_at": "2026-11-17T10:22:24.034Z",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/nanopub/publish",
+        "body": {
+          "ttl": "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix dct: <http://purl.org/dc/terms/> .\n@prefix fdof: <https://w3id.org/fdof/ontology#> .\n@prefix pav: <http://purl.org/pav/> .\n@prefix prov: <http://www.w3.org/ns/prov#> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n@prefix orcid: <https://orcid.org/> .\n<https://w3id.org/iadopt/variable/20261117T102223-28> a iop:Variable, fdof:FAIRDigitalObject ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasProperty <http://qudt.org/vocab/quantitykind/MassConcentration> ;\n    iop:hasObjectOfInterest <https://www.wikidata.org/entity/Q629> ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> ;\n    iop:hasConstraint _:c1 ;\n    dct:conformsTo <https://w3id.org/iadopt/ont/Variable> ;\n    dct:identifier <https://w3id.org/iadopt/variable/20261117T102223-28> ;\n    dct:created \"2026-11-17T10:22:23Z\"^^xsd:dateTime ;\n    pav:createdWith \"I-ADOPT Variable Description Service\" ;\n    dct:creator orcid:0000-0002-1825-0097 ;\n    prov:wasAttributedTo orcid:0000-0002-1825-0097 .\n<http://qudt.org/vocab/quantitykind/MassConcentration> a iop:Property ; rdfs:label \"mass concentration\" .\n<https://www.wikidata.org/entity/Q629> a iop:Entity ; rdfs:label \"dioxygen\" .\n<https://www.wikidata.org/entity/Q283> a iop:Entity ; rdfs:label \"water\" .\n_:c1 a iop:Constraint ; rdfs:label \"dissolved\" ; iop:constrains <https://www.wikidata.org/entity/Q629> .",
+          "creator_orcid_id": "https://orcid.org/0000-0002-1825-0097",
+          "record_id": "aaaaaaaaaaaaaaaa",
+          "client": {
+            "screen": {
+              "width": 1280,
+              "height": 720,
+              "pixel_ratio": 1
+            },
+            "device": {
+              "platform": "macOS",
+              "mobile": false,
+              "touch_points": 0
+            }
+          }
+        }
+      }
+    ]
+  }
+}

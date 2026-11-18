@@ -33,6 +33,9 @@ EXPECTED_PATHS = {
     "/api/nanopub/publish",
     "/api/nanopub/retract",
     "/api/readyz",
+    "/api/records",
+    "/api/records/{record_id}",
+    "/api/records/{record_id}/events",
 }
 
 # Every functional route now declares a response_model → these schemas must exist.
@@ -61,6 +64,13 @@ EXPECTED_SCHEMAS = {
     "AdminStatsResponse",
     "ReadyzResponse",
     "StatusOkResponse",
+    "StartRecordRequest",
+    "RecordEventRequest",
+    "RecordChange",
+    "ClientInfo",
+    "RecordStartedResponse",
+    "RecordEventResponse",
+    "RecordSummaryResponse",
 }
 
 

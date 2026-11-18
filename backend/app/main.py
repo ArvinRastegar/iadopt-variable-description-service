@@ -20,10 +20,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .core.dependencies import auth_store, authentication_middleware
+from .core.dependencies import auth_store, authentication_middleware, record_store
 from .core.logging import configure_logging
 from .pipeline import warmup_assets
-from .routers import admin, auth, decompose, nanopub, system
+from .routers import admin, auth, decompose, nanopub, records, system
 
 API_DESCRIPTION = """
 I-ADOPT variable decomposition, Turtle generation, visualization support, and nanopublication publishing.
@@ -39,8 +39,9 @@ There are two decomposition endpoints on purpose:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Initialize the auth store and warm up cached assets at startup."""
+    """Initialize the auth store and the record tables, and warm up cached assets at startup."""
     auth_store.init()
+    record_store.init()
     warmup_assets()
     yield
 
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     application.include_router(admin.router)
     application.include_router(decompose.router)
     application.include_router(nanopub.router)
+    application.include_router(records.router)
 
     return application
 

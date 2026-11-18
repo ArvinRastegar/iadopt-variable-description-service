@@ -2,9 +2,10 @@ import { readNdjson } from '@/lib/ndjson';
 import { bareOrcid } from '@/lib/orcid';
 
 /*
- * Thin client for the backend API. Request bodies and paths are exactly the ones the previous
- * frontend sent, so the backend and its audit log see no difference; the saved ORCID iD routes
- * (`/auth/me/orcids`, D-035) are the only new ones.
+ * Thin client for the backend API. Request bodies and paths are the ones the previous frontend
+ * sent, with these additions: the saved ORCID iD routes (`/auth/me/orcids`, D-035) and the
+ * decomposition record of a signed-in account (D-037): the `/records` routes, `client` on
+ * decompose and publish, and `record_id` on publish.
  */
 
 export const API_BASE = '/api';
@@ -36,11 +37,18 @@ export interface PreparationOptions {
   created_with_label: string;
 }
 
+/** Device and screen of the browser, kept with each recorded step (D-037); the server adds IP and browser. */
+export interface ClientInfo {
+  screen?: { width?: number; height?: number; pixel_ratio?: number };
+  device?: { platform?: string; mobile?: boolean; touch_points?: number };
+}
+
 export interface DecomposeRequest {
   definition: string;
   model_provider: string;
   model_name: string;
   disable_thinking: boolean;
+  client?: ClientInfo;
 }
 
 export interface DecomposeResult {
@@ -50,6 +58,73 @@ export interface DecomposeResult {
   validation_errors: string[];
   enriched_json: Record<string, unknown>;
   ttl: string;
+  /** The record this run started, whose version 0 is `ttl`; null when nothing is recorded. */
+  record_id?: string | null;
+}
+
+/* ------------------------------ Records (D-037) ---------------------------- */
+
+/** The kinds of change a recorded step can list (the backend's `RecordOperation`). */
+export type RecordOperation =
+  | 'add'
+  | 'remove'
+  | 'relabel'
+  | 'relink'
+  | 'change_shape'
+  | 'add_constraint'
+  | 'move_constraint'
+  | 'confirm'
+  | 'unconfirm'
+  | 'other';
+
+/** The I-ADOPT role of the component a change touches; empty when it has none (the backend's `RecordRole`). */
+export type RecordRole =
+  | ''
+  | 'variable'
+  | 'hasProperty'
+  | 'hasObjectOfInterest'
+  | 'hasMatrix'
+  | 'hasContextObject'
+  | 'hasStatisticalModifier'
+  | 'hasConstraint';
+
+/** One component change inside a recorded step. */
+export interface RecordChange {
+  operation: RecordOperation;
+  role?: RecordRole;
+  /** The component's IRI, or its label when it has no IRI. */
+  component?: string;
+  before?: string | null;
+  after?: string | null;
+}
+
+export type RecordEventType = 'edit' | 'metadata' | 'check' | 'uncheck' | 'mark_best';
+
+/** The body of `POST /api/records/{record_id}/events`; the backend checks that the fields fit the type. */
+export interface RecordEventBody {
+  type: RecordEventType;
+  /** The version the step was taken on. */
+  version: number;
+  occurred_at?: string;
+  /** The Turtle after an edit or metadata step; absent otherwise. */
+  turtle?: string;
+  changes?: RecordChange[];
+  note?: string;
+  unchecked_components?: number;
+  client?: ClientInfo;
+}
+
+export interface RecordStarted {
+  record_id: string;
+  version: number;
+}
+
+export interface RecordEventResult {
+  record_id: string;
+  /** The step's number in the record. */
+  event: number;
+  /** The version the record is on after the step. */
+  version: number;
 }
 
 export interface PublishResult {
@@ -120,13 +195,33 @@ async function requestJson<T>(path: string, init: RequestInit = {}, fallbackErro
 
 /* ---------------------------------- Auth ---------------------------------- */
 
+export interface Session {
+  user: User | null;
+  /** False when the deployment has authentication switched off; null when the answer did not say. */
+  authEnabled: boolean | null;
+}
+
+/** The signed-in user and whether accounts are enforced; an anonymous visitor gets a null user. */
+export async function fetchSession(): Promise<Session> {
+  const response = await fetch(`${API_BASE}/auth/me`);
+  if (response.status === 401) return { user: null, authEnabled: true };
+  if (!response.ok) throw new ApiError('Could not check your login.', response.status);
+  const data = (await readBody(response)) as { user?: User; auth_enabled?: unknown };
+  return { user: data.user ?? null, authEnabled: typeof data.auth_enabled === 'boolean' ? data.auth_enabled : null };
+}
+
 /** The signed-in user, or null for an anonymous visitor (401 is not an error here). */
 export async function fetchCurrentUser(): Promise<User | null> {
-  const response = await fetch(`${API_BASE}/auth/me`);
-  if (response.status === 401) return null;
-  if (!response.ok) throw new ApiError('Could not check your login.', response.status);
-  const data = (await readBody(response)) as { user?: User };
-  return data.user ?? null;
+  return (await fetchSession()).user;
+}
+
+/**
+ * Whether this session's work is recorded (D-037): a signed-in account with an id. The
+ * development user of a deployment with authentication switched off has id 0 and is never
+ * recorded, as the backend decides too.
+ */
+export function isRecordedAccount(user: User | null, authEnabled: boolean | null): boolean {
+  return Boolean(user?.id) && authEnabled !== false;
 }
 
 export async function signIn(username: string, password: string): Promise<User> {
@@ -287,12 +382,49 @@ export async function streamDecomposition(
   return finalPayload;
 }
 
+/* --------------------------------- Records -------------------------------- */
+
+/** Start a record from Turtle the person opened or pasted; it becomes version 0. */
+export function startRecord(body: { turtle: string; occurred_at?: string; client?: ClientInfo }): Promise<RecordStarted> {
+  return requestJson<RecordStarted>(
+    '/records',
+    { method: 'POST', body: JSON.stringify(body) },
+    'Could not start the record of this work.',
+  );
+}
+
+/** Add one step to the signed-in account's own record. */
+export function postRecordEvent(recordId: string, body: RecordEventBody): Promise<RecordEventResult> {
+  return requestJson<RecordEventResult>(
+    `/records/${encodeURIComponent(recordId)}/events`,
+    { method: 'POST', body: JSON.stringify(body) },
+    'Could not record this step.',
+  );
+}
+
 /* ------------------------------ Nanopublications -------------------------- */
 
-export function publishNanopub(ttl: string, creatorOrcidUri: string): Promise<PublishResult> {
+/**
+ * Publish the visible Turtle. Publishing needs the record whose version was marked as best
+ * (D-037); the backend answers 409 without an account, without `record_id` or when the Turtle
+ * is not the marked version.
+ */
+export function publishNanopub(
+  ttl: string,
+  creatorOrcidUri: string,
+  record: { recordId: string | null; client?: ClientInfo } = { recordId: null },
+): Promise<PublishResult> {
   return requestJson<PublishResult>(
     '/nanopub/publish',
-    { method: 'POST', body: JSON.stringify({ ttl, creator_orcid_id: creatorOrcidUri }) },
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        ttl,
+        creator_orcid_id: creatorOrcidUri,
+        ...(record.recordId ? { record_id: record.recordId } : {}),
+        ...(record.client ? { client: record.client } : {}),
+      }),
+    },
     'Nanopub publish failed.',
   );
 }
@@ -357,4 +489,12 @@ export const adminApi = {
     requestJson<{ user: User }>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
   updateUser: (id: number, updates: Record<string, unknown>) =>
     requestJson<{ user: User }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
+  /** Every decomposition record as a ZIP with summary.csv, edits.csv and records.jsonld (D-041), named as the server names it. */
+  exportRecords: async (): Promise<{ blob: Blob; fileName: string }> => {
+    const response = await fetch(`${API_BASE}/admin/records/export`);
+    if (response.status === 401) throw new AuthRequiredError();
+    if (!response.ok) throw new ApiError(detailOf(await readBody(response), 'Could not export the records.'), response.status);
+    const fileName = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'iadopt-records.zip';
+    return { blob: await response.blob(), fileName };
+  },
 };

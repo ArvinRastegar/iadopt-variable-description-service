@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AlertTriangleIcon, CheckIcon, CircleCheckIcon, CircleIcon, CopyIcon, PencilIcon, RotateCcwIcon } from 'lucide-react';
+import { AlertTriangleIcon, BadgeCheckIcon, CheckIcon, CircleCheckIcon, CircleIcon, CopyIcon, PencilIcon, RotateCcwIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { findHighlights } from '@/lib/iadopt/highlight';
 import { KIND_CHIP, KIND_DOT, KIND_HIGHLIGHT } from '@/lib/iadopt/kinds';
 import { isLinkableRole, isVocabularyLink, type ComponentInfo } from '@/lib/iadopt/model';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/shared/auth';
 import { useWorkspace } from '../../state/workspace';
 import { RunSettingsPopover } from '../RunSettingsPopover';
 
@@ -119,11 +120,15 @@ export function needsLink(item: ComponentInfo): boolean {
   return isLinkableRole(item.role) && !isVocabularyLink(item.link) && (item.link.source === 'Local' || item.link.source === 'None');
 }
 
-export function ReviewPanel() {
+export function ReviewPanel({ onMarkBest }: { onMarkBest?: () => void }) {
   const workspace = useWorkspace();
+  const auth = useAuth();
   const total = workspace.components.length;
   if (!total) return null;
   const done = workspace.checkedCount;
+  // As in the approved mock: once every component is checked, ask whether this is the best version.
+  // Not on a deployment without accounts, where nothing can be marked.
+  const askToMark = Boolean(onMarkBest) && done >= total && workspace.markStatus !== 'marked' && !(auth.user && !auth.recorded) && !workspace.turtleDirty;
 
   return (
     <section aria-labelledby="review-heading" className="flex flex-col gap-2.5">
@@ -171,7 +176,17 @@ export function ReviewPanel() {
           );
         })}
       </ul>
-      <p className="m-0 text-xs leading-[17px] text-muted-foreground">Select a component and mark it as checked in the inspector. Checks are kept on this device.</p>
+      {askToMark && (
+        <div className="flex flex-col gap-2 rounded-[10px] border border-border bg-surface-2 p-3 text-[13px] leading-[18px] text-text-2">
+          <span>All components are checked. Is this the best decomposition of the variable?</span>
+          <Button variant="outline" size="sm" className="self-start" onClick={onMarkBest}>
+            <BadgeCheckIcon aria-hidden="true" /> Mark as best
+          </Button>
+        </div>
+      )}
+      <p className="m-0 text-xs leading-[17px] text-muted-foreground">
+        Select a component and mark it as checked in the inspector. {auth.recorded ? 'Checks are kept on this device and recorded with your account.' : 'Checks are kept on this device.'}
+      </p>
     </section>
   );
 }

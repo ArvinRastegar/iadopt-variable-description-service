@@ -15,13 +15,21 @@ signing in, press the intended action again. Anonymous tool use sends no activit
 Administration and account APIs remain protected. Keep `IADOPT_AUTH_ENABLED=true` in
 hosted deployments; disabling authentication is only for local development.
 
+For a signed-in account the workspace keeps a record of the work: the decomposition or the
+opened Turtle, each applied change, each "Looks right", and the version the person marks as
+**best**, with the account and the IP address, browser, device and screen of each step.
+Publishing needs that mark: only the version marked as best can be published. Anonymous
+visitors are never recorded, and a deployment with authentication disabled records nothing
+and cannot publish.
+
 The user can:
 
 1. describe a variable in plain text on the start page and click **Decompose**, watching the model output stream in
 2. review the draft in the **Workspace**: the **I-ADOPT diagram**, the list of components with their Wikidata, QUDT or OM links, the **Turtle**, and the **raw model output** with the **JSON schema validation** result
 3. correct components in the inspector (label, IRI, description, shape, constraints) and mark each one as checked
 4. open or paste existing Turtle to visualize, edit and export it, without an account
-5. export SVG, PNG or Turtle, or publish a **nanopublication** with their ORCID iD, and retract it later under **Publications**
+5. mark the version they stand behind as **best**, with an optional note on what they changed and why
+6. export SVG, PNG or Turtle, or publish the version marked as best as a **nanopublication** with their ORCID iD, and retract it later under **Publications**
 
 ---
 
@@ -56,14 +64,23 @@ It performs the following steps:
 By default the decomposition step (2–4) runs a configuration measured on a
 held-out set by the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
 `matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
-examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Held-out
-micro Close F1 **0.4890 ± 0.0252** over 24 variables and 15 repetitions.
+examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Each example
+is shown as its definition followed by its answer as indented JSON, in the shape of
+the output the model is asked for. Micro Close F1 **0.6117 ± 0.0190** over 15
+repetitions on the 24 variables held out from example selection, in an exploratory
+side test of 2026-11-18. In the same test the earlier layout, one compact JSON line
+with every answer before its definition, scored 0.4924 (0.4890 when it was first
+measured).
 
-Read that figure carefully before relying on it. It beats a deliberately-bad and a
-domain-stratified example selection decisively, but it is *not* significantly
-better than the best of three random 25-example draws. In absolute terms 3 of 24
-held-out items were exactly right and 7 of 24 scored zero. **Decompositions are
-drafts for review, not answers.**
+Read that figure carefully before relying on it. It comes from a side test, not
+from the lab's official experiment, and that test chose the new layout on the same
+24 variables, so for this prompt they are no longer strictly held out. It covers one
+set of 25 examples, which were selected with the earlier layout, and the new layout
+changes three things at once (order, field order and layout). The first measurement found that this example selection
+beat a deliberately-bad and a domain-stratified selection decisively, but was *not*
+significantly better than the best of three random 25-example draws; in that
+measurement 3 of 24 held-out items were exactly right and 7 of 24 scored zero.
+**Decompositions are drafts for review, not answers.**
 
 That prompt returns six lexical fields and forbids regenerating the label,
 comment, or definition, which is why step 5 exists as a separate call. Changing the
@@ -78,13 +95,15 @@ checkout and is not needed to build or run the service.
 Step 7 links each label of the decomposition (property, object of interest, matrix,
 context object, statistical modifier, and the parts of systems) to a controlled-vocabulary
 entry. For every label the backend searches **Wikidata** items, **QUDT** quantity kinds and
-**OM** quantities (at most ten candidates from each), then asks `Qwen3.8-27B` on PSNC, with
-reasoning off, which candidate is the same concept as the label, or none of them. The answer
+**OM** quantities (at most ten candidates from each), then asks the model that made the
+decomposition, with reasoning off, which candidate is the same concept as the label, or none
+of them. By default that is `Qwen3.8-27B` on PSNC, the configuration that was measured; a run
+on another PSNC or OpenRouter model asks that model the same question. The answer
 is a single character, so it is checked strictly: if it is not exactly one of the offered
 labels, the identical request is sent again, up to three more times. A label the model
 matches to nothing, or never answers validly, is left unlinked (so is a label longer than
-200 characters), and if PSNC cannot be reached no label is linked and the decomposition is
-returned without links. Links the decomposition model wrote itself are discarded; only links
+200 characters), and if the model's provider cannot be reached or refuses the key, no label
+is linked and the decomposition is returned without links. Links the decomposition model wrote itself are discarded; only links
 chosen here are kept. The links appear as
 `*URI` fields in `enriched_json` and as IRIs in the Turtle, where a property can now point
 at a QUDT or OM quantity kind.
@@ -300,9 +319,13 @@ My system is measuring air temperature at a height of 1.7m
    link in the inspector; fix it there or in the **Turtle** tab, then mark it as checked.
    The **Model output** tab shows the raw response and the JSON schema validation.
 
-5. Click **Export** for SVG, PNG or Turtle, or **Publish** to sign and publish a nanopublication:
-   the dialog checks the draft, asks for your ORCID iD and asks you to confirm, because
-   publishing is permanent and public. Retract it later under **Publications**.
+5. When the decomposition is right, click **Mark as best** next to **Publish**. A note on what you
+   changed and why is optional. Components without "Looks right" bring a warning, not a block.
+
+6. Click **Export** for SVG, PNG or Turtle, or **Publish** to sign and publish a nanopublication:
+   the dialog checks the draft, including that this version is the one marked as best, asks for
+   your ORCID iD and asks you to confirm, because publishing is permanent and public. Retract it
+   later under **Publications**.
 
 ---
 
@@ -319,6 +342,61 @@ or run:
 ```bash
 docker compose down
 ```
+
+---
+
+# Release Quality Gate
+
+Before merging `dev` into `prod`, run the quality gate. It checks that the code to be
+released still decomposes the lab's 102 corpus variables at least as well as a threshold.
+It is a command you run locally; CI does not run it, because CI has no model provider key.
+
+It needs:
+
+* the stack running the code to release, started with `docker compose up -d --build`
+* a checkout of the sibling `iadopt-lab` project with its virtual environment, next to this
+  repository or named by `IADOPT_LAB_PATH` (or `--lab`)
+
+From the project root run:
+
+```bash
+../i-adopt-llm-based-service/iadopt-lab/.venv/bin/python backend/tools/quality_gate.py
+```
+
+First the gate asks the backend container what it runs, which calls no model. It stops
+(exit code 2) when the container's `backend/app` and `backend/data` differ from your working
+tree, so rebuild after every change. It also stops when the backend is not the measured
+configuration prod runs by default: PSNC, `Qwen3.8-27B`, the measured prompt, temperature
+0.5, top_p 1.0 and max_tokens 16000. Pass `--any-backend` to measure another configuration
+anyway.
+
+Then it sends all 102 corpus definitions through the backend's own pipeline inside the
+container. Each definition runs the whole pipeline (decomposition, label and linking with its
+vocabulary searches), so one run makes hundreds of calls to the provider; the first run took
+76 seconds. It writes no records. Each answer is scored with the lab's extraction, validation
+and Close F1 scorer, as the lab's example-layout side test scores its answers. An answer the
+app failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's
+official workflow differs: it retries an invalid answer up to three times.)
+
+The gate **passes** when the micro Close F1 of one run on all 102 variables is at least
+**0.60** (exit code 0); below that it fails (1). Definitions the provider never answered,
+or whose answer was lost, also count as empty. With them the run can still pass, but below
+0.60 the gate cannot tell the code from a provider outage, so it does not decide (2, as when
+it could not run). `--threshold`, `--concurrency` (8 at once) and `--report-dir` change the
+defaults. Each run that got answers writes a JSON report to `quality-gate-reports/`, which
+git ignores. The report holds every answer, the commit, and whether the tree had uncommitted
+changes.
+
+Read the verdict with two caveats:
+
+* 25 of the 102 variables are the prompt's own few-shot examples, shown to the model with
+  their answers, so they score far higher than the rest. The gate prints both groups apart,
+  for information. The first run (2026-11-18) scored 0.695 on all 102, **0.571** on the 77
+  variables the prompt does not show, and 0.976 on the 25 examples. The 0.60 on all 102 is a
+  floor against regressions, not a claim that new variables score 0.60.
+* Runs vary. In the lab's side test, repeated runs on 24 variables had a standard deviation
+  of 0.019; the spread on all 102 has not been measured. A result near 0.60 can pass or fail
+  by chance, so run it again before acting on a narrow result.
 
 ---
 

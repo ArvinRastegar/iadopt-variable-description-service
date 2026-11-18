@@ -1,17 +1,47 @@
-"""Admin routes: stats, audit log, and user management (admin-only)."""
+"""Admin routes: stats, audit log, user management and the records export (admin-only)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import tempfile
+from typing import Any, BinaryIO, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
-from ..core.dependencies import API_PREFIX, auth_store, public_user, require_admin_user
+from ..auth import utc_now
+from ..core.dependencies import API_PREFIX, auth_store, public_user, record_store, require_admin_user
+from ..record_export import export_file_name, iter_file, write_export
 from ..schemas import AdminStatsResponse, AuditResponse, UserResponse, UsersResponse
 from ..schemas.requests import AdminCreateUserRequest, AdminUpdateUserRequest
 from .system import readiness_checks
 
 router = APIRouter()
+
+
+class ExportResponse(StreamingResponse):
+    """Send an export's temporary file in chunks and close it when the response ends.
+
+    Starlette does not close the chunk iterator when a client leaves mid-download, so without
+    this the file and its disk space would stay until garbage collection.
+    """
+
+    def __init__(self, spool: BinaryIO, **kwargs: Any) -> None:
+        """Stream ``spool`` from its start.
+
+        Args:
+            spool: The file the export was written to; this response owns it from now on.
+            **kwargs: Passed to ``StreamingResponse`` (media type, headers).
+        """
+        super().__init__(iter_file(spool), **kwargs)
+        self.spool = spool
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Send the file, then close it, also when the client left before the end."""
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.spool.close()
 
 
 @router.get(f"{API_PREFIX}/admin/stats", response_model=AdminStatsResponse, tags=["Admin"])
@@ -34,6 +64,59 @@ def admin_audit(
 ) -> Dict[str, Any]:
     """Return a page of audit events."""
     return {"events": auth_store.get_audit_events(limit=limit, offset=offset)}
+
+
+@router.get(
+    f"{API_PREFIX}/admin/records/export",
+    # The OpenAPI document reads the default status code from the class's own signature.
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "content": {"application/zip": {}},
+            "description": "Every record: summary.csv, edits.csv and records.jsonld in one ZIP.",
+        }
+    },
+    tags=["Admin"],
+)
+def admin_export_records(request: Request, admin: Dict[str, Any] = Depends(require_admin_user)) -> ExportResponse:
+    """Download every decomposition record in one ZIP (D-041).
+
+    ``summary.csv`` and ``edits.csv`` give the records and their changes in plain words, and
+    ``records.jsonld`` every record in full. The files name each record's account (name,
+    username and email); IP addresses, browsers and devices stay in the database. The ZIP is
+    written to a temporary file and sent in chunks, so memory use does not grow with the number
+    of records. The download is audited like every admin action, with the row counts as its
+    only payload. While authentication is disabled every visitor counts as an admin, so the
+    export is refused then.
+
+    Raises:
+        HTTPException: 409 while authentication is disabled.
+    """
+    if not auth_store.enabled:
+        raise HTTPException(status_code=409, detail="Records need accounts, and authentication is disabled.")
+    exported_at = utc_now()
+    spool = tempfile.TemporaryFile()
+    try:
+        with record_store.snapshot() as conn:
+            counts = write_export(conn, spool, exported_at=exported_at)
+        auth_store.audit_event(
+            action="admin.records_exported",
+            user=admin,
+            request=request,
+            status_code=200,
+            response_payload={"rows": counts},
+        )
+        return ExportResponse(
+            spool,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{export_file_name(exported_at)}"',
+                "Cache-Control": "no-store",
+            },
+        )
+    except BaseException:
+        spool.close()
+        raise
 
 
 @router.get(f"{API_PREFIX}/admin/users", response_model=UsersResponse, tags=["Admin"])

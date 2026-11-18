@@ -3,9 +3,10 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/menus';
+import { downloadBlob } from '@/lib/download';
 import toTurtle from '@/model/toTurtle.js';
 import { useAuth } from '@/shared/auth';
-import { diagramPngBlob, diagramSvgBlob, downloadBlob, exportFileName } from '../diagram/exportDiagram';
+import { diagramPngBlob, diagramSvgBlob, exportFileName } from '../diagram/exportDiagram';
 import { useWorkspace, variableTitle } from '../../state/workspace';
 
 /** Local exports, open to everyone: SVG and PNG of the diagram, and the visible Turtle. */

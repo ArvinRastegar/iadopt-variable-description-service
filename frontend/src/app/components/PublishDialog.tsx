@@ -7,16 +7,49 @@ import { Checkbox } from '@/components/ui/controls';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Callout, Spinner } from '@/components/ui/feedback';
 import { applyCreatorOrcidToTurtle, readCreatorOrcidFromTurtle, validatePreNanopubTurtle } from '@/lib/applyPreNanopubSettingsToTurtle.js';
+import { clientInfo } from '@/lib/clientInfo';
 import { cn } from '@/lib/utils';
-import { AuthRequiredError, publishNanopub, type PublishResult } from '@/shared/api';
+import { ApiError, AuthRequiredError, publishNanopub, type PublishResult } from '@/shared/api';
 import { useAuth } from '@/shared/auth';
 import { navigate } from '../router';
 import { usePublications } from '../state/publications';
 import { useWorkspace, variableTitle } from '../state/workspace';
+import { MarkBestDialog } from './MarkBestDialog';
 import { OrcidMark, OrcidPicker, useOrcidChoice } from './OrcidPicker';
 import { needsLink } from './workspace/panels';
 
 type Step = 'check' | 'creator' | 'confirm' | 'publishing' | 'done';
+
+interface Refusal {
+  title: string;
+  text: string;
+}
+
+/**
+ * Explain why the backend refused a publication (D-037): it publishes only the version most
+ * recently marked as best in a signed-in account's record.
+ */
+function explainRefusal(error: ApiError): { refusal: Refusal; record: 'outdated' | 'gone' | null } {
+  if (error.status === 404) {
+    return {
+      refusal: { title: 'The record of this work was not found', text: 'Mark this version as best again; that starts a new record of it. Then publish.' },
+      record: 'gone',
+    };
+  }
+  if (/signed-in account/i.test(error.message)) {
+    return {
+      refusal: { title: 'Publishing needs an account', text: 'Sign-in is switched off on this deployment, so no version can be marked as best and nothing can be published from it.' },
+      record: null,
+    };
+  }
+  return {
+    refusal: {
+      title: 'This is not the version you marked as best',
+      text: 'The service publishes only the version you most recently marked as best. Mark this version as best, then publish it.',
+    },
+    record: 'outdated',
+  };
+}
 
 export function usePublishDialog() {
   const auth = useAuth();
@@ -42,6 +75,8 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const [result, setResult] = React.useState<PublishResult | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [applying, setApplying] = React.useState(false);
+  const [refusal, setRefusal] = React.useState<Refusal | null>(null);
+  const [marking, setMarking] = React.useState(false);
 
   const settings = workspace.preparationOptions
     ? { conformsToUri: workspace.preparationOptions.conforms_to_uri, createdWithLabel: workspace.preparationOptions.created_with_label }
@@ -57,6 +92,8 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
     setAgree(false);
     setPublishError(null);
     setResult(null);
+    setRefusal(null);
+    setMarking(false);
     // eslint-style exhaustive deps are not wanted here: this runs once per opening.
   }, [open]); // eslint-disable-line
 
@@ -87,7 +124,9 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const unchecked = total - workspace.checkedCount;
   const unlinked = workspace.components.filter(needsLink);
   const creatorName = orcid.saved.find((item) => item.orcid === orcid.uri)?.name;
-  const canContinueCheck = !workspace.turtleDirty && missing !== null && missing.length === 0 && !checkError;
+  // Publishing needs the best mark on the version shown here (D-037).
+  const marked = auth.recorded && workspace.markStatus === 'marked';
+  const canContinueCheck = !workspace.turtleDirty && missing !== null && missing.length === 0 && !checkError && marked;
 
   async function publish() {
     if (!settings || !orcid.uri) return;
@@ -101,9 +140,13 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
       // Write the ORCID into the visible Turtle so what is published is what the user sees.
       const ttl = (await applyCreatorOrcidToTurtle(before, creatorSettings)).trim();
       const prepared = await validatePreNanopubTurtle(ttl, creatorSettings);
-      if (ttl !== before) workspace.replaceTurtleQuietly(ttl);
+      // The creator becomes a metadata step of the record; the publication names the record.
+      const recordId = await workspace.preparePublication(ttl);
 
-      const published = await auth.runProtected(() => publishNanopub(ttl, prepared.creatorOrcidUri ?? creatorOrcid), 'publish a nanopublication');
+      const published = await auth.runProtected(
+        () => publishNanopub(ttl, prepared.creatorOrcidUri ?? creatorOrcid, { recordId, client: clientInfo() }),
+        'publish a nanopublication',
+      );
       if (!published.nanopub_url) throw new Error('Backend did not return the nanopub URL.');
       publications.remember({
         variableIdentifier: published.variable_identifier || published.variable_uri || published.nanopub_url,
@@ -121,6 +164,16 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
       console.error(error);
       if (error instanceof AuthRequiredError) {
         onOpenChange(false);
+        return;
+      }
+      if (error instanceof ApiError && (error.status === 409 || error.status === 404)) {
+        // Nothing was published: say why, and go back to the check, where the version can be marked.
+        const explained = explainRefusal(error);
+        if (explained.record) workspace.publicationRefused(explained.record);
+        setRefusal(explained.refusal);
+        // The next attempt is confirmed again.
+        setAgree(false);
+        setStep('check');
         return;
       }
       setPublishError(error instanceof Error ? error.message : 'Nanopub publish failed.');
@@ -168,11 +221,39 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
         <DialogBody className="flex flex-col gap-4">
           {step === 'check' && (
             <>
+              {refusal && <Callout tone="danger" title={refusal.title}>{refusal.text}</Callout>}
               <div className="flex flex-col gap-1.5 rounded-[14px] border border-border bg-background p-4">
                 <div className="font-semibold">{variableTitle(workspace.variable)}</div>
                 <div className="font-mono text-xs break-all text-muted-foreground">{workspace.variable?.getIri() ?? 'Blank node'}</div>
               </div>
               <ul className="m-0 flex list-none flex-col gap-1 p-0">
+                {!auth.user ? (
+                  <CheckItem
+                    error
+                    title="You are signed out"
+                    text="Sign in again to mark this version as best and publish it. Your work stays on this page."
+                    action={<Button size="sm" onClick={() => auth.openSignIn('publish a nanopublication')}>Sign in</Button>}
+                  />
+                ) : !auth.recorded ? (
+                  <CheckItem
+                    error
+                    title="Publishing needs an account"
+                    text="Sign-in is switched off on this deployment. Only a version marked as best can be published, and only accounts can mark one."
+                  />
+                ) : marked ? (
+                  <CheckItem ok title={`You marked this version as best (v${workspace.record?.markedVersion})`} text="Only the version marked as best can be published." />
+                ) : (
+                  <CheckItem
+                    error
+                    title={workspace.markStatus === 'outdated' ? 'You marked an earlier version as best' : 'Mark this version as best first'}
+                    text="Only the version you mark as best can be published. Marking it does not publish it."
+                    action={
+                      <Button size="sm" disabled={workspace.turtleDirty || workspace.rendering} onClick={() => setMarking(true)}>
+                        Mark as best
+                      </Button>
+                    }
+                  />
+                )}
                 <CheckItem
                   ok={unchecked <= 0}
                   warn={unchecked > 0}
@@ -191,7 +272,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                         ? 'Update the diagram first, so you publish what you reviewed.'
                         : 'What you see in the Turtle tab is exactly what is published.'
                   }
-                  action={workspace.turtleDirty ? <Button size="sm" variant="outline" disabled={workspace.rendering} onClick={() => void workspace.visualize(workspace.turtle)}>Update diagram</Button> : undefined}
+                  action={workspace.turtleDirty ? <Button size="sm" variant="outline" disabled={workspace.rendering} onClick={() => void workspace.applyTurtle()}>Update diagram</Button> : undefined}
                 />
                 {unlinked.length > 0 && (
                   <CheckItem
@@ -339,6 +420,14 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
             </>
           )}
         </DialogFooter>
+        {/* Nested in this dialog, so the two stack as one modal layer. */}
+        <MarkBestDialog
+          open={marking}
+          onOpenChange={(next) => {
+            setMarking(next);
+            if (!next) setRefusal(null);
+          }}
+        />
       </DialogContent>
     </Dialog>
   );

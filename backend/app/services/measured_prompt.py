@@ -1,9 +1,17 @@
 """Byte-exact rendering of the measured decomposition prompt.
 
-This module is the only place prompt byte-exactness is enforced. The measured
-Close F1 of 0.4890 describes a specific sequence of bytes; a prompt differing by
-one space in the demonstrations encoding is a different prompt that nothing has
-measured. See ``iadopt-variable-description-service-docs/components/measured-prompt.md``.
+This module is the only place prompt byte-exactness is enforced. A measured Close F1
+describes a specific sequence of bytes; a prompt differing by one space in the examples
+is a different prompt that nothing has measured.
+
+The examples are shown in the shape of the expected answer (D-042): ``Example n``, then
+``Definition:`` with the example's definition, then ``Output:`` with its answer as indented
+JSON in the order the model is asked to answer in. On D-001's 24 held-out variables, which
+the same test used to choose it, this layout measured Close F1 0.6117 ± 0.0190 with
+``Qwen3.8-27B`` in an exploratory side test on 2026-11-18, against 0.4924 for the earlier
+layout, one compact sorted-key JSON line in which each answer came before its definition
+(D-001's 0.4890). See
+``iadopt-variable-description-service-docs/components/measured-prompt-output-layout.md``.
 
 Leaf service: depends only on ``core.config``. It does not call the model, does not
 decide whether the measured configuration is in use, and does not validate output.
@@ -19,15 +27,29 @@ from typing import Any, Dict, List, Optional
 
 from ..core.config import settings
 
-# The documented encoding. Every part matters: ensure_ascii=False keeps `→` and `Ω`
-# as themselves, sort_keys=True fixes key order, and the separators remove the
-# spaces json.dumps adds by default. See best-configuration-session.md section 4.
-DEMONSTRATION_ENCODING = {
-    "ensure_ascii": False,
-    "sort_keys": True,
-    "allow_nan": False,
-    "separators": (",", ":"),
-}
+ANSWER_KEY_ORDER = (
+    "hasStatisticalModifier",
+    "hasProperty",
+    "hasObjectOfInterest",
+    "hasMatrix",
+    "hasContextObject",
+    "hasConstraint",
+)
+"""The order of the answer's six fields: the lexical schema's ``required`` list, which is
+also the order the model writes its own answer in."""
+
+NESTED_KEY_ORDER = (
+    "SymmetricSystem",
+    "hasPart",
+    "AsymmetricSystem",
+    "hasSource",
+    "hasTarget",
+    "hasNumerator",
+    "hasDenominator",
+    "label",
+    "on",
+)
+"""The order of keys inside systems and constraints, from their own ``required`` lists."""
 
 EXPECTED_DEMONSTRATIONS = 25
 
@@ -122,20 +144,49 @@ def load_demonstrations() -> List[Dict[str, Any]]:
     return demonstrations
 
 
+def in_answer_order(value: Any, order: tuple[str, ...] = ANSWER_KEY_ORDER) -> Any:
+    """Re-key an answer into the order the model is asked to answer in.
+
+    The six fields follow :data:`ANSWER_KEY_ORDER`; keys inside systems and constraints
+    follow :data:`NESTED_KEY_ORDER`. Keys neither list names come last, sorted.
+
+    Args:
+        value: A decomposition, or any JSON value inside one.
+        order: The key order for this level.
+
+    Returns:
+        An equal value whose objects list their keys in that order.
+    """
+    if isinstance(value, dict):
+        keys = [key for key in order if key in value] + sorted(key for key in value if key not in order)
+        return {key: in_answer_order(value[key], NESTED_KEY_ORDER) for key in keys}
+    if isinstance(value, list):
+        return [in_answer_order(item, NESTED_KEY_ORDER) for item in value]
+    return value
+
+
 def encode_demonstrations(demonstrations: List[Dict[str, Any]]) -> str:
-    """Encode demonstrations with the measured JSON encoding.
+    """Show the demonstrations in the shape of the expected answer (D-042).
+
+    Each demonstration becomes ``Example n``, ``Definition: <definition>`` and ``Output:``
+    followed by its decomposition as indented JSON in answer order, numbered from 1 in
+    stored order and separated by one blank line. The definition is inserted verbatim.
 
     Args:
         demonstrations: The demonstration objects to encode.
 
     Returns:
-        A single-line JSON array; 11,519 characters for the stored 25.
+        The examples block; 13,121 characters for the stored 25.
 
     Raises:
         ValueError: If a non-finite float is present (``allow_nan=False``).
     """
     try:
-        return json.dumps(demonstrations, **DEMONSTRATION_ENCODING)  # type: ignore[arg-type]
+        return "\n\n".join(
+            f"Example {number}\nDefinition: {demonstration['definition']}\nOutput:\n"
+            + json.dumps(in_answer_order(demonstration["decomposition"]), ensure_ascii=False, indent=2, allow_nan=False)
+            for number, demonstration in enumerate(demonstrations, 1)
+        )
     except ValueError as exc:
         raise ValueError(f"Measured demonstrations are not JSON-encodable: {exc}") from exc
 

@@ -73,7 +73,7 @@ function TurtleChanges({ className }: { className?: string }) {
         <span className={cn(error && 'font-mono text-xs break-words')}>
           {error ? error.message : 'Update the diagram to save them. Editing here waits until then.'}
         </span>
-        <Button size="sm" className="self-start" disabled={workspace.rendering} onClick={() => void workspace.visualize(workspace.turtle)}>
+        <Button size="sm" className="self-start" disabled={workspace.rendering} onClick={() => void workspace.applyTurtle()}>
           <RefreshCwIcon aria-hidden="true" /> Update diagram
         </Button>
       </div>

@@ -12,9 +12,11 @@
 * Light and dark themes, bundled fonts (no requests to other hosts), drafts kept in this browser; a shared `?ttl=` link offers to restore the draft it replaced
 * The sign-in page only returns to same-site addresses after signing in
 * The reasoning switch is gone: decompositions always run without reasoning, the default setup (the request still sends `disable_thinking: true`)
-* `remote.html`, the page URLs, the API requests (apart from the saved ORCID iD routes below), the activity events and the stored publications are unchanged
+* `remote.html`, the page URLs, the API requests (apart from the saved ORCID iD routes and the decomposition record below), the activity events and the stored publications are unchanged
 * Every password field has an eye button that shows or hides the password; creating a user or resetting a password asks for it twice and saves only when both match
 * An account keeps several ORCID iDs (new `/api/auth/me/orcids` routes): publishing and retracting offer the saved iDs, or take another one that can be saved to the account. This replaces "Remember my ORCID iD on this device"; an iD remembered there is offered until it is saved or used without saving
+* Decomposition record (D-037): for a signed-in account the workspace keeps the decomposition's `record_id`, starts a record when Turtle is opened or pasted (`POST /api/records`), and sends one step per applied change with its component changes, per "Looks right" and per Undo (`POST /api/records/{id}/events`), with the browser's device and screen (`client`, also sent with decompose and publish). Anonymous visitors and deployments with authentication disabled send none of this
+* "Mark as best", next to Publish and in the review list once every component is checked, marks the version shown, with an optional note of up to 500 characters; components without "Looks right" bring a warning, not a block. Publishing needs the mark and names the record (`record_id`); the dialog offers the mark in place and explains a refusal. The local draft keeps the record for the account it belongs to
 
 ### Bugfixes
 * (De)serializing of blank node Entities with Constrains did not keep the proper link

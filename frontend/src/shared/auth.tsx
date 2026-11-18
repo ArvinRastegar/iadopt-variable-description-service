@@ -3,23 +3,29 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input, Label, PasswordInput } from '@/components/ui/fields';
-import { AuthRequiredError, fetchCurrentUser, postEvent, signIn, signOut, type User } from './api';
+import { AuthRequiredError, fetchSession, isRecordedAccount, postEvent, signIn, signOut, type User } from './api';
 
 /*
  * Accounts on the main page. Anonymous visitors keep every public tool; protected actions
- * (decompose, publish, retract) ask for a sign-in in place, keep the work on the page, and are
- * never repeated automatically after signing in. A response that belongs to an older session
- * (tracked by `revision`) must never sign out a newer one.
+ * (decompose, mark as best, publish, retract) ask for a sign-in in place, keep the work on the
+ * page, and are never repeated automatically after signing in. A response that belongs to an
+ * older session (tracked by `revision`) must never sign out a newer one.
  */
 
 interface AuthContextValue {
   user: User | null;
   ready: boolean;
   isAdmin: boolean;
+  /** False when the deployment has authentication switched off; null until the backend said. */
+  authEnabled: boolean | null;
+  /** Whether this session's work is recorded (D-037): a signed-in account, never the auth-disabled development user. */
+  recorded: boolean;
   /** True when signed in; otherwise opens the sign-in dialog and resolves false. */
   requireUser: (action: string) => Promise<boolean>;
   /** Run a protected request; a 401 signs the visitor out locally and asks them to sign in. */
   runProtected: <T>(request: () => Promise<T>, action: string) => Promise<T>;
+  /** Run a background request; a 401 signs the visitor out locally without asking, like expired telemetry. */
+  runQuietly: <T>(request: () => Promise<T>) => Promise<T>;
   openSignIn: (action?: string) => void;
   signOut: () => Promise<void>;
   /** Activity event for signed-in users only; anonymous use sends nothing. */
@@ -48,6 +54,7 @@ export function initials(user: User | null): string {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = React.useState<User | null>(null);
   const [ready, setReady] = React.useState(false);
+  const [authEnabled, setAuthEnabled] = React.useState<boolean | null>(null);
   const [dialogReason, setDialogReason] = React.useState<string | null>(null);
   const userRef = React.useRef<User | null>(null);
   const revisionRef = React.useRef(0);
@@ -61,9 +68,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = React.useCallback(async (): Promise<User | null> => {
     const revision = revisionRef.current;
     try {
-      const current = await fetchCurrentUser();
+      const session = await fetchSession();
+      if (session.authEnabled !== null) setAuthEnabled(session.authEnabled);
       // A slow probe must not overwrite a newer sign-in or sign-out.
-      if (revision === revisionRef.current) setUser(current);
+      if (revision === revisionRef.current) setUser(session.user);
     } catch (error) {
       console.error(error);
       if (revision === revisionRef.current) setUser(null);
@@ -98,6 +106,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [openSignIn, setUser]);
 
+  const runQuietly = React.useCallback(async <T,>(request: () => Promise<T>): Promise<T> => {
+    const revision = revisionRef.current;
+    try {
+      return await request();
+    } catch (error) {
+      // Background work (the record of edits and checks) must not interrupt editing with a login prompt.
+      if (error instanceof AuthRequiredError && revision === revisionRef.current) setUser(null);
+      throw error;
+    }
+  }, [setUser]);
+
   const logEvent = React.useCallback((action: string, payload: Record<string, unknown> = {}, metadata: Record<string, unknown> = {}) => {
     if (!userRef.current) return;
     const revision = revisionRef.current;
@@ -118,12 +137,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     ready,
     isAdmin: Boolean(user?.roles?.includes('admin')),
+    authEnabled,
+    recorded: isRecordedAccount(user, authEnabled),
     requireUser,
     runProtected,
+    runQuietly,
     openSignIn,
     signOut: doSignOut,
     logEvent,
-  }), [doSignOut, logEvent, openSignIn, ready, requireUser, runProtected, user]);
+  }), [authEnabled, doSignOut, logEvent, openSignIn, ready, requireUser, runProtected, runQuietly, user]);
 
   return (
     <AuthContext.Provider value={value}>

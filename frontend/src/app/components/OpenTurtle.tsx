@@ -4,6 +4,7 @@ import { ClipboardPasteIcon, FileUpIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label, Textarea } from '@/components/ui/fields';
+import { useAuth } from '@/shared/auth';
 import { navigate } from '../router';
 import { useWorkspace } from '../state/workspace';
 
@@ -54,6 +55,7 @@ function PasteTurtleDialog({
   onOpenChange: (open: boolean) => void;
   onSubmit: (text: string) => void;
 }) {
+  const { recorded } = useAuth();
   const [text, setText] = React.useState('');
   React.useEffect(() => {
     if (!open) setText('');
@@ -64,7 +66,11 @@ function PasteTurtleDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Paste Turtle</DialogTitle>
-          <DialogDescription>Paste an I-ADOPT variable in Turtle. It is drawn in your browser; nothing is sent.</DialogDescription>
+          <DialogDescription>
+            {recorded
+              ? 'Paste an I-ADOPT variable in Turtle. It is drawn in your browser and, because you are signed in, recorded with your account.'
+              : 'Paste an I-ADOPT variable in Turtle. It is drawn in your browser; nothing is sent.'}
+          </DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-1.5">
           <Label htmlFor="paste-turtle">Turtle</Label>
