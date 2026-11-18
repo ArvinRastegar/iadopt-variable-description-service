@@ -489,7 +489,7 @@ export const adminApi = {
     requestJson<{ user: User }>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
   updateUser: (id: number, updates: Record<string, unknown>) =>
     requestJson<{ user: User }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
-  /** Every decomposition record as a ZIP of CSV tables (D-040), named as the server names it. */
+  /** Every decomposition record as a ZIP with summary.csv, edits.csv and records.jsonld (D-041), named as the server names it. */
   exportRecords: async (): Promise<{ blob: Blob; fileName: string }> => {
     const response = await fetch(`${API_BASE}/admin/records/export`);
     if (response.status === 401) throw new AuthRequiredError();

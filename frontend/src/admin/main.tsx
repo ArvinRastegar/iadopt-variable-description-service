@@ -213,17 +213,17 @@ function AdminPage() {
         {!denied && stats && (
           <Card
             title="Decomposition records"
-            subtitle="Every record as CSV tables, for analysis offline"
+            subtitle="Every record, for analysis offline"
             action={
               <Button size="sm" variant="outline" disabled={exporting} onClick={() => void downloadRecords()}>
-                <DownloadIcon aria-hidden="true" />{exporting ? 'Preparing…' : 'Download CSV'}
+                <DownloadIcon aria-hidden="true" />{exporting ? 'Preparing…' : 'Download records'}
               </Button>
             }
           >
             <p className="m-0 max-w-[80ch] text-[13px] text-muted-foreground">
-              A ZIP with records, steps, changes, versions and model calls, joined by record_id, and columns.csv saying
-              what every column means. It includes each person&apos;s name, username and email, so keep it as carefully
-              as the user list. Read it with pandas or R; in Excel, use Data &gt; From Text/CSV.
+              A ZIP with summary.csv (one row per record), edits.csv (one row per change) and records.jsonld (every
+              record in full, as linked data). It includes each person&apos;s name, username and email, so keep it as
+              carefully as the user list. Read the CSV files with pandas or R; in Excel, use Data &gt; From Text/CSV.
             </p>
           </Card>
         )}
