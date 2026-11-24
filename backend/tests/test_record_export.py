@@ -19,6 +19,7 @@ from rdflib import RDF, Graph, Literal, Namespace, URIRef
 from rdflib.compare import isomorphic
 from rdflib.namespace import PROV
 
+from app import storage
 from app.core import dependencies as core_deps
 from app.record_export import (
     EDITS_COLUMNS,
@@ -399,8 +400,12 @@ class RecordExportTests(RecordTestCase):
 
     # -------------------------------------------------------------- reading and streaming
 
+    # Rewritten at the increment-1 tests gate (G-018): app.storage's snapshot() replaces
+    # RecordStore.snapshot with the same behaviour (app-storage, section 3).
+
     def test_the_snapshot_reads_every_table_at_one_moment(self):
-        with core_deps.record_store.snapshot() as conn:
+        """Covers: AC-app-storage-004."""
+        with storage.snapshot(path=self.store.db_path) as conn:
             before = conn.execute("SELECT COUNT(*) FROM record_items").fetchone()[0]
             # Another connection stores a record while the snapshot is open.
             core_deps.record_store.record_decomposition(
@@ -413,7 +418,8 @@ class RecordExportTests(RecordTestCase):
         self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM record_items"), [{"n": before + 1}])
 
     def test_the_export_reads_through_a_snapshot_that_cannot_write(self):
-        with core_deps.record_store.snapshot() as conn:
+        """Covers: AC-app-storage-004."""
+        with storage.snapshot(path=self.store.db_path) as conn:
             with self.assertRaises(sqlite3.OperationalError):
                 conn.execute("INSERT INTO record_schema (version) VALUES (99)")
         self.assertEqual(self.rows("SELECT version FROM record_schema"), [{"version": 1}])
@@ -426,7 +432,7 @@ class RecordExportTests(RecordTestCase):
                 ended_at=STARTED, result=PIPELINE_RESULT, error=None, calls=CALLS,
             )
         spool = tempfile.TemporaryFile()
-        with core_deps.record_store.snapshot() as conn:
+        with storage.snapshot(path=self.store.db_path) as conn:
             counts = write_export(conn, spool, exported_at=STARTED)
         self.assertEqual(counts, {"summary.csv": 120, "edits.csv": 0, "records.jsonld": 120})
         chunks = list(iter_file(spool, chunk_size=4096))

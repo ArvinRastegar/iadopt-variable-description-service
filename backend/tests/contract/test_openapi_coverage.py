@@ -17,6 +17,12 @@ EXPECTED_PATHS = {
     "/api/admin/stats",
     "/api/admin/users",
     "/api/admin/users/{user_id}",
+    # accounts-roles, section 9 (added at the increment-1 tests gate, G-018).
+    "/api/admin/users/{user_id}/history",
+    "/api/admin/users/{user_id}/block",
+    "/api/admin/users/{user_id}/unblock",
+    "/api/admin/users/{user_id}/grant-admin",
+    "/api/admin/users/{user_id}/revoke-admin",
     "/api/auth/login",
     "/api/auth/logout",
     "/api/auth/me",

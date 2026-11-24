@@ -1,0 +1,3127 @@
+{
+ "commit": "de1a7af",
+ "captured_from": "4cb9b19",
+ "captured_on": "2026-11-23",
+ "python": "3.12.1",
+ "sqlite": "3.43.1",
+ "sources_sha256": {
+  "backend/app/auth.py": "6e002c6a6383f496659e84e4e8b1b76755189dd1daf029217d2211d025b53045",
+  "backend/app/records.py": "38545508f6b415ace2ac3411892ee1f33d1e8928b9023ea67f7a628a813a1ae5",
+  "backend/app/record_export.py": "056b7a8d7c8dbb67f49464dfaf9f1dadaaff8897ea499833c8e902304a287f77",
+  "backend/app/services/call_log.py": "56abaf6c3e9b610aa6e2bf99c1b30db845c330ab9d681fa9b3b8a472c68db9dd",
+  "backend/app/schemas/common.py": "ae5bcf02ab25b8baaf173b45bcc588807a7179594a5a67fcd1ca8622ecad5e8c"
+ },
+ "named": {
+  "auth_schema": {
+   "op": "startup",
+   "sql": "\n            CREATE TABLE IF NOT EXISTS users (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                username TEXT NOT NULL UNIQUE COLLATE NOCASE,\n                password_hash TEXT NOT NULL,\n                display_name TEXT NOT NULL DEFAULT '',\n                email TEXT NOT NULL DEFAULT '',\n                roles TEXT NOT NULL DEFAULT '[\"user\"]',\n                is_active INTEGER NOT NULL DEFAULT 1,\n                auth_provider TEXT NOT NULL DEFAULT 'local',\n                external_subject TEXT,\n                created_at TEXT NOT NULL,\n                updated_at TEXT NOT NULL,\n                last_login_at TEXT\n            );\n\n            CREATE TABLE IF NOT EXISTS sessions (\n                token_hash TEXT PRIMARY KEY,\n                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n                created_at TEXT NOT NULL,\n                expires_at TEXT NOT NULL,\n                ip_address TEXT NOT NULL DEFAULT '',\n                user_agent TEXT NOT NULL DEFAULT ''\n            );\n\n            CREATE TABLE IF NOT EXISTS audit_events (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                created_at TEXT NOT NULL,\n                user_id INTEGER,\n                username TEXT NOT NULL DEFAULT '',\n                action TEXT NOT NULL,\n                method TEXT NOT NULL DEFAULT '',\n                path TEXT NOT NULL DEFAULT '',\n                status_code INTEGER,\n                latency_ms INTEGER,\n                ip_address TEXT NOT NULL DEFAULT '',\n                user_agent TEXT NOT NULL DEFAULT '',\n                request_payload TEXT,\n                response_payload TEXT,\n                metadata TEXT,\n                error TEXT\n            );\n\n            CREATE TABLE IF NOT EXISTS saved_orcids (\n                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n                orcid TEXT NOT NULL,\n                name TEXT,\n                created_at TEXT NOT NULL,\n                last_used_at TEXT NOT NULL,\n                PRIMARY KEY (user_id, orcid)\n            );\n\n            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);\n            CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at);\n            CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_events(user_id);\n            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);\n            "
+  },
+  "record_schema": {
+   "op": "startup",
+   "sql": "\nCREATE TABLE IF NOT EXISTS record_schema (\n    version INTEGER NOT NULL\n);\n\n-- One piece of work: who did it, how it started, and the definition they typed.\nCREATE TABLE IF NOT EXISTS record_items (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    public_id TEXT NOT NULL UNIQUE,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    origin TEXT NOT NULL CHECK (origin IN ('decompose', 'import')),\n    definition TEXT,\n    created_at TEXT NOT NULL\n);\n\n-- The model run behind a decomposition record: one per record.\nCREATE TABLE IF NOT EXISTS record_runs (\n    item_id INTEGER PRIMARY KEY REFERENCES record_items(id),\n    provider TEXT NOT NULL DEFAULT '',\n    model TEXT NOT NULL DEFAULT '',\n    disable_thinking INTEGER NOT NULL DEFAULT 1,\n    prompt_setup TEXT NOT NULL DEFAULT '',\n    prompt_sha256 TEXT,\n    started_at TEXT NOT NULL,\n    ended_at TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('ok', 'error')),\n    error TEXT,\n    raw_output TEXT,\n    parsed_json TEXT,\n    schema_valid INTEGER,\n    validation_errors TEXT\n);\n\n-- Each call to a model inside a run, attempt by attempt.\nCREATE TABLE IF NOT EXISTS record_llm_calls (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL REFERENCES record_runs(item_id),\n    purpose TEXT NOT NULL,\n    attempt INTEGER NOT NULL,\n    provider TEXT NOT NULL DEFAULT '',\n    model TEXT NOT NULL DEFAULT '',\n    started_at TEXT NOT NULL,\n    latency_ms INTEGER,\n    input_tokens INTEGER,\n    output_tokens INTEGER,\n    status TEXT NOT NULL,\n    error TEXT\n);\n\n-- Each distinct graph once, as the Turtle it first arrived in, with its core fingerprint.\nCREATE TABLE IF NOT EXISTS record_contents (\n    sha256 TEXT PRIMARY KEY,\n    core_sha256 TEXT NOT NULL,\n    turtle TEXT NOT NULL,\n    byte_size INTEGER NOT NULL,\n    created_at TEXT NOT NULL\n);\n\n-- Version 0, 1, 2 ... of a record, each pointing at its content and the version before it.\nCREATE TABLE IF NOT EXISTS record_versions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL REFERENCES record_items(id),\n    number INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK (kind IN ('model_draft', 'imported', 'edited', 'metadata')),\n    content_sha256 TEXT NOT NULL REFERENCES record_contents(sha256),\n    parent_id INTEGER REFERENCES record_versions(id),\n    created_at TEXT NOT NULL,\n    UNIQUE (item_id, number)\n);\n\n-- Where a step came from: one row per distinct IP address, browser, device and screen.\nCREATE TABLE IF NOT EXISTS client_contexts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    ip_address TEXT NOT NULL DEFAULT '',\n    user_agent TEXT NOT NULL DEFAULT '',\n    device TEXT NOT NULL DEFAULT '',\n    screen TEXT NOT NULL DEFAULT '',\n    created_at TEXT NOT NULL,\n    UNIQUE (user_id, ip_address, user_agent, device, screen)\n);\n\n-- The timeline: every step and milestone of a record, in order.\nCREATE TABLE IF NOT EXISTS record_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL REFERENCES record_items(id),\n    seq INTEGER NOT NULL,\n    type TEXT NOT NULL CHECK (\n        type IN ('draft', 'import', 'edit', 'metadata', 'check', 'uncheck', 'mark_best', 'publish')\n    ),\n    version_id INTEGER REFERENCES record_versions(id),\n    occurred_at TEXT NOT NULL,\n    recorded_at TEXT NOT NULL,\n    context_id INTEGER REFERENCES client_contexts(id),\n    note TEXT,\n    unchecked_components INTEGER,\n    nanopub_uri TEXT,\n    orcid TEXT,\n    UNIQUE (item_id, seq)\n);\n\n-- What changed inside one step, component by component.\nCREATE TABLE IF NOT EXISTS record_changes (\n    event_id INTEGER NOT NULL REFERENCES record_events(id),\n    position INTEGER NOT NULL,\n    operation TEXT NOT NULL CHECK (\n        operation IN (\n            'add', 'remove', 'relabel', 'relink', 'change_shape',\n            'add_constraint', 'move_constraint', 'confirm', 'unconfirm', 'other'\n        )\n    ),\n    role TEXT NOT NULL DEFAULT '',\n    component TEXT NOT NULL DEFAULT '',\n    before_value TEXT,\n    after_value TEXT,\n    PRIMARY KEY (event_id, position)\n);\n\nCREATE INDEX IF NOT EXISTS idx_record_items_user ON record_items(user_id, created_at);\nCREATE INDEX IF NOT EXISTS idx_record_versions_content ON record_versions(item_id, content_sha256);\nCREATE INDEX IF NOT EXISTS idx_record_events_type ON record_events(item_id, type);\nCREATE INDEX IF NOT EXISTS idx_record_events_nanopub ON record_events(nanopub_uri);\nCREATE INDEX IF NOT EXISTS idx_record_llm_calls_item ON record_llm_calls(item_id);\n\nCREATE TRIGGER IF NOT EXISTS record_items_no_update BEFORE UPDATE ON record_items\nBEGIN SELECT RAISE(ABORT, 'record_items is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_items_no_delete BEFORE DELETE ON record_items\nBEGIN SELECT RAISE(ABORT, 'record_items is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_items_no_overwrite BEFORE INSERT ON record_items\nWHEN EXISTS (SELECT 1 FROM record_items WHERE id = NEW.id OR public_id = NEW.public_id)\nBEGIN SELECT RAISE(ABORT, 'record_items is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_runs_no_update BEFORE UPDATE ON record_runs\nBEGIN SELECT RAISE(ABORT, 'record_runs is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_runs_no_delete BEFORE DELETE ON record_runs\nBEGIN SELECT RAISE(ABORT, 'record_runs is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_runs_no_overwrite BEFORE INSERT ON record_runs\nWHEN EXISTS (SELECT 1 FROM record_runs WHERE item_id = NEW.item_id)\nBEGIN SELECT RAISE(ABORT, 'record_runs is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_llm_calls_no_update BEFORE UPDATE ON record_llm_calls\nBEGIN SELECT RAISE(ABORT, 'record_llm_calls is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_llm_calls_no_delete BEFORE DELETE ON record_llm_calls\nBEGIN SELECT RAISE(ABORT, 'record_llm_calls is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_llm_calls_no_overwrite BEFORE INSERT ON record_llm_calls\nWHEN EXISTS (SELECT 1 FROM record_llm_calls WHERE id = NEW.id)\nBEGIN SELECT RAISE(ABORT, 'record_llm_calls is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_contents_no_update BEFORE UPDATE ON record_contents\nBEGIN SELECT RAISE(ABORT, 'record_contents is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_contents_no_delete BEFORE DELETE ON record_contents\nBEGIN SELECT RAISE(ABORT, 'record_contents is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_contents_no_overwrite BEFORE INSERT ON record_contents\nWHEN EXISTS (SELECT 1 FROM record_contents WHERE sha256 = NEW.sha256)\nBEGIN SELECT RAISE(IGNORE); END;\n\nCREATE TRIGGER IF NOT EXISTS record_versions_no_update BEFORE UPDATE ON record_versions\nBEGIN SELECT RAISE(ABORT, 'record_versions is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_versions_no_delete BEFORE DELETE ON record_versions\nBEGIN SELECT RAISE(ABORT, 'record_versions is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_versions_no_overwrite BEFORE INSERT ON record_versions\nWHEN EXISTS (SELECT 1 FROM record_versions WHERE id = NEW.id OR (item_id = NEW.item_id AND number = NEW.number))\nBEGIN SELECT RAISE(ABORT, 'record_versions is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS client_contexts_no_update BEFORE UPDATE ON client_contexts\nBEGIN SELECT RAISE(ABORT, 'client_contexts is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS client_contexts_no_delete BEFORE DELETE ON client_contexts\nBEGIN SELECT RAISE(ABORT, 'client_contexts is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS client_contexts_no_overwrite BEFORE INSERT ON client_contexts\nWHEN EXISTS (SELECT 1 FROM client_contexts WHERE id = NEW.id OR (user_id = NEW.user_id AND ip_address = NEW.ip_address AND user_agent = NEW.user_agent AND device = NEW.device AND screen = NEW.screen))\nBEGIN SELECT RAISE(IGNORE); END;\n\nCREATE TRIGGER IF NOT EXISTS record_events_no_update BEFORE UPDATE ON record_events\nBEGIN SELECT RAISE(ABORT, 'record_events is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_events_no_delete BEFORE DELETE ON record_events\nBEGIN SELECT RAISE(ABORT, 'record_events is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_events_no_overwrite BEFORE INSERT ON record_events\nWHEN EXISTS (SELECT 1 FROM record_events WHERE id = NEW.id OR (item_id = NEW.item_id AND seq = NEW.seq))\nBEGIN SELECT RAISE(ABORT, 'record_events is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_changes_no_update BEFORE UPDATE ON record_changes\nBEGIN SELECT RAISE(ABORT, 'record_changes is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_changes_no_delete BEFORE DELETE ON record_changes\nBEGIN SELECT RAISE(ABORT, 'record_changes is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_changes_no_overwrite BEFORE INSERT ON record_changes\nWHEN EXISTS (SELECT 1 FROM record_changes WHERE event_id = NEW.event_id AND position = NEW.position)\nBEGIN SELECT RAISE(ABORT, 'record_changes is append-only'); END;\n"
+  },
+  "bootstrap_count": {
+   "op": "startup",
+   "sql": "SELECT COUNT(*) FROM users"
+  },
+  "bootstrap_find": {
+   "op": "startup",
+   "sql": "SELECT id FROM users WHERE username = ?"
+  },
+  "bootstrap_insert": {
+   "op": "startup",
+   "sql": "\n            INSERT INTO users (\n                username, password_hash, display_name, email, roles, is_active,\n                auth_provider, external_subject, created_at, updated_at\n            )\n            VALUES (?, ?, ?, ?, ?, 1, 'local', ?, ?, ?)\n            "
+  },
+  "bootstrap_update": {
+   "op": "startup_again",
+   "sql": "\n                UPDATE users\n                   SET roles = ?, is_active = 1, display_name = COALESCE(NULLIF(display_name, ''), ?),\n                       email = COALESCE(NULLIF(email, ''), ?), updated_at = ?\n                 WHERE id = ?\n                "
+  },
+  "login_select_user": {
+   "op": "login",
+   "sql": "SELECT * FROM users WHERE username = ?"
+  },
+  "login_update": {
+   "op": "login",
+   "sql": "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?"
+  },
+  "session_insert": {
+   "op": "session_create",
+   "sql": "\n                INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip_address, user_agent)\n                VALUES (?, ?, ?, ?, ?, ?)\n                "
+  },
+  "session_lookup": {
+   "op": "session_lookup",
+   "sql": "\n                SELECT users.*\n                  FROM sessions\n                  JOIN users ON users.id = sessions.user_id\n                 WHERE sessions.token_hash = ?\n                   AND users.is_active = 1\n                   AND sessions.expires_at > ?\n                "
+  }
+ },
+ "events": [
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "enter"
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "executescript",
+   "sql": "\n            CREATE TABLE IF NOT EXISTS users (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                username TEXT NOT NULL UNIQUE COLLATE NOCASE,\n                password_hash TEXT NOT NULL,\n                display_name TEXT NOT NULL DEFAULT '',\n                email TEXT NOT NULL DEFAULT '',\n                roles TEXT NOT NULL DEFAULT '[\"user\"]',\n                is_active INTEGER NOT NULL DEFAULT 1,\n                auth_provider TEXT NOT NULL DEFAULT 'local',\n                external_subject TEXT,\n                created_at TEXT NOT NULL,\n                updated_at TEXT NOT NULL,\n                last_login_at TEXT\n            );\n\n            CREATE TABLE IF NOT EXISTS sessions (\n                token_hash TEXT PRIMARY KEY,\n                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n                created_at TEXT NOT NULL,\n                expires_at TEXT NOT NULL,\n                ip_address TEXT NOT NULL DEFAULT '',\n                user_agent TEXT NOT NULL DEFAULT ''\n            );\n\n            CREATE TABLE IF NOT EXISTS audit_events (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                created_at TEXT NOT NULL,\n                user_id INTEGER,\n                username TEXT NOT NULL DEFAULT '',\n                action TEXT NOT NULL,\n                method TEXT NOT NULL DEFAULT '',\n                path TEXT NOT NULL DEFAULT '',\n                status_code INTEGER,\n                latency_ms INTEGER,\n                ip_address TEXT NOT NULL DEFAULT '',\n                user_agent TEXT NOT NULL DEFAULT '',\n                request_payload TEXT,\n                response_payload TEXT,\n                metadata TEXT,\n                error TEXT\n            );\n\n            CREATE TABLE IF NOT EXISTS saved_orcids (\n                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n                orcid TEXT NOT NULL,\n                name TEXT,\n                created_at TEXT NOT NULL,\n                last_used_at TEXT NOT NULL,\n                PRIMARY KEY (user_id, orcid)\n            );\n\n            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);\n            CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at);\n            CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_events(user_id);\n            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);\n            ",
+   "params": null
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM users",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "execute",
+   "sql": "SELECT id FROM users WHERE username = ?",
+   "params": [
+    "admin"
+   ]
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "execute",
+   "sql": "\n            INSERT INTO users (\n                username, password_hash, display_name, email, roles, is_active,\n                auth_provider, external_subject, created_at, updated_at\n            )\n            VALUES (?, ?, ?, ?, ?, 1, 'local', ?, ?, ?)\n            ",
+   "params": [
+    "admin",
+    "pbkdf2_sha256$390000$SjpaiPkL1L5ZDC0rYycUKw==$Fi5F0sddPZvc8/a/T+KiaJ7ddBb0g/Wb2y4VDV4mqZk=",
+    "Admin User",
+    "admin@example.org",
+    "[\"admin\", \"user\"]",
+    "admin",
+    "2026-11-23T15:19:00.815873+00:00",
+    "2026-11-23T15:19:00.815873+00:00"
+   ]
+  },
+  {
+   "op": "startup",
+   "conn": 1,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "enter"
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "execute",
+   "sql": "DELETE FROM audit_events WHERE created_at < ?",
+   "params": [
+    "2026-10-24T15:19:00.886697+00:00"
+   ]
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "execute",
+   "sql": "DELETE FROM sessions WHERE expires_at < ?",
+   "params": [
+    "2026-11-23T15:19:00.886963+00:00"
+   ]
+  },
+  {
+   "op": "startup",
+   "conn": 2,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "executescript",
+   "sql": "\nCREATE TABLE IF NOT EXISTS record_schema (\n    version INTEGER NOT NULL\n);\n\n-- One piece of work: who did it, how it started, and the definition they typed.\nCREATE TABLE IF NOT EXISTS record_items (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    public_id TEXT NOT NULL UNIQUE,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    origin TEXT NOT NULL CHECK (origin IN ('decompose', 'import')),\n    definition TEXT,\n    created_at TEXT NOT NULL\n);\n\n-- The model run behind a decomposition record: one per record.\nCREATE TABLE IF NOT EXISTS record_runs (\n    item_id INTEGER PRIMARY KEY REFERENCES record_items(id),\n    provider TEXT NOT NULL DEFAULT '',\n    model TEXT NOT NULL DEFAULT '',\n    disable_thinking INTEGER NOT NULL DEFAULT 1,\n    prompt_setup TEXT NOT NULL DEFAULT '',\n    prompt_sha256 TEXT,\n    started_at TEXT NOT NULL,\n    ended_at TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('ok', 'error')),\n    error TEXT,\n    raw_output TEXT,\n    parsed_json TEXT,\n    schema_valid INTEGER,\n    validation_errors TEXT\n);\n\n-- Each call to a model inside a run, attempt by attempt.\nCREATE TABLE IF NOT EXISTS record_llm_calls (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL REFERENCES record_runs(item_id),\n    purpose TEXT NOT NULL,\n    attempt INTEGER NOT NULL,\n    provider TEXT NOT NULL DEFAULT '',\n    model TEXT NOT NULL DEFAULT '',\n    started_at TEXT NOT NULL,\n    latency_ms INTEGER,\n    input_tokens INTEGER,\n    output_tokens INTEGER,\n    status TEXT NOT NULL,\n    error TEXT\n);\n\n-- Each distinct graph once, as the Turtle it first arrived in, with its core fingerprint.\nCREATE TABLE IF NOT EXISTS record_contents (\n    sha256 TEXT PRIMARY KEY,\n    core_sha256 TEXT NOT NULL,\n    turtle TEXT NOT NULL,\n    byte_size INTEGER NOT NULL,\n    created_at TEXT NOT NULL\n);\n\n-- Version 0, 1, 2 ... of a record, each pointing at its content and the version before it.\nCREATE TABLE IF NOT EXISTS record_versions (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL REFERENCES record_items(id),\n    number INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK (kind IN ('model_draft', 'imported', 'edited', 'metadata')),\n    content_sha256 TEXT NOT NULL REFERENCES record_contents(sha256),\n    parent_id INTEGER REFERENCES record_versions(id),\n    created_at TEXT NOT NULL,\n    UNIQUE (item_id, number)\n);\n\n-- Where a step came from: one row per distinct IP address, browser, device and screen.\nCREATE TABLE IF NOT EXISTS client_contexts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    ip_address TEXT NOT NULL DEFAULT '',\n    user_agent TEXT NOT NULL DEFAULT '',\n    device TEXT NOT NULL DEFAULT '',\n    screen TEXT NOT NULL DEFAULT '',\n    created_at TEXT NOT NULL,\n    UNIQUE (user_id, ip_address, user_agent, device, screen)\n);\n\n-- The timeline: every step and milestone of a record, in order.\nCREATE TABLE IF NOT EXISTS record_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    item_id INTEGER NOT NULL REFERENCES record_items(id),\n    seq INTEGER NOT NULL,\n    type TEXT NOT NULL CHECK (\n        type IN ('draft', 'import', 'edit', 'metadata', 'check', 'uncheck', 'mark_best', 'publish')\n    ),\n    version_id INTEGER REFERENCES record_versions(id),\n    occurred_at TEXT NOT NULL,\n    recorded_at TEXT NOT NULL,\n    context_id INTEGER REFERENCES client_contexts(id),\n    note TEXT,\n    unchecked_components INTEGER,\n    nanopub_uri TEXT,\n    orcid TEXT,\n    UNIQUE (item_id, seq)\n);\n\n-- What changed inside one step, component by component.\nCREATE TABLE IF NOT EXISTS record_changes (\n    event_id INTEGER NOT NULL REFERENCES record_events(id),\n    position INTEGER NOT NULL,\n    operation TEXT NOT NULL CHECK (\n        operation IN (\n            'add', 'remove', 'relabel', 'relink', 'change_shape',\n            'add_constraint', 'move_constraint', 'confirm', 'unconfirm', 'other'\n        )\n    ),\n    role TEXT NOT NULL DEFAULT '',\n    component TEXT NOT NULL DEFAULT '',\n    before_value TEXT,\n    after_value TEXT,\n    PRIMARY KEY (event_id, position)\n);\n\nCREATE INDEX IF NOT EXISTS idx_record_items_user ON record_items(user_id, created_at);\nCREATE INDEX IF NOT EXISTS idx_record_versions_content ON record_versions(item_id, content_sha256);\nCREATE INDEX IF NOT EXISTS idx_record_events_type ON record_events(item_id, type);\nCREATE INDEX IF NOT EXISTS idx_record_events_nanopub ON record_events(nanopub_uri);\nCREATE INDEX IF NOT EXISTS idx_record_llm_calls_item ON record_llm_calls(item_id);\n\nCREATE TRIGGER IF NOT EXISTS record_items_no_update BEFORE UPDATE ON record_items\nBEGIN SELECT RAISE(ABORT, 'record_items is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_items_no_delete BEFORE DELETE ON record_items\nBEGIN SELECT RAISE(ABORT, 'record_items is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_items_no_overwrite BEFORE INSERT ON record_items\nWHEN EXISTS (SELECT 1 FROM record_items WHERE id = NEW.id OR public_id = NEW.public_id)\nBEGIN SELECT RAISE(ABORT, 'record_items is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_runs_no_update BEFORE UPDATE ON record_runs\nBEGIN SELECT RAISE(ABORT, 'record_runs is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_runs_no_delete BEFORE DELETE ON record_runs\nBEGIN SELECT RAISE(ABORT, 'record_runs is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_runs_no_overwrite BEFORE INSERT ON record_runs\nWHEN EXISTS (SELECT 1 FROM record_runs WHERE item_id = NEW.item_id)\nBEGIN SELECT RAISE(ABORT, 'record_runs is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_llm_calls_no_update BEFORE UPDATE ON record_llm_calls\nBEGIN SELECT RAISE(ABORT, 'record_llm_calls is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_llm_calls_no_delete BEFORE DELETE ON record_llm_calls\nBEGIN SELECT RAISE(ABORT, 'record_llm_calls is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_llm_calls_no_overwrite BEFORE INSERT ON record_llm_calls\nWHEN EXISTS (SELECT 1 FROM record_llm_calls WHERE id = NEW.id)\nBEGIN SELECT RAISE(ABORT, 'record_llm_calls is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_contents_no_update BEFORE UPDATE ON record_contents\nBEGIN SELECT RAISE(ABORT, 'record_contents is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_contents_no_delete BEFORE DELETE ON record_contents\nBEGIN SELECT RAISE(ABORT, 'record_contents is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_contents_no_overwrite BEFORE INSERT ON record_contents\nWHEN EXISTS (SELECT 1 FROM record_contents WHERE sha256 = NEW.sha256)\nBEGIN SELECT RAISE(IGNORE); END;\n\nCREATE TRIGGER IF NOT EXISTS record_versions_no_update BEFORE UPDATE ON record_versions\nBEGIN SELECT RAISE(ABORT, 'record_versions is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_versions_no_delete BEFORE DELETE ON record_versions\nBEGIN SELECT RAISE(ABORT, 'record_versions is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_versions_no_overwrite BEFORE INSERT ON record_versions\nWHEN EXISTS (SELECT 1 FROM record_versions WHERE id = NEW.id OR (item_id = NEW.item_id AND number = NEW.number))\nBEGIN SELECT RAISE(ABORT, 'record_versions is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS client_contexts_no_update BEFORE UPDATE ON client_contexts\nBEGIN SELECT RAISE(ABORT, 'client_contexts is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS client_contexts_no_delete BEFORE DELETE ON client_contexts\nBEGIN SELECT RAISE(ABORT, 'client_contexts is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS client_contexts_no_overwrite BEFORE INSERT ON client_contexts\nWHEN EXISTS (SELECT 1 FROM client_contexts WHERE id = NEW.id OR (user_id = NEW.user_id AND ip_address = NEW.ip_address AND user_agent = NEW.user_agent AND device = NEW.device AND screen = NEW.screen))\nBEGIN SELECT RAISE(IGNORE); END;\n\nCREATE TRIGGER IF NOT EXISTS record_events_no_update BEFORE UPDATE ON record_events\nBEGIN SELECT RAISE(ABORT, 'record_events is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_events_no_delete BEFORE DELETE ON record_events\nBEGIN SELECT RAISE(ABORT, 'record_events is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_events_no_overwrite BEFORE INSERT ON record_events\nWHEN EXISTS (SELECT 1 FROM record_events WHERE id = NEW.id OR (item_id = NEW.item_id AND seq = NEW.seq))\nBEGIN SELECT RAISE(ABORT, 'record_events is append-only'); END;\n\nCREATE TRIGGER IF NOT EXISTS record_changes_no_update BEFORE UPDATE ON record_changes\nBEGIN SELECT RAISE(ABORT, 'record_changes is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_changes_no_delete BEFORE DELETE ON record_changes\nBEGIN SELECT RAISE(ABORT, 'record_changes is append-only'); END;\nCREATE TRIGGER IF NOT EXISTS record_changes_no_overwrite BEFORE INSERT ON record_changes\nWHEN EXISTS (SELECT 1 FROM record_changes WHERE event_id = NEW.event_id AND position = NEW.position)\nBEGIN SELECT RAISE(ABORT, 'record_changes is append-only'); END;\n",
+   "params": null
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM record_schema",
+   "params": []
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "execute",
+   "sql": "INSERT INTO record_schema (version) VALUES (?)",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "commit",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "enter"
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "startup",
+   "conn": 3,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "enter"
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "executescript",
+   "sql": "\n            CREATE TABLE IF NOT EXISTS users (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                username TEXT NOT NULL UNIQUE COLLATE NOCASE,\n                password_hash TEXT NOT NULL,\n                display_name TEXT NOT NULL DEFAULT '',\n                email TEXT NOT NULL DEFAULT '',\n                roles TEXT NOT NULL DEFAULT '[\"user\"]',\n                is_active INTEGER NOT NULL DEFAULT 1,\n                auth_provider TEXT NOT NULL DEFAULT 'local',\n                external_subject TEXT,\n                created_at TEXT NOT NULL,\n                updated_at TEXT NOT NULL,\n                last_login_at TEXT\n            );\n\n            CREATE TABLE IF NOT EXISTS sessions (\n                token_hash TEXT PRIMARY KEY,\n                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n                created_at TEXT NOT NULL,\n                expires_at TEXT NOT NULL,\n                ip_address TEXT NOT NULL DEFAULT '',\n                user_agent TEXT NOT NULL DEFAULT ''\n            );\n\n            CREATE TABLE IF NOT EXISTS audit_events (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                created_at TEXT NOT NULL,\n                user_id INTEGER,\n                username TEXT NOT NULL DEFAULT '',\n                action TEXT NOT NULL,\n                method TEXT NOT NULL DEFAULT '',\n                path TEXT NOT NULL DEFAULT '',\n                status_code INTEGER,\n                latency_ms INTEGER,\n                ip_address TEXT NOT NULL DEFAULT '',\n                user_agent TEXT NOT NULL DEFAULT '',\n                request_payload TEXT,\n                response_payload TEXT,\n                metadata TEXT,\n                error TEXT\n            );\n\n            CREATE TABLE IF NOT EXISTS saved_orcids (\n                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n                orcid TEXT NOT NULL,\n                name TEXT,\n                created_at TEXT NOT NULL,\n                last_used_at TEXT NOT NULL,\n                PRIMARY KEY (user_id, orcid)\n            );\n\n            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);\n            CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at);\n            CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_events(user_id);\n            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);\n            ",
+   "params": null
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM users",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "execute",
+   "sql": "SELECT id FROM users WHERE username = ?",
+   "params": [
+    "admin"
+   ]
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "execute",
+   "sql": "\n                UPDATE users\n                   SET roles = ?, is_active = 1, display_name = COALESCE(NULLIF(display_name, ''), ?),\n                       email = COALESCE(NULLIF(email, ''), ?), updated_at = ?\n                 WHERE id = ?\n                ",
+   "params": [
+    "[\"admin\", \"user\"]",
+    "Admin User",
+    "admin@example.org",
+    "2026-11-23T15:19:00.891360+00:00",
+    1
+   ]
+  },
+  {
+   "op": "startup_again",
+   "conn": 4,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "enter"
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "execute",
+   "sql": "DELETE FROM audit_events WHERE created_at < ?",
+   "params": [
+    "2026-10-24T15:19:00.891457+00:00"
+   ]
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "execute",
+   "sql": "DELETE FROM sessions WHERE expires_at < ?",
+   "params": [
+    "2026-11-23T15:19:00.891725+00:00"
+   ]
+  },
+  {
+   "op": "startup_again",
+   "conn": 5,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "startup_again",
+   "conn": 6,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "startup_again",
+   "conn": 6,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 6,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "startup_again",
+   "conn": 6,
+   "call": "enter"
+  },
+  {
+   "op": "startup_again",
+   "conn": 6,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "startup_again",
+   "conn": 6,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "enter"
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "execute",
+   "sql": "\n                    INSERT INTO users (\n                        username, password_hash, display_name, email, roles, is_active,\n                        auth_provider, external_subject, created_at, updated_at\n                    )\n                    VALUES (?, ?, ?, ?, ?, ?, 'local', ?, ?, ?)\n                    ",
+   "params": [
+    "bob",
+    "pbkdf2_sha256$390000$tyPdzbdKHlkjRpv3FoogxA==$p51CJyxJ87wsUC8zho2AljaVOSmHXNnTdALTP+ym/eA=",
+    "Bob Example",
+    "bob@example.org",
+    "[\"user\"]",
+    1,
+    "bob",
+    "2026-11-23T15:19:00.892030+00:00",
+    "2026-11-23T15:19:00.892030+00:00"
+   ]
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "account_create",
+   "conn": 7,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "enter"
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "execute",
+   "sql": "\n                    INSERT INTO users (\n                        username, password_hash, display_name, email, roles, is_active,\n                        auth_provider, external_subject, created_at, updated_at\n                    )\n                    VALUES (?, ?, ?, ?, ?, ?, 'local', ?, ?, ?)\n                    ",
+   "params": [
+    "carol",
+    "pbkdf2_sha256$390000$ISXtixaWizeod22qHC1hEg==$1jIUTY8sy+PmLtlMuE0OPriIcXps/Ui/vuuCIfCvbzQ=",
+    "",
+    "",
+    "[\"user\"]",
+    1,
+    "carol",
+    "2026-11-23T15:19:00.962483+00:00",
+    "2026-11-23T15:19:00.962483+00:00"
+   ]
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_create",
+   "conn": 8,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "enter"
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE username = ?",
+   "params": [
+    "bob"
+   ]
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "execute",
+   "sql": "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?",
+   "params": [
+    "2026-11-23T15:19:01.104497+00:00",
+    "2026-11-23T15:19:01.104507+00:00",
+    2
+   ]
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "login",
+   "conn": 9,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "session_create",
+   "conn": 10,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "session_create",
+   "conn": 10,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "session_create",
+   "conn": 10,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "session_create",
+   "conn": 10,
+   "call": "enter"
+  },
+  {
+   "op": "session_create",
+   "conn": 10,
+   "call": "execute",
+   "sql": "\n                INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip_address, user_agent)\n                VALUES (?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    "fd7758622585ea2d8917d30c73cd09738908340b387b70be57f4bbd2f783558a",
+    2,
+    "2026-11-23T15:19:01.105098+00:00",
+    "2026-11-24T03:19:01.105098+00:00",
+    "192.0.2.10",
+    "PreviousImageCapture/1.0"
+   ]
+  },
+  {
+   "op": "session_create",
+   "conn": 10,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "session_create",
+   "conn": 11,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "session_create",
+   "conn": 11,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "session_create",
+   "conn": 11,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "session_create",
+   "conn": 11,
+   "call": "enter"
+  },
+  {
+   "op": "session_create",
+   "conn": 11,
+   "call": "execute",
+   "sql": "\n                INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip_address, user_agent)\n                VALUES (?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    "f55798b560f1afb82a67e7130bb2bc163e74f13426da32c2ed69f743ccbb3ed9",
+    2,
+    "2026-11-23T15:19:01.105553+00:00",
+    "2026-11-24T03:19:01.105553+00:00",
+    "192.0.2.10",
+    "PreviousImageCapture/1.0"
+   ]
+  },
+  {
+   "op": "session_create",
+   "conn": 11,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "session_lookup",
+   "conn": 12,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "session_lookup",
+   "conn": 12,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "session_lookup",
+   "conn": 12,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "session_lookup",
+   "conn": 12,
+   "call": "enter"
+  },
+  {
+   "op": "session_lookup",
+   "conn": 12,
+   "call": "execute",
+   "sql": "\n                SELECT users.*\n                  FROM sessions\n                  JOIN users ON users.id = sessions.user_id\n                 WHERE sessions.token_hash = ?\n                   AND users.is_active = 1\n                   AND sessions.expires_at > ?\n                ",
+   "params": [
+    "fd7758622585ea2d8917d30c73cd09738908340b387b70be57f4bbd2f783558a",
+    "2026-11-23T15:19:01.106129+00:00"
+   ]
+  },
+  {
+   "op": "session_lookup",
+   "conn": 12,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_read",
+   "conn": 13,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_read",
+   "conn": 13,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_read",
+   "conn": 13,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_read",
+   "conn": 13,
+   "call": "enter"
+  },
+  {
+   "op": "account_read",
+   "conn": 13,
+   "call": "execute",
+   "sql": "\n                SELECT * FROM users\n                 ORDER BY is_active DESC, username COLLATE NOCASE ASC\n                ",
+   "params": []
+  },
+  {
+   "op": "account_read",
+   "conn": 13,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_read",
+   "conn": 14,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_read",
+   "conn": 14,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_read",
+   "conn": 14,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_read",
+   "conn": 14,
+   "call": "enter"
+  },
+  {
+   "op": "account_read",
+   "conn": 14,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "account_read",
+   "conn": 14,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "enter"
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "execute",
+   "sql": "UPDATE users SET password_hash = ?, display_name = ?, email = ?, updated_at = ? WHERE id = ?",
+   "params": [
+    "pbkdf2_sha256$390000$yhTpDX6y2R15EenexznTNw==$f7IBu94YhBIO5+oovM8SoPg6EYIJoL/kaPUmg1HWWB4=",
+    "Carol Example",
+    "carol@example.org",
+    "2026-11-23T15:19:01.175521+00:00",
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 15,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "enter"
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "execute",
+   "sql": "SELECT id, roles, is_active FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "execute",
+   "sql": "UPDATE users SET roles = ?, updated_at = ? WHERE id = ?",
+   "params": [
+    "[\"admin\", \"user\"]",
+    "2026-11-23T15:19:01.176270+00:00",
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 16,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "enter"
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "SELECT id, roles, is_active FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "SELECT id, roles FROM users WHERE is_active = 1 AND id != ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "UPDATE users SET roles = ?, is_active = ?, updated_at = ? WHERE id = ?",
+   "params": [
+    "[\"user\"]",
+    0,
+    "2026-11-23T15:19:01.176618+00:00",
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "execute",
+   "sql": "DELETE FROM sessions WHERE user_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 17,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "enter"
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "execute",
+   "sql": "SELECT id, roles, is_active FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "execute",
+   "sql": "UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?",
+   "params": [
+    1,
+    "2026-11-23T15:19:01.176978+00:00",
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "execute",
+   "sql": "SELECT * FROM users WHERE id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "account_update",
+   "conn": 18,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "audit_write",
+   "conn": 19,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "audit_write",
+   "conn": 19,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "audit_write",
+   "conn": 19,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "audit_write",
+   "conn": 19,
+   "call": "enter"
+  },
+  {
+   "op": "audit_write",
+   "conn": 19,
+   "call": "execute",
+   "sql": "\n                    INSERT INTO audit_events (\n                        created_at, user_id, username, action, method, path, status_code,\n                        latency_ms, ip_address, user_agent, request_payload, response_payload,\n                        metadata, error\n                    )\n                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                    ",
+   "params": [
+    "2026-11-23T15:19:01.177508+00:00",
+    2,
+    "bob",
+    "auth.login",
+    "POST",
+    "/api/capture",
+    200,
+    12,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"username\": \"bob\"}",
+    "{\"user\": {\"id\": 2}}",
+    "{\"model_provider\": \"psnc\", \"model_name\": \"Qwen3.8-27B\"}",
+    null
+   ]
+  },
+  {
+   "op": "audit_write",
+   "conn": 19,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "audit_read",
+   "conn": 20,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "audit_read",
+   "conn": 20,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 20,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 20,
+   "call": "enter"
+  },
+  {
+   "op": "audit_read",
+   "conn": 20,
+   "call": "execute",
+   "sql": "\n                SELECT * FROM audit_events\n                 \n                 ORDER BY created_at DESC, id DESC\n                 LIMIT ? OFFSET ?\n                ",
+   "params": [
+    50,
+    0
+   ]
+  },
+  {
+   "op": "audit_read",
+   "conn": 20,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "audit_read",
+   "conn": 21,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "audit_read",
+   "conn": 21,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 21,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 21,
+   "call": "enter"
+  },
+  {
+   "op": "audit_read",
+   "conn": 21,
+   "call": "execute",
+   "sql": "\n                SELECT * FROM audit_events\n                 WHERE user_id = ?\n                 ORDER BY created_at DESC, id DESC\n                 LIMIT ? OFFSET ?\n                ",
+   "params": [
+    2,
+    50,
+    0
+   ]
+  },
+  {
+   "op": "audit_read",
+   "conn": 21,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "enter"
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM users",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM users WHERE is_active = 1",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "execute",
+   "sql": "\n                SELECT * FROM audit_events\n                 ORDER BY created_at DESC, id DESC\n                 LIMIT 5000\n                ",
+   "params": []
+  },
+  {
+   "op": "audit_read",
+   "conn": 22,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "enter"
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "execute",
+   "sql": "DELETE FROM audit_events WHERE created_at < ?",
+   "params": [
+    "2026-10-24T15:19:01.178447+00:00"
+   ]
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "execute",
+   "sql": "DELETE FROM sessions WHERE expires_at < ?",
+   "params": [
+    "2026-11-23T15:19:01.178670+00:00"
+   ]
+  },
+  {
+   "op": "audit_prune",
+   "conn": 23,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "enter"
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "execute",
+   "sql": "UPDATE saved_orcids SET last_used_at = ?, name = COALESCE(?, name) WHERE user_id = ? AND orcid = ?",
+   "params": [
+    "2026-11-23T15:19:01.178738+00:00",
+    "Josiah Carberry",
+    2,
+    "https://orcid.org/0000-0002-1825-0097"
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM saved_orcids WHERE user_id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "execute",
+   "sql": "INSERT INTO saved_orcids (user_id, orcid, name, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)",
+   "params": [
+    2,
+    "https://orcid.org/0000-0002-1825-0097",
+    "Josiah Carberry",
+    "2026-11-23T15:19:01.178738+00:00",
+    "2026-11-23T15:19:01.178738+00:00"
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "execute",
+   "sql": "\n            SELECT orcid, name, created_at, last_used_at\n              FROM saved_orcids\n             WHERE user_id = ?\n             ORDER BY last_used_at DESC, orcid ASC\n            ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 24,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "enter"
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "execute",
+   "sql": "UPDATE saved_orcids SET last_used_at = ?, name = COALESCE(?, name) WHERE user_id = ? AND orcid = ?",
+   "params": [
+    "2026-11-23T15:19:01.179066+00:00",
+    null,
+    2,
+    "https://orcid.org/0000-0001-5109-3700"
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM saved_orcids WHERE user_id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "execute",
+   "sql": "INSERT INTO saved_orcids (user_id, orcid, name, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)",
+   "params": [
+    2,
+    "https://orcid.org/0000-0001-5109-3700",
+    null,
+    "2026-11-23T15:19:01.179066+00:00",
+    "2026-11-23T15:19:01.179066+00:00"
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "execute",
+   "sql": "\n            SELECT orcid, name, created_at, last_used_at\n              FROM saved_orcids\n             WHERE user_id = ?\n             ORDER BY last_used_at DESC, orcid ASC\n            ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 25,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "enter"
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "execute",
+   "sql": "UPDATE saved_orcids SET last_used_at = ?, name = COALESCE(?, name) WHERE user_id = ? AND orcid = ?",
+   "params": [
+    "2026-11-23T15:19:01.179406+00:00",
+    null,
+    2,
+    "https://orcid.org/0000-0002-1825-0097"
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "execute",
+   "sql": "\n            SELECT orcid, name, created_at, last_used_at\n              FROM saved_orcids\n             WHERE user_id = ?\n             ORDER BY last_used_at DESC, orcid ASC\n            ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_save",
+   "conn": 26,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "orcid_read",
+   "conn": 27,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "orcid_read",
+   "conn": 27,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "orcid_read",
+   "conn": 27,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "orcid_read",
+   "conn": 27,
+   "call": "enter"
+  },
+  {
+   "op": "orcid_read",
+   "conn": 27,
+   "call": "execute",
+   "sql": "\n            SELECT orcid, name, created_at, last_used_at\n              FROM saved_orcids\n             WHERE user_id = ?\n             ORDER BY last_used_at DESC, orcid ASC\n            ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_read",
+   "conn": 27,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "enter"
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "execute",
+   "sql": "DELETE FROM saved_orcids WHERE user_id = ? AND orcid = ?",
+   "params": [
+    2,
+    "https://orcid.org/0000-0001-5109-3700"
+   ]
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "execute",
+   "sql": "\n            SELECT orcid, name, created_at, last_used_at\n              FROM saved_orcids\n             WHERE user_id = ?\n             ORDER BY last_used_at DESC, orcid ASC\n            ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "orcid_remove",
+   "conn": 28,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "enter"
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "SELECT 1 FROM record_items WHERE public_id = ?",
+   "params": [
+    "82ed3e9c89b9ea25"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "INSERT INTO record_items (public_id, user_id, origin, definition, created_at) VALUES (?, ?, ?, ?, ?)",
+   "params": [
+    "82ed3e9c89b9ea25",
+    2,
+    "decompose",
+    "dissolved oxygen in water",
+    "2026-11-23T15:19:01.183732+00:00"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "\n                INSERT INTO record_runs (\n                    item_id, provider, model, disable_thinking, prompt_setup, prompt_sha256, started_at,\n                    ended_at, status, error, raw_output, parsed_json, schema_valid, validation_errors\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    1,
+    "openrouter",
+    "qwen/qwen3-32b",
+    1,
+    "measured",
+    "abc123",
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-18T10:00:03+00:00",
+    "ok",
+    null,
+    "{}",
+    "{\"label\": \"dissolved oxygen in water\"}",
+    1,
+    "[]"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "executemany",
+   "sql": "\n                INSERT INTO record_llm_calls (\n                    item_id, purpose, attempt, provider, model, started_at, latency_ms,\n                    input_tokens, output_tokens, status, error\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    [
+     1,
+     "decomposition",
+     1,
+     "openrouter",
+     "qwen/qwen3-32b",
+     "2026-11-18T10:00:00+00:00",
+     1538,
+     2805,
+     126,
+     "ok",
+     null
+    ],
+    [
+     1,
+     "linking",
+     1,
+     "openrouter",
+     "qwen/qwen3-32b",
+     "2026-11-18T10:00:02+00:00",
+     640,
+     669,
+     1,
+     "unusable",
+     "The text is not one of the offered labels."
+    ]
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO record_contents (sha256, core_sha256, turtle, byte_size, created_at)\n            VALUES (?, ?, ?, ?, ?)\n            ",
+   "params": [
+    "c7915a9face76800b245811c6aa3bdb35c2a3329cbf7c6ba76114d2f26ce617b",
+    "79b3778fae070c49f9d65f339cbd3b4488201c5bd576a63f5686ffdc5c1b4b0e",
+    "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/1> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> .\n<https://www.wikidata.org/entity/Q283> rdfs:label \"water\" .\n",
+    316,
+    "2026-11-23T15:19:01.183811+00:00"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_versions (item_id, number, kind, content_sha256, parent_id, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    1,
+    0,
+    "model_draft",
+    "c7915a9face76800b245811c6aa3bdb35c2a3329cbf7c6ba76114d2f26ce617b",
+    null,
+    "2026-11-23T15:19:01.183811+00:00"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.183868+00:00"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    1,
+    1,
+    "draft",
+    1,
+    "2026-11-18T10:00:03+00:00",
+    "2026-11-23T15:19:01.183917+00:00",
+    1,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 29,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "enter"
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "SELECT 1 FROM record_items WHERE public_id = ?",
+   "params": [
+    "36e99b99a2ae4634"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "INSERT INTO record_items (public_id, user_id, origin, definition, created_at) VALUES (?, ?, ?, ?, ?)",
+   "params": [
+    "36e99b99a2ae4634",
+    2,
+    "decompose",
+    "air temperature",
+    "2026-11-23T15:19:01.184418+00:00"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "\n                INSERT INTO record_runs (\n                    item_id, provider, model, disable_thinking, prompt_setup, prompt_sha256, started_at,\n                    ended_at, status, error, raw_output, parsed_json, schema_valid, validation_errors\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    2,
+    "psnc",
+    "Qwen3.8-27B",
+    1,
+    "measured",
+    null,
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-18T10:00:01+00:00",
+    "error",
+    "HTTP 401",
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "executemany",
+   "sql": "\n                INSERT INTO record_llm_calls (\n                    item_id, purpose, attempt, provider, model, started_at, latency_ms,\n                    input_tokens, output_tokens, status, error\n                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": []
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "",
+    "",
+    "2026-11-23T15:19:01.184468+00:00"
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "",
+    ""
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    1,
+    "draft",
+    null,
+    "2026-11-18T10:00:01+00:00",
+    "2026-11-23T15:19:01.184501+00:00",
+    2,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_decomposition",
+   "conn": 30,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "enter"
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "SELECT 1 FROM record_items WHERE public_id = ?",
+   "params": [
+    "4c96026aadb4a69e"
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "INSERT INTO record_items (public_id, user_id, origin, definition, created_at) VALUES (?, ?, ?, ?, ?)",
+   "params": [
+    "4c96026aadb4a69e",
+    2,
+    "import",
+    null,
+    "2026-11-23T15:19:01.185339+00:00"
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO record_contents (sha256, core_sha256, turtle, byte_size, created_at)\n            VALUES (?, ?, ?, ?, ?)\n            ",
+   "params": [
+    "c7915a9face76800b245811c6aa3bdb35c2a3329cbf7c6ba76114d2f26ce617b",
+    "79b3778fae070c49f9d65f339cbd3b4488201c5bd576a63f5686ffdc5c1b4b0e",
+    "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/1> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> .\n<https://www.wikidata.org/entity/Q283> rdfs:label \"water\" .\n",
+    316,
+    "2026-11-23T15:19:01.185359+00:00"
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_versions (item_id, number, kind, content_sha256, parent_id, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    0,
+    "imported",
+    "c7915a9face76800b245811c6aa3bdb35c2a3329cbf7c6ba76114d2f26ce617b",
+    null,
+    "2026-11-23T15:19:01.185359+00:00"
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.185401+00:00"
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    1,
+    "import",
+    2,
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-23T15:19:01.185431+00:00",
+    1,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_import",
+   "conn": 31,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "enter"
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "SELECT * FROM record_items WHERE public_id = ? AND user_id = ?",
+   "params": [
+    "4c96026aadb4a69e",
+    2
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "\n            SELECT v.*, c.core_sha256\n              FROM record_versions v\n              JOIN record_contents c ON c.sha256 = v.content_sha256\n             WHERE v.item_id = ? AND v.number = ?\n            ",
+   "params": [
+    3,
+    0
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(number), -1) + 1 FROM record_versions WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO record_contents (sha256, core_sha256, turtle, byte_size, created_at)\n            VALUES (?, ?, ?, ?, ?)\n            ",
+   "params": [
+    "b20d217624cfb4c1d31062d384d695635b75595e8d8423a6b1c914b5dbd0caae",
+    "c61eaac0658859b566198fa4a9a15993d55a4b22b6a0d5909d40c1c23a227dd8",
+    "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/1> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> .\n<https://www.wikidata.org/entity/Q283> rdfs:label \"sea water\" .\n",
+    320,
+    "2026-11-23T15:19:01.186218+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_versions (item_id, number, kind, content_sha256, parent_id, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    1,
+    "edited",
+    "b20d217624cfb4c1d31062d384d695635b75595e8d8423a6b1c914b5dbd0caae",
+    2,
+    "2026-11-23T15:19:01.186218+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.186261+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    2,
+    "edit",
+    3,
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-23T15:19:01.186295+00:00",
+    1,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "executemany",
+   "sql": "\n                INSERT INTO record_changes (\n                    event_id, position, operation, role, component, before_value, after_value\n                ) VALUES (?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    [
+     4,
+     1,
+     "relabel",
+     "hasMatrix",
+     "https://www.wikidata.org/entity/Q283",
+     "water",
+     "sea water"
+    ]
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_steps",
+   "conn": 32,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "enter"
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "SELECT * FROM record_items WHERE public_id = ? AND user_id = ?",
+   "params": [
+    "4c96026aadb4a69e",
+    2
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "\n            SELECT v.*, c.core_sha256\n              FROM record_versions v\n              JOIN record_contents c ON c.sha256 = v.content_sha256\n             WHERE v.item_id = ? AND v.number = ?\n            ",
+   "params": [
+    3,
+    1
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.186778+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    3,
+    "check",
+    3,
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-23T15:19:01.186812+00:00",
+    1,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "executemany",
+   "sql": "\n                INSERT INTO record_changes (\n                    event_id, position, operation, role, component, before_value, after_value\n                ) VALUES (?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": [
+    [
+     5,
+     1,
+     "confirm",
+     "hasMatrix",
+     "https://www.wikidata.org/entity/Q283",
+     null,
+     null
+    ]
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_steps",
+   "conn": 33,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "enter"
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "SELECT * FROM record_items WHERE public_id = ? AND user_id = ?",
+   "params": [
+    "4c96026aadb4a69e",
+    2
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "\n            SELECT v.*, c.core_sha256\n              FROM record_versions v\n              JOIN record_contents c ON c.sha256 = v.content_sha256\n             WHERE v.item_id = ? AND v.number = ?\n            ",
+   "params": [
+    3,
+    1
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(number), -1) + 1 FROM record_versions WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO record_contents (sha256, core_sha256, turtle, byte_size, created_at)\n            VALUES (?, ?, ?, ?, ?)\n            ",
+   "params": [
+    "d240a80921f1eea30de2b7a316f74767954291e0a31409022b7d1ed5182a10a2",
+    "c61eaac0658859b566198fa4a9a15993d55a4b22b6a0d5909d40c1c23a227dd8",
+    "@prefix iop: <https://w3id.org/iadopt/ont/> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/variable/1> a iop:Variable ;\n    rdfs:label \"dissolved oxygen in water\" ;\n    iop:hasMatrix <https://www.wikidata.org/entity/Q283> .\n<https://www.wikidata.org/entity/Q283> rdfs:label \"sea water\" .\n<https://example.org/variable/1> <http://purl.org/dc/terms/conformsTo> <https://w3id.org/iadopt/ont/1.1> .\n",
+    427,
+    "2026-11-23T15:19:01.187688+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_versions (item_id, number, kind, content_sha256, parent_id, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    2,
+    "metadata",
+    "d240a80921f1eea30de2b7a316f74767954291e0a31409022b7d1ed5182a10a2",
+    3,
+    "2026-11-23T15:19:01.187688+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.187730+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    4,
+    "metadata",
+    4,
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-23T15:19:01.187763+00:00",
+    1,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "executemany",
+   "sql": "\n                INSERT INTO record_changes (\n                    event_id, position, operation, role, component, before_value, after_value\n                ) VALUES (?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_steps",
+   "conn": 34,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "enter"
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "SELECT * FROM record_items WHERE public_id = ? AND user_id = ?",
+   "params": [
+    "4c96026aadb4a69e",
+    2
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "\n            SELECT v.*, c.core_sha256\n              FROM record_versions v\n              JOIN record_contents c ON c.sha256 = v.content_sha256\n             WHERE v.item_id = ? AND v.number = ?\n            ",
+   "params": [
+    3,
+    2
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.188224+00:00"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    5,
+    "mark_best",
+    4,
+    "2026-11-18T10:00:00+00:00",
+    "2026-11-23T15:19:01.188254+00:00",
+    1,
+    "the matrix is sea water",
+    0,
+    null,
+    null
+   ]
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "executemany",
+   "sql": "\n                INSERT INTO record_changes (\n                    event_id, position, operation, role, component, before_value, after_value\n                ) VALUES (?, ?, ?, ?, ?, ?, ?)\n                ",
+   "params": []
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_steps",
+   "conn": 35,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "enter"
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "SELECT * FROM record_items WHERE public_id = ? AND user_id = ?",
+   "params": [
+    "4c96026aadb4a69e",
+    2
+   ]
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "\n                SELECT v.number, v.kind, v.content_sha256, p.number AS parent, v.created_at\n                  FROM record_versions v\n                  LEFT JOIN record_versions p ON p.id = v.parent_id\n                 WHERE v.item_id = ?\n                 ORDER BY v.number\n                ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "\n            SELECT v.id, v.number, c.core_sha256\n              FROM record_events e\n              JOIN record_versions v ON v.id = e.version_id\n              JOIN record_contents c ON c.sha256 = v.content_sha256\n             WHERE e.item_id = ? AND e.type = 'mark_best'\n             ORDER BY e.seq DESC\n             LIMIT 1\n            ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "\n                SELECT v.number AS version, e.nanopub_uri, e.orcid, e.occurred_at AS published_at\n                  FROM record_events e\n                  JOIN record_versions v ON v.id = e.version_id\n                 WHERE e.item_id = ? AND e.type = 'publish'\n                 ORDER BY e.seq\n                ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "execute",
+   "sql": "SELECT COUNT(*) FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_read",
+   "conn": 36,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "enter"
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "execute",
+   "sql": "SELECT * FROM record_items WHERE public_id = ? AND user_id = ?",
+   "params": [
+    "4c96026aadb4a69e",
+    2
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "execute",
+   "sql": "\n            SELECT v.id, v.number, c.core_sha256\n              FROM record_events e\n              JOIN record_versions v ON v.id = e.version_id\n              JOIN record_contents c ON c.sha256 = v.content_sha256\n             WHERE e.item_id = ? AND e.type = 'mark_best'\n             ORDER BY e.seq DESC\n             LIMIT 1\n            ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_publish",
+   "conn": 37,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "enter"
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "SELECT id FROM record_versions WHERE item_id = ? AND content_sha256 = ? ORDER BY number DESC LIMIT 1",
+   "params": [
+    3,
+    "d240a80921f1eea30de2b7a316f74767954291e0a31409022b7d1ed5182a10a2"
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "\n            INSERT OR IGNORE INTO client_contexts (user_id, ip_address, user_agent, device, screen, created_at)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}",
+    "2026-11-23T15:19:01.189605+00:00"
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "\n            SELECT id FROM client_contexts\n             WHERE user_id = ? AND ip_address = ? AND user_agent = ? AND device = ? AND screen = ?\n            ",
+   "params": [
+    2,
+    "192.0.2.10",
+    "PreviousImageCapture/1.0",
+    "{\"mobile\":false,\"platform\":\"macOS\",\"touch_points\":0}",
+    "{\"height\":982,\"pixel_ratio\":2,\"width\":1512}"
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "SELECT COALESCE(MAX(seq), 0) + 1 FROM record_events WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "execute",
+   "sql": "\n            INSERT INTO record_events (\n                item_id, seq, type, version_id, occurred_at, recorded_at, context_id,\n                note, unchecked_components, nanopub_uri, orcid\n            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ",
+   "params": [
+    3,
+    6,
+    "publish",
+    4,
+    "2026-11-23T15:19:01.189596+00:00",
+    "2026-11-23T15:19:01.189637+00:00",
+    1,
+    null,
+    null,
+    "https://w3id.org/np/RAexampleCapturedNanopub",
+    "https://orcid.org/0000-0002-1825-0097"
+   ]
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_publish",
+   "conn": 38,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "enter"
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "PRAGMA query_only = ON",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "BEGIN",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n    SELECT i.public_id, i.created_at, i.origin, i.definition, u.username, u.display_name, u.email,\n           r.provider, r.model, r.status AS run_status, r.error AS run_error,\n           (SELECT COUNT(*) FROM record_llm_calls m WHERE m.item_id = i.id) AS calls,\n           (SELECT SUM(m.input_tokens) FROM record_llm_calls m WHERE m.item_id = i.id) AS tokens_in,\n           (SELECT SUM(m.output_tokens) FROM record_llm_calls m WHERE m.item_id = i.id) AS tokens_out,\n           (SELECT COUNT(*) FROM record_versions v WHERE v.item_id = i.id) AS versions,\n           (SELECT COUNT(*) FROM record_events e WHERE e.item_id = i.id AND e.type = 'edit') AS edits,\n           (SELECT COUNT(*) FROM record_events e WHERE e.item_id = i.id AND e.type = 'check') AS checks,\n           (SELECT COUNT(*) FROM record_events e WHERE e.item_id = i.id AND e.type = 'uncheck') AS unchecks,\n           (SELECT v.number FROM record_events e JOIN record_versions v ON v.id = e.version_id\n             WHERE e.item_id = i.id AND e.type = 'mark_best' ORDER BY e.seq DESC LIMIT 1) AS best_version,\n           (SELECT e.note FROM record_events e\n             WHERE e.item_id = i.id AND e.type = 'mark_best' ORDER BY e.seq DESC LIMIT 1) AS best_note,\n           (SELECT e.occurred_at FROM record_events e\n             WHERE e.item_id = i.id AND e.type = 'publish' ORDER BY e.seq DESC LIMIT 1) AS published_at,\n           i.id AS item_id\n      FROM record_items i\n      JOIN users u ON u.id = i.user_id\n      LEFT JOIN record_runs r ON r.item_id = i.id\n     ORDER BY i.id\n",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT nanopub_uri FROM record_events WHERE item_id = ? AND type = 'publish' AND nanopub_uri IS NOT NULL ORDER BY seq",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT nanopub_uri FROM record_events WHERE item_id = ? AND type = 'publish' AND nanopub_uri IS NOT NULL ORDER BY seq",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT nanopub_uri FROM record_events WHERE item_id = ? AND type = 'publish' AND nanopub_uri IS NOT NULL ORDER BY seq",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n    SELECT i.public_id, e.occurred_at, u.username, u.display_name, i.definition, e.seq, e.type,\n           v.number AS version, c.operation, c.role, c.component, c.before_value, c.after_value\n      FROM record_changes c\n      JOIN record_events e ON e.id = c.event_id\n      JOIN record_items i ON i.id = e.item_id\n      JOIN users u ON u.id = i.user_id\n      LEFT JOIN record_versions v ON v.id = e.version_id\n     ORDER BY i.id, e.seq, c.position\n",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n    SELECT i.id, i.public_id, i.origin, i.definition, i.created_at, u.id AS user_id, u.username,\n           u.display_name, u.email\n      FROM record_items i\n      JOIN users u ON u.id = i.user_id\n     ORDER BY i.id\n",
+   "params": []
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT v.number, v.kind, v.created_at, v.content_sha256, c.core_sha256, c.turtle, p.number AS parent\n          FROM record_versions v\n          JOIN record_contents c ON c.sha256 = v.content_sha256\n          LEFT JOIN record_versions p ON p.id = v.parent_id\n         WHERE v.item_id = ?\n         ORDER BY v.number\n        ",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT * FROM record_runs WHERE item_id = ?",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT * FROM record_llm_calls WHERE item_id = ? ORDER BY id",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT c.event_id, c.operation, c.role, c.component, c.before_value, c.after_value\n          FROM record_changes c\n          JOIN record_events e ON e.id = c.event_id\n         WHERE e.item_id = ?\n         ORDER BY c.event_id, c.position\n        ",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT e.id, e.seq, e.type, v.number AS version, e.occurred_at, e.recorded_at, e.note,\n               e.unchecked_components, e.nanopub_uri, e.orcid\n          FROM record_events e\n          LEFT JOIN record_versions v ON v.id = e.version_id\n         WHERE e.item_id = ?\n         ORDER BY e.seq\n        ",
+   "params": [
+    1
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT v.number, v.kind, v.created_at, v.content_sha256, c.core_sha256, c.turtle, p.number AS parent\n          FROM record_versions v\n          JOIN record_contents c ON c.sha256 = v.content_sha256\n          LEFT JOIN record_versions p ON p.id = v.parent_id\n         WHERE v.item_id = ?\n         ORDER BY v.number\n        ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT * FROM record_runs WHERE item_id = ?",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT * FROM record_llm_calls WHERE item_id = ? ORDER BY id",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT c.event_id, c.operation, c.role, c.component, c.before_value, c.after_value\n          FROM record_changes c\n          JOIN record_events e ON e.id = c.event_id\n         WHERE e.item_id = ?\n         ORDER BY c.event_id, c.position\n        ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT e.id, e.seq, e.type, v.number AS version, e.occurred_at, e.recorded_at, e.note,\n               e.unchecked_components, e.nanopub_uri, e.orcid\n          FROM record_events e\n          LEFT JOIN record_versions v ON v.id = e.version_id\n         WHERE e.item_id = ?\n         ORDER BY e.seq\n        ",
+   "params": [
+    2
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT v.number, v.kind, v.created_at, v.content_sha256, c.core_sha256, c.turtle, p.number AS parent\n          FROM record_versions v\n          JOIN record_contents c ON c.sha256 = v.content_sha256\n          LEFT JOIN record_versions p ON p.id = v.parent_id\n         WHERE v.item_id = ?\n         ORDER BY v.number\n        ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "SELECT * FROM record_runs WHERE item_id = ?",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT c.event_id, c.operation, c.role, c.component, c.before_value, c.after_value\n          FROM record_changes c\n          JOIN record_events e ON e.id = c.event_id\n         WHERE e.item_id = ?\n         ORDER BY c.event_id, c.position\n        ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "execute",
+   "sql": "\n        SELECT e.id, e.seq, e.type, v.number AS version, e.occurred_at, e.recorded_at, e.note,\n               e.unchecked_components, e.nanopub_uri, e.orcid\n          FROM record_events e\n          LEFT JOIN record_versions v ON v.id = e.version_id\n         WHERE e.item_id = ?\n         ORDER BY e.seq\n        ",
+   "params": [
+    3
+   ]
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "exit",
+   "commit": true
+  },
+  {
+   "op": "record_export",
+   "conn": 39,
+   "call": "close",
+   "sql": null,
+   "params": null
+  },
+  {
+   "op": "session_end",
+   "conn": 40,
+   "call": "connect",
+   "timeout": 30
+  },
+  {
+   "op": "session_end",
+   "conn": 40,
+   "call": "execute",
+   "sql": "PRAGMA foreign_keys = ON",
+   "params": []
+  },
+  {
+   "op": "session_end",
+   "conn": 40,
+   "call": "execute",
+   "sql": "PRAGMA journal_mode = WAL",
+   "params": []
+  },
+  {
+   "op": "session_end",
+   "conn": 40,
+   "call": "enter"
+  },
+  {
+   "op": "session_end",
+   "conn": 40,
+   "call": "execute",
+   "sql": "DELETE FROM sessions WHERE token_hash = ?",
+   "params": [
+    "fd7758622585ea2d8917d30c73cd09738908340b387b70be57f4bbd2f783558a"
+   ]
+  },
+  {
+   "op": "session_end",
+   "conn": 40,
+   "call": "exit",
+   "commit": true
+  }
+ ]
+}

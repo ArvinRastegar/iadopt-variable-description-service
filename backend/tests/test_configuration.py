@@ -153,8 +153,15 @@ class AuthApiTests(unittest.TestCase):
         self.assertIn("iadopt_session", success.cookies)
 
     def test_inactive_user_cannot_login(self):
+        """A blocked account cannot sign in. Covers: AC-accounts-roles-003.
+
+        Rewritten at the increment-1 tests gate (G-018): blocking, through its own route,
+        replaces disabling an account through an update.
+        """
         user = self.store.create_user(username="disabled", password="password-123")
-        self.store.update_user(user["id"], {"is_active": False})
+        self.login()
+        blocked = self.client.post(f"/api/admin/users/{user['id']}/block", json={"reason": "Test block."})
+        self.assertEqual(blocked.status_code, 200)
 
         response = self.client.post(
             "/api/auth/login",
@@ -163,7 +170,12 @@ class AuthApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
-    def test_admin_can_create_disable_and_reset_user(self):
+    def test_admin_can_create_block_and_reset_user(self):
+        """Covers: AC-accounts-roles-009, AC-accounts-roles-003.
+
+        Rewritten at the increment-1 tests gate (G-018): an update no longer disables an account
+        ("Use block or unblock."); the block route does, and the refused update changes nothing.
+        """
         self.login()
         created = self.client.post(
             "/api/admin/users",
@@ -183,8 +195,15 @@ class AuthApiTests(unittest.TestCase):
             f"/api/admin/users/{user_id}",
             json={"is_active": False, "password": "new-password-123"},
         )
-        self.assertEqual(disabled.status_code, 200)
-        self.assertFalse(disabled.json()["user"]["is_active"])
+        self.assertEqual((disabled.status_code, disabled.json()["detail"]), (400, "Use block or unblock."))
+        self.assertEqual(self.client.post("/api/auth/login", json={"username": "alice", "password": "password-123"}).status_code, 200)
+        self.login()
+
+        reset = self.client.patch(f"/api/admin/users/{user_id}", json={"password": "new-password-123"})
+        self.assertEqual(reset.status_code, 200)
+        blocked = self.client.post(f"/api/admin/users/{user_id}/block", json={"reason": "Test block."})
+        self.assertEqual(blocked.status_code, 200)
+        self.assertTrue(blocked.json()["user"]["blocked"])
 
         login = self.client.post(
             "/api/auth/login",
@@ -200,7 +219,13 @@ class AuthApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_last_active_admin_cannot_be_disabled(self):
+    def test_the_last_admin_guard_gives_way_to_the_owner_rules(self):
+        """Covers: AC-accounts-roles-003, AC-accounts-roles-006, AC-accounts-roles-009.
+
+        Rewritten at the increment-1 tests gate (G-018): the last-active-admin guard goes. An
+        update cannot disable anyone, nobody blocks their own account, and without an owner no
+        admin can be blocked or lose admin, so the set of admins cannot shrink.
+        """
         self.login()
         admin = next(user for user in self.store.list_users() if user["username"] == "admin")
 
@@ -208,9 +233,14 @@ class AuthApiTests(unittest.TestCase):
             f"/api/admin/users/{admin['id']}",
             json={"is_active": False},
         )
+        self.assertEqual((response.status_code, response.json()["detail"]), (400, "Use block or unblock."))
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("last active admin", response.json()["detail"])
+        own = self.client.post(f"/api/admin/users/{admin['id']}/block", json={"reason": "Test block."})
+        self.assertEqual(
+            (own.status_code, own.json()),
+            (403, {"detail": "You cannot block or unblock your own account.", "reason": "own_account"}),
+        )
+        self.assertTrue(self.store.get_user(admin["id"])["is_active"])
 
     def test_decompose_and_nanopub_failures_are_audited(self):
         self.login()
