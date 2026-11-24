@@ -3,23 +3,91 @@ import { bareOrcid } from '@/lib/orcid';
 
 /*
  * Thin client for the backend API. Request bodies and paths are the ones the previous frontend
- * sent, with these additions: the saved ORCID iD routes (`/auth/me/orcids`, D-035) and the
+ * sent, with these additions: the saved ORCID iD routes (`/auth/me/orcids`, D-035), the
  * decomposition record of a signed-in account (D-037): the `/records` routes, `client` on
- * decompose and publish, and `record_id` on publish.
+ * decompose and publish, and `record_id` on publish; and what the session may do
+ * (`capabilities` of `/auth/me`) with the admin page's role, block and history routes.
  */
 
 export const API_BASE = '/api';
+
+export type Role = 'user' | 'admin' | 'owner';
 
 export interface User {
   id?: number;
   username: string;
   display_name?: string;
   email?: string;
-  roles?: string[];
+  role?: Role;
   is_active?: boolean;
   auth_provider?: string;
-  last_login_at?: string;
 }
+
+/** An identity-provider identity that leads to an account. */
+export interface AccountIdentity {
+  issuer: string;
+  subject: string;
+  last_login_at: string | null;
+}
+
+/** An account as the admin page gets it. */
+export interface Account extends User {
+  id: number;
+  role: Role;
+  blocked: boolean;
+  email_verified: boolean | null;
+  /** Whether it has a usable password; otherwise its identity provider signs it in. */
+  local: boolean;
+  identities: AccountIdentity[];
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** One change in an account's history, newest first. */
+export interface AccountChange {
+  action: string;
+  /** The username of the account that acted, or `offline` or `bootstrap`. */
+  actor: string;
+  reason: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+/** What a session may do; the keys of `capabilities` in `GET /auth/me`. */
+export type CapabilityName =
+  | 'public_tools'
+  | 'session'
+  | 'account_data'
+  | 'decompose'
+  | 'save_and_review'
+  | 'publish'
+  | 'retract_own'
+  | 'review_applications'
+  | 'manage_users'
+  | 'view_activity'
+  | 'retract_any'
+  | 'export_research'
+  | 'manage_admins';
+
+export interface CapabilityDecision {
+  allowed: boolean;
+  reason: string | null;
+  message: string | null;
+  /** For `decompose` only, under a daily cap. */
+  uses_left_today?: number | null;
+  resets_at?: string | null;
+}
+
+/** The backend's decisions. The frontend shows them and never decides access itself. */
+export type Capabilities = Partial<Record<CapabilityName, CapabilityDecision>>;
+
+/** Whether the backend allows a capability; one it did not mention counts as refused. */
+export function allows(capabilities: Capabilities, name: CapabilityName): boolean {
+  return capabilities[name]?.allowed === true;
+}
+
+/** What the admin page shows and changes; any of them opens it. */
+export const ADMIN_PAGE_CAPABILITIES: CapabilityName[] = ['view_activity', 'manage_users', 'export_research'];
 
 export interface ProviderOptions {
   label: string;
@@ -199,15 +267,21 @@ export interface Session {
   user: User | null;
   /** False when the deployment has authentication switched off; null when the answer did not say. */
   authEnabled: boolean | null;
+  /** What the session may do; nothing for an anonymous visitor. */
+  capabilities: Capabilities;
 }
 
-/** The signed-in user and whether accounts are enforced; an anonymous visitor gets a null user. */
+/** The signed-in user, whether accounts are enforced and what the session may do; an anonymous visitor gets a null user. */
 export async function fetchSession(): Promise<Session> {
   const response = await fetch(`${API_BASE}/auth/me`);
-  if (response.status === 401) return { user: null, authEnabled: true };
-  if (!response.ok) throw new ApiError('Could not check your login.', response.status);
-  const data = (await readBody(response)) as { user?: User; auth_enabled?: unknown };
-  return { user: data.user ?? null, authEnabled: typeof data.auth_enabled === 'boolean' ? data.auth_enabled : null };
+  if (response.status === 401) return { user: null, authEnabled: true, capabilities: {} };
+  const data = (await readBody(response)) as { user?: User; auth_enabled?: unknown; capabilities?: Capabilities };
+  if (!response.ok) throw new ApiError(detailOf(data, 'Could not check your login.'), response.status);
+  return {
+    user: data.user ?? null,
+    authEnabled: typeof data.auth_enabled === 'boolean' ? data.auth_enabled : null,
+    capabilities: data.capabilities ?? {},
+  };
 }
 
 /** The signed-in user, or null for an anonymous visitor (401 is not an error here). */
@@ -481,14 +555,22 @@ export interface AdminStats {
   readiness: { status: string; checks: Record<string, boolean> };
 }
 
+export type AccountChangeRoute = 'block' | 'unblock' | 'grant-admin' | 'revoke-admin';
+
 export const adminApi = {
   stats: () => requestJson<AdminStats>('/admin/stats'),
-  users: () => requestJson<{ users: User[] }>('/admin/users'),
+  users: () => requestJson<{ users: Account[] }>('/admin/users'),
   audit: (limit = 100) => requestJson<{ events: AuditEvent[] }>(`/admin/audit?limit=${limit}`),
-  createUser: (body: { username: string; password: string; display_name: string; email: string; roles: string[]; is_active: boolean }) =>
-    requestJson<{ user: User }>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
-  updateUser: (id: number, updates: Record<string, unknown>) =>
-    requestJson<{ user: User }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
+  /** A new local account, always an ordinary user. */
+  createUser: (body: { username: string; password: string; display_name: string; email: string }) =>
+    requestJson<{ user: Account }>('/admin/users', { method: 'POST', body: JSON.stringify(body) }),
+  /** Edit or reset a local account. Roles and blocks have their own routes. */
+  updateUser: (id: number, updates: { username: string; display_name: string; email: string } | { password: string }) =>
+    requestJson<{ user: Account }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
+  /** Change an account's role or block state; only a block needs the reason. */
+  changeUser: (id: number, change: AccountChangeRoute, reason: string) =>
+    requestJson<{ user: Account }>(`/admin/users/${id}/${change}`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
+  userHistory: (id: number) => requestJson<{ history: AccountChange[] }>(`/admin/users/${id}/history`),
   /** Every decomposition record as a ZIP with summary.csv, edits.csv and records.jsonld (D-041), named as the server names it. */
   exportRecords: async (): Promise<{ blob: Blob; fileName: string }> => {
     const response = await fetch(`${API_BASE}/admin/records/export`);

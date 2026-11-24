@@ -18,6 +18,8 @@
 * Decomposition record (D-037): for a signed-in account the workspace keeps the decomposition's `record_id`, starts a record when Turtle is opened or pasted (`POST /api/records`), and sends one step per applied change with its component changes, per "Looks right" and per Undo (`POST /api/records/{id}/events`), with the browser's device and screen (`client`, also sent with decompose and publish). Anonymous visitors and deployments with authentication disabled send none of this
 * "Mark as best", next to Publish and in the review list once every component is checked, marks the version shown, with an optional note of up to 500 characters; components without "Looks right" bring a warning, not a block. Publishing needs the mark and names the record (`record_id`); the dialog offers the mark in place and explains a refusal. The local draft keeps the record for the account it belongs to
 
+* The admin page and its link follow what the backend allows (`capabilities` in `GET /api/auth/me`), not roles. The accounts table shows role, block state, how each account signs in and the last login; each row offers only the actions the rules allow: Block (with a reason), Unblock, Make admin, Remove admin, Edit, Reset password and History. Edits no longer send roles or the active state, and a new account is always an ordinary user
+
 ### Bugfixes
 * (De)serializing of blank node Entities with Constrains did not keep the proper link
 * Labels and descriptions with quotes, backslashes or line breaks are written as valid Turtle

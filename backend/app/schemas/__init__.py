@@ -30,6 +30,7 @@ from .domain import (
 )
 from .events import ErrorEvent, FinalEvent, RawDeltaEvent, StreamEvent
 from .requests import (
+    AccountActionRequest,
     AdminCreateUserRequest,
     AdminUpdateUserRequest,
     ClientDevice,
@@ -46,10 +47,16 @@ from .requests import (
     StartRecordRequest,
 )
 from .responses import (
+    AccountChange,
+    AccountHistoryResponse,
+    AccountIdentity,
     AdminStatsResponse,
+    AdminUser,
     AuditEvent,
     AuditResponse,
     AuthUserResponse,
+    CapabilityDecision,
+    CurrentUserResponse,
     DecomposeResponse,
     ModelOptionsResponse,
     NanopubPreparationOptionsResponse,
@@ -92,6 +99,7 @@ __all__ = [
     "RawDeltaEvent",
     "StreamEvent",
     # requests
+    "AccountActionRequest",
     "AdminCreateUserRequest",
     "AdminUpdateUserRequest",
     "ClientDevice",
@@ -107,10 +115,16 @@ __all__ = [
     "SaveOrcidRequest",
     "StartRecordRequest",
     # responses
+    "AccountChange",
+    "AccountHistoryResponse",
+    "AccountIdentity",
     "AdminStatsResponse",
+    "AdminUser",
     "AuditEvent",
     "AuditResponse",
     "AuthUserResponse",
+    "CapabilityDecision",
+    "CurrentUserResponse",
     "DecomposeResponse",
     "ModelOptionsResponse",
     "NanopubPreparationOptionsResponse",

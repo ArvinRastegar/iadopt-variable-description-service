@@ -15,6 +15,9 @@ signing in, press the intended action again. Anonymous tool use sends no activit
 Administration and account APIs remain protected. Keep `IADOPT_AUTH_ENABLED=true` in
 hosted deployments; disabling authentication is only for local development.
 
+What a session may do is decided by the backend, one capability per route, and reported in
+`GET /api/auth/me`; the pages show what it allows.
+
 For a signed-in account the workspace keeps a record of the work: the decomposition or the
 opened Turtle, each applied change, each "Looks right", and the version the person marks as
 **best**, with the account and the IP address, browser, device and screen of each step.
@@ -168,7 +171,7 @@ The pages keep their previous URLs, so nginx needs no change:
 
 * `index.html`: the start page, the workspace (`#/workspace`) and the publications (`#/publications`)
 * `login.html`: the sign-in page nginx sends visitors to for protected pages
-* `admin.html`: the admin dashboard (statistics, readiness, users, audit log)
+* `admin.html`: the admin dashboard (statistics, readiness, accounts with their roles and blocks, audit log)
 * `remote.html`: the embeddable viewer, unchanged
 
 The I-ADOPT model, Turtle parsing, the diagram layout engine (from the
@@ -342,6 +345,108 @@ or run:
 ```bash
 docker compose down
 ```
+
+---
+
+# Operating the Backend
+
+The backend keeps everything in one SQLite file, `iadopt.sqlite3`, in its state directory
+(`/app/state` in the container; `IADOPT_STATE_DIR` or `IADOPT_DB_PATH` change it). One backend
+replica with one worker process is expected, but the commands below are safe beside a running
+backend. Run them in the backend container, with its settings:
+
+```bash
+docker compose exec backend python -m app.cli db status
+```
+
+```bash
+oc exec deploy/iadopt-backend -- python -m app.cli db status
+```
+
+Every command answers 0 on success, 1 on a refusal or failure with the error's name, and 2 on a
+usage error.
+
+## Database
+
+| Command | Does |
+|---|---|
+| `db status` | Prints sizes, free space, applied and pending migrations and each table's rows; writes nothing |
+| `db migrate` | Applies pending migrations, as every start does |
+| `db backup` | Makes a verified backup and prints its path and size |
+| `db reclaim` | Returns free pages to the file system; deletes no row |
+
+**Migrations.** At every start the backend applies the migrations the file does not have yet, in
+order. When any is pending it first makes a verified backup in `backups/` beside the database,
+named `iadopt-<UTC time>-pre-migration.sqlite3`, and keeps the two newest of these. Backups made
+with `db backup` are named `...-manual.sqlite3` and are never deleted by the application. Every
+backup holds the same personal data as the database.
+
+**Restore.** With the backend stopped, copy a backup over the database file and remove the old
+journal files; the next start migrates it when it is older. With Docker Compose:
+
+```bash
+docker compose stop backend
+```
+
+```bash
+docker compose run --rm --no-deps --entrypoint sh backend -c 'cd /app/state && cp backups/NAME.sqlite3 iadopt.sqlite3 && rm -f iadopt.sqlite3-wal iadopt.sqlite3-shm'
+```
+
+```bash
+docker compose start backend
+```
+
+On OpenShift scale the deployment to 0, do the same copy from a temporary pod that mounts the
+claim `iadopt-backend-state`, and scale back to 1.
+
+**When a start stops with `InsufficientSpace`.** A pending migration needs room for the backup, for
+the database's size once more when it rewrites the file, and for a reserve of 64 MiB. The database
+is unchanged, so the previous image still starts on it. Remove `manual` backups from `backups/`, or
+grow the volume, and start again. `SchemaMismatch` or `MigrationChanged` mean that the file is not
+one this code can take over; nothing was changed then either.
+
+**Rolling back.** Until the passwords are purged, the previous image runs on a migrated database.
+Unset `IADOPT_BOOTSTRAP_ADMIN_USERNAME` and `IADOPT_BOOTSTRAP_ADMIN_PASSWORD` **before** you start
+it: while they are set it re-enables that account and makes it an admin at every start, without a
+record, which undoes a block or revocation of it. Every other block and revocation holds.
+
+## Accounts, admins and the owner
+
+Accounts are ordinary users, admins, or the one owner. Admins manage ordinary accounts, see
+activity and download the records; only the owner grants and revokes admin, and blocks admins.
+Nobody can block the owner or take its admin rights on the admin page. Each grant, revocation,
+block and unblock is kept in the account's history with who did it and why.
+
+**Once, after the first release with these roles, bind the owner** to an existing account. Until
+then nobody can grant or revoke admin or block an admin:
+
+```bash
+python -m app.cli owner bind --username NAME
+```
+
+`owner rebind --username NAME --reason TEXT` moves the binding. The previous owner stays an admin
+until the new owner revokes it. Rebinding to the same account restores an owner account that was
+blocked or demoted outside these rules, for instance by the previous image after a rollback. Both
+commands also take `--account ID`, or `--issuer ISS --subject SUB` for an identity the account holds.
+
+**Bootstrap admin.** `IADOPT_BOOTSTRAP_ADMIN_*` create the first admin on an empty database only.
+Once any account exists they change nothing, and the log says so at each start.
+
+**Local accounts.** Until the cutover to the identity provider, admins create local accounts with a
+password on the admin page, always as ordinary users, and edit them.
+
+**At the cutover** the operator prepares the local accounts, offline. Commands that change an account
+need a bound owner, and the account's history keeps the change with the reason given:
+
+| Command | Does |
+|---|---|
+| `legacy show --account ID` (or `--username NAME`) | Prints an account's role, block state, identities, data and history |
+| `legacy link --account ID --issuer ISS --subject SUB --reason TEXT [--keep-admin]` | Lets an identity-provider subject sign in to a local account, keeping its id, records and saved ORCID iDs. An admin stays one only with `--keep-admin` |
+| `legacy fold --from ID --into ID --reason TEXT [--keep-admin]` | Moves the identities of a new, empty identity-provider account into a local account, and blocks the emptied one |
+| `legacy purge-passwords --confirm-cutover` | Ends every password login, in this image and the previous one. Without the flag it only counts |
+
+Link and fold take an account with a password and no identity yet, so do both **before**
+`legacy purge-passwords`.
 
 ---
 

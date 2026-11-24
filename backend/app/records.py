@@ -23,9 +23,9 @@ Storage rules:
   Where: ``client_contexts`` keeps one row per distinct IP address, browser, device and
   screen of an account, and every event points at one.
 
-The tables live in the auth database because they reference ``users``. The store reads the
-auth store's database path on every connection and creates its tables when they are
-missing, so it always follows that path.
+The tables live in the auth database because they reference ``users``; the migrations of
+``app.storage`` create them. The store reads the auth store's database path on every
+transaction, so it always follows that path.
 """
 
 from __future__ import annotations
@@ -35,20 +35,18 @@ import json
 import secrets
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterator, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, Request
 from rdflib import BNode, Graph, URIRef
 from rdflib.compare import to_canonical_graph
 from rdflib.namespace import DCTERMS, PROV, RDF, RDFS
 
+from . import storage
 from .auth import AuthStore, utc_iso, utc_now
 from .services.call_log import ModelCall
-
-RECORD_SCHEMA_VERSION = 1
-"""Version of the record tables. Raise it with every change to their shape."""
 
 MAX_BLANK_NODES = 10
 """Most blank nodes a recorded graph may have. Canonical fingerprinting grows steeply with
@@ -94,171 +92,6 @@ from its parts, so a system's label is presentation, not part of the core."""
 
 CORE_VARIABLE = URIRef("urn:iadopt:record:variable")
 """Stands in for the variable's IRI in a core fingerprint, which minting a new IRI must not change."""
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS record_schema (
-    version INTEGER NOT NULL
-);
-
--- One piece of work: who did it, how it started, and the definition they typed.
-CREATE TABLE IF NOT EXISTS record_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_id TEXT NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    origin TEXT NOT NULL CHECK (origin IN ('decompose', 'import')),
-    definition TEXT,
-    created_at TEXT NOT NULL
-);
-
--- The model run behind a decomposition record: one per record.
-CREATE TABLE IF NOT EXISTS record_runs (
-    item_id INTEGER PRIMARY KEY REFERENCES record_items(id),
-    provider TEXT NOT NULL DEFAULT '',
-    model TEXT NOT NULL DEFAULT '',
-    disable_thinking INTEGER NOT NULL DEFAULT 1,
-    prompt_setup TEXT NOT NULL DEFAULT '',
-    prompt_sha256 TEXT,
-    started_at TEXT NOT NULL,
-    ended_at TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('ok', 'error')),
-    error TEXT,
-    raw_output TEXT,
-    parsed_json TEXT,
-    schema_valid INTEGER,
-    validation_errors TEXT
-);
-
--- Each call to a model inside a run, attempt by attempt.
-CREATE TABLE IF NOT EXISTS record_llm_calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_id INTEGER NOT NULL REFERENCES record_runs(item_id),
-    purpose TEXT NOT NULL,
-    attempt INTEGER NOT NULL,
-    provider TEXT NOT NULL DEFAULT '',
-    model TEXT NOT NULL DEFAULT '',
-    started_at TEXT NOT NULL,
-    latency_ms INTEGER,
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    status TEXT NOT NULL,
-    error TEXT
-);
-
--- Each distinct graph once, as the Turtle it first arrived in, with its core fingerprint.
-CREATE TABLE IF NOT EXISTS record_contents (
-    sha256 TEXT PRIMARY KEY,
-    core_sha256 TEXT NOT NULL,
-    turtle TEXT NOT NULL,
-    byte_size INTEGER NOT NULL,
-    created_at TEXT NOT NULL
-);
-
--- Version 0, 1, 2 ... of a record, each pointing at its content and the version before it.
-CREATE TABLE IF NOT EXISTS record_versions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_id INTEGER NOT NULL REFERENCES record_items(id),
-    number INTEGER NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('model_draft', 'imported', 'edited', 'metadata')),
-    content_sha256 TEXT NOT NULL REFERENCES record_contents(sha256),
-    parent_id INTEGER REFERENCES record_versions(id),
-    created_at TEXT NOT NULL,
-    UNIQUE (item_id, number)
-);
-
--- Where a step came from: one row per distinct IP address, browser, device and screen.
-CREATE TABLE IF NOT EXISTS client_contexts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    ip_address TEXT NOT NULL DEFAULT '',
-    user_agent TEXT NOT NULL DEFAULT '',
-    device TEXT NOT NULL DEFAULT '',
-    screen TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    UNIQUE (user_id, ip_address, user_agent, device, screen)
-);
-
--- The timeline: every step and milestone of a record, in order.
-CREATE TABLE IF NOT EXISTS record_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_id INTEGER NOT NULL REFERENCES record_items(id),
-    seq INTEGER NOT NULL,
-    type TEXT NOT NULL CHECK (
-        type IN ('draft', 'import', 'edit', 'metadata', 'check', 'uncheck', 'mark_best', 'publish')
-    ),
-    version_id INTEGER REFERENCES record_versions(id),
-    occurred_at TEXT NOT NULL,
-    recorded_at TEXT NOT NULL,
-    context_id INTEGER REFERENCES client_contexts(id),
-    note TEXT,
-    unchecked_components INTEGER,
-    nanopub_uri TEXT,
-    orcid TEXT,
-    UNIQUE (item_id, seq)
-);
-
--- What changed inside one step, component by component.
-CREATE TABLE IF NOT EXISTS record_changes (
-    event_id INTEGER NOT NULL REFERENCES record_events(id),
-    position INTEGER NOT NULL,
-    operation TEXT NOT NULL CHECK (
-        operation IN (
-            'add', 'remove', 'relabel', 'relink', 'change_shape',
-            'add_constraint', 'move_constraint', 'confirm', 'unconfirm', 'other'
-        )
-    ),
-    role TEXT NOT NULL DEFAULT '',
-    component TEXT NOT NULL DEFAULT '',
-    before_value TEXT,
-    after_value TEXT,
-    PRIMARY KEY (event_id, position)
-);
-
-CREATE INDEX IF NOT EXISTS idx_record_items_user ON record_items(user_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_record_versions_content ON record_versions(item_id, content_sha256);
-CREATE INDEX IF NOT EXISTS idx_record_events_type ON record_events(item_id, type);
-CREATE INDEX IF NOT EXISTS idx_record_events_nanopub ON record_events(nanopub_uri);
-CREATE INDEX IF NOT EXISTS idx_record_llm_calls_item ON record_llm_calls(item_id);
-"""
-
-# For each record table: the condition under which a new row's keys match a stored row, and
-# whether such an insert is dropped (deduplicated tables) or refused. Checked before the
-# conflict clause applies, so REPLACE cannot delete and rewrite a stored row.
-_KEY_GUARDS: Dict[str, Tuple[str, str]] = {
-    "record_items": ("id = NEW.id OR public_id = NEW.public_id", "ABORT"),
-    "record_runs": ("item_id = NEW.item_id", "ABORT"),
-    "record_llm_calls": ("id = NEW.id", "ABORT"),
-    "record_contents": ("sha256 = NEW.sha256", "IGNORE"),
-    "record_versions": ("id = NEW.id OR (item_id = NEW.item_id AND number = NEW.number)", "ABORT"),
-    "client_contexts": (
-        "id = NEW.id OR (user_id = NEW.user_id AND ip_address = NEW.ip_address AND user_agent = NEW.user_agent"
-        " AND device = NEW.device AND screen = NEW.screen)",
-        "IGNORE",
-    ),
-    "record_events": ("id = NEW.id OR (item_id = NEW.item_id AND seq = NEW.seq)", "ABORT"),
-    "record_changes": ("event_id = NEW.event_id AND position = NEW.position", "ABORT"),
-}
-
-
-def _raise(action: str, table: str) -> str:
-    """Return the trigger body for a dropped (``IGNORE``) or refused (``ABORT``) insert."""
-    if action == "IGNORE":
-        return "SELECT RAISE(IGNORE);"
-    return f"SELECT RAISE(ABORT, '{table} is append-only');"
-
-
-_TRIGGERS = "".join(
-    f"""
-CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table}
-BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table}
-BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END;
-CREATE TRIGGER IF NOT EXISTS {table}_no_overwrite BEFORE INSERT ON {table}
-WHEN EXISTS (SELECT 1 FROM {table} WHERE {condition})
-BEGIN {_raise(action, table)} END;
-"""
-    for table, (condition, action) in _KEY_GUARDS.items()
-)
-
 
 def _check_size(graph: Graph) -> None:
     """Refuse graphs too large to fingerprint quickly.
@@ -428,9 +261,8 @@ class RecordStore:
     # ------------------------------------------------------------------ #
 
     def init(self) -> None:
-        """Create the record tables in the current auth database now, not on first use."""
-        with self._transaction():
-            pass
+        """Migrate the auth database, which creates the record tables where they are missing."""
+        storage.migrate(self.auth.db_path)
 
     def applies_to(self, user: Optional[Dict[str, Any]]) -> bool:
         """Return whether this user's work is recorded: a signed-in account with an id.
@@ -440,35 +272,9 @@ class RecordStore:
         """
         return bool(self.auth.enabled and user and user.get("id"))
 
-    @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
-        """Open a connection to the auth database, commit on success, and always close it.
-
-        The record tables are created whenever they are missing, so a replaced or restored
-        database file gets them back without a restart.
-
-        Yields:
-            The open connection, with the record tables in place.
-        """
-        conn = sqlite3.connect(self.auth.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("PRAGMA foreign_keys = ON")
-            if not conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'record_changes_no_overwrite'"
-            ).fetchone():
-                self._create_schema(conn)
-            with conn:
-                yield conn
-        finally:
-            conn.close()
-
-    def _create_schema(self, conn: sqlite3.Connection) -> None:
-        """Create the record tables, indexes and append-only triggers if absent."""
-        conn.executescript(_SCHEMA + _TRIGGERS)
-        if conn.execute("SELECT COUNT(*) FROM record_schema").fetchone()[0] == 0:
-            conn.execute("INSERT INTO record_schema (version) VALUES (?)", (RECORD_SCHEMA_VERSION,))
-            conn.commit()
+    def _transaction(self, *, immediate: bool = False) -> AbstractContextManager[sqlite3.Connection]:
+        """Open a transaction on the auth database; immediate for check-and-write sections."""
+        return storage.transaction(immediate, path=self.auth.db_path)
 
     # ------------------------------------------------------------------ #
     # Writes by the server
@@ -538,7 +344,7 @@ class RecordStore:
             parsed = {key: value for key, value in parsed.items() if key != "definition"}
         errors = payload.get("validation_errors")
         schema_valid = payload.get("schema_valid")
-        with self._lock, self._transaction() as conn:
+        with self._lock, self._transaction(immediate=True) as conn:
             item_id, public_id = self._insert_item(conn, user_id=int(user["id"]), origin="decompose", definition=definition)
             conn.execute(
                 """
@@ -630,7 +436,7 @@ class RecordStore:
             client: Device and screen sent by the browser, if any.
         """
         item_id = int(target["item_id"])
-        with self._lock, self._transaction() as conn:
+        with self._lock, self._transaction(immediate=True) as conn:
             version_id = self._version_with_content(conn, item_id, str(target["sha256"]))
             if version_id is None:
                 version_id = self._insert_version(
@@ -681,7 +487,7 @@ class RecordStore:
             The new record's id and the version number (0).
         """
         content = fingerprints(parse_turtle(turtle))
-        with self._lock, self._transaction() as conn:
+        with self._lock, self._transaction(immediate=True) as conn:
             item_id, public_id = self._insert_item(conn, user_id=int(user["id"]), origin="import", definition=None)
             version_id = self._insert_version(
                 conn, item_id=item_id, number=0, kind="imported", content=content, turtle=turtle, parent_id=None
@@ -741,7 +547,7 @@ class RecordStore:
             ValueError: If a ``metadata`` step changes more than nanopublication metadata.
         """
         content = fingerprints(parse_turtle(turtle or "")) if type_ in ("edit", "metadata") else None
-        with self._lock, self._transaction() as conn:
+        with self._lock, self._transaction(immediate=True) as conn:
             item = self._owned_item(conn, user, record_id)
             item_id = int(item["id"])
             target = self._version(conn, item_id, version)
@@ -798,35 +604,22 @@ class RecordStore:
     # Reads
     # ------------------------------------------------------------------ #
 
-    @contextmanager
-    def snapshot(self) -> Iterator[sqlite3.Connection]:
-        """Open a read-only view in which every query sees the record tables at the same moment.
-
-        The admin CSV export (D-040) reads all tables through it, so a step stored while the
-        export runs never shows up in one table and not in another. Writes through it fail.
-
-        Yields:
-            The open connection, inside one read transaction.
-        """
-        with self._transaction() as conn:
-            conn.execute("PRAGMA query_only = ON")
-            conn.execute("BEGIN")
-            yield conn
-
-    def summary(self, *, user: Dict[str, Any], record_id: str) -> Dict[str, Any]:
+    def summary(self, *, user: Dict[str, Any], record_id: str, any_account: bool = False) -> Dict[str, Any]:
         """Return a record's versions, best mark and publications.
 
-        Owners read their own records and admins read any; others get a 404 ``HTTPException``.
+        An account reads its own records; with ``any_account`` (the ``view_activity`` capability)
+        any record. Otherwise the answer is a 404 ``HTTPException``, as for a missing record.
 
         Args:
             user: The signed-in user.
             record_id: The record's id.
+            any_account: Whether the user may read another account's record.
 
         Returns:
             The summary dict (see ``RecordSummaryResponse``).
         """
         with self._transaction() as conn:
-            item = self._readable_item(conn, user, record_id)
+            item = self._any_item(conn, record_id) if any_account else self._owned_item(conn, user, record_id)
             item_id = int(item["id"])
             versions = conn.execute(
                 """
@@ -1038,18 +831,16 @@ class RecordStore:
             raise HTTPException(status_code=404, detail="Record not found.")
         return row
 
-    def _readable_item(self, conn: sqlite3.Connection, user: Dict[str, Any], record_id: str) -> sqlite3.Row:
-        """Return a record the user may read: their own, or any record for an admin.
+    def _any_item(self, conn: sqlite3.Connection, record_id: str) -> sqlite3.Row:
+        """Return a record of any account.
 
         Raises:
-            HTTPException: 404 when no such record exists for this user.
+            HTTPException: 404 when no such record exists.
         """
-        if "admin" in (user.get("roles") or []):
-            row = conn.execute("SELECT * FROM record_items WHERE public_id = ?", (record_id,)).fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Record not found.")
-            return row
-        return self._owned_item(conn, user, record_id)
+        row = conn.execute("SELECT * FROM record_items WHERE public_id = ?", (record_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Record not found.")
+        return row
 
     def _version(self, conn: sqlite3.Connection, item_id: int, number: int) -> sqlite3.Row:
         """Return a version of the record by number, with its content's core fingerprint.

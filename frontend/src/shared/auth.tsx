@@ -3,7 +3,10 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input, Label, PasswordInput } from '@/components/ui/fields';
-import { AuthRequiredError, fetchSession, isRecordedAccount, postEvent, signIn, signOut, type User } from './api';
+import {
+  ADMIN_PAGE_CAPABILITIES, allows, AuthRequiredError, fetchSession, isRecordedAccount, postEvent, signIn, signOut,
+  type Capabilities, type User,
+} from './api';
 
 /*
  * Accounts on the main page. Anonymous visitors keep every public tool; protected actions
@@ -15,6 +18,7 @@ import { AuthRequiredError, fetchSession, isRecordedAccount, postEvent, signIn, 
 interface AuthContextValue {
   user: User | null;
   ready: boolean;
+  /** Whether the backend allows anything on the admin page. */
   isAdmin: boolean;
   /** False when the deployment has authentication switched off; null until the backend said. */
   authEnabled: boolean | null;
@@ -53,16 +57,18 @@ export function initials(user: User | null): string {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = React.useState<User | null>(null);
+  const [capabilities, setCapabilities] = React.useState<Capabilities>({});
   const [ready, setReady] = React.useState(false);
   const [authEnabled, setAuthEnabled] = React.useState<boolean | null>(null);
   const [dialogReason, setDialogReason] = React.useState<string | null>(null);
   const userRef = React.useRef<User | null>(null);
   const revisionRef = React.useRef(0);
 
-  const setUser = React.useCallback((next: User | null) => {
+  const setUser = React.useCallback((next: User | null, nextCapabilities: Capabilities = {}) => {
     userRef.current = next;
     revisionRef.current += 1;
     setUserState(next);
+    setCapabilities(nextCapabilities);
   }, []);
 
   const refresh = React.useCallback(async (): Promise<User | null> => {
@@ -71,13 +77,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const session = await fetchSession();
       if (session.authEnabled !== null) setAuthEnabled(session.authEnabled);
       // A slow probe must not overwrite a newer sign-in or sign-out.
-      if (revision === revisionRef.current) setUser(session.user);
+      if (revision === revisionRef.current) setUser(session.user, session.capabilities);
     } catch (error) {
       console.error(error);
       if (revision === revisionRef.current) setUser(null);
     }
     return userRef.current;
   }, [setUser]);
+
+  /** Learn what a session that just started may do: the sign-in answers only who it is. */
+  const loadCapabilities = React.useCallback(async () => {
+    const revision = revisionRef.current;
+    try {
+      const session = await fetchSession();
+      if (revision === revisionRef.current) setCapabilities(session.capabilities);
+    } catch (error) {
+      console.error(error);
+    }
+  }, []);
 
   React.useEffect(() => {
     void refresh().finally(() => setReady(true));
@@ -136,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = React.useMemo<AuthContextValue>(() => ({
     user,
     ready,
-    isAdmin: Boolean(user?.roles?.includes('admin')),
+    isAdmin: ADMIN_PAGE_CAPABILITIES.some((name) => allows(capabilities, name)),
     authEnabled,
     recorded: isRecordedAccount(user, authEnabled),
     requireUser,
@@ -145,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     openSignIn,
     signOut: doSignOut,
     logEvent,
-  }), [authEnabled, doSignOut, logEvent, openSignIn, ready, requireUser, runProtected, runQuietly, user]);
+  }), [authEnabled, capabilities, doSignOut, logEvent, openSignIn, ready, requireUser, runProtected, runQuietly, user]);
 
   return (
     <AuthContext.Provider value={value}>
@@ -156,6 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         onSignedIn={(next) => {
           setUser(next);
           setDialogReason(null);
+          void loadCapabilities();
           // Signing in never runs a decomposition or publishes anything by itself.
         }}
       />

@@ -2,9 +2,7 @@
 
 Contract: ``components/access-policy.md`` in the private workflow repository, sections 2 to 6,
 approved under gate G-017. This module imports only the standard library and reads no clock,
-database, settings or network. This is the skeleton of the increment-1 tests gate: the names and
-fields the behavioural tests in ``tests/test_access_policy.py`` use; :func:`decide` raises
-``NotImplementedError`` until the implementation gate.
+database, settings or network: equal states always give equal decisions.
 """
 
 from __future__ import annotations
@@ -32,6 +30,43 @@ class Capability(str, Enum):
     RETRACT_ANY = "retract_any"
     EXPORT_RESEARCH = "export_research"
     MANAGE_ADMINS = "manage_admins"
+
+
+OWN_USE = (Capability.DECOMPOSE, Capability.SAVE_AND_REVIEW, Capability.PUBLISH, Capability.RETRACT_OWN)
+"""What the current terms and the application decide."""
+
+ADMINISTRATION = (
+    Capability.REVIEW_APPLICATIONS,
+    Capability.MANAGE_USERS,
+    Capability.VIEW_ACTIVITY,
+    Capability.RETRACT_ANY,
+    Capability.EXPORT_RESEARCH,
+)
+"""What the admin role grants; ``MANAGE_ADMINS`` is the owner's alone."""
+
+MESSAGES: Dict[str, str] = {
+    "sign_in_required": "Authentication required.",
+    "blocked": "This account is blocked.",
+    "email_not_verified": "Verify your email address to use this account.",
+    "terms_not_accepted": "Accept the current terms to continue.",
+    "admin_required": "Admin access required.",
+    "owner_required": "Only the owner can do this.",
+    "daily_limit": "No decompositions left today.",
+}
+"""The message of each reason that has one message whatever the capability (section 6)."""
+
+_APPROVAL_REQUIRED: Dict[Capability, str] = {
+    Capability.PUBLISH: "Publishing needs an approved account.",
+    Capability.RETRACT_OWN: "Ask an admin to retract this publication.",
+}
+
+_RECORDS_DISABLED = "Records need accounts, and authentication is disabled."
+_ACCOUNTS_DISABLED: Dict[Capability, str] = {
+    Capability.ACCOUNT_DATA: "Saved ORCID iDs need accounts, and authentication is disabled.",
+    Capability.SAVE_AND_REVIEW: _RECORDS_DISABLED,
+    Capability.EXPORT_RESEARCH: _RECORDS_DISABLED,
+    Capability.MANAGE_ADMINS: "The owner needs accounts, and authentication is disabled.",
+}
 
 
 @dataclass(frozen=True)
@@ -81,13 +116,77 @@ class Decision:
     resets_at: Optional[datetime] = None
 
 
+ALLOWED = Decision(allowed=True)
+
+
 def decide(state: AccessState) -> Dict[Capability, Decision]:
     """Decide every capability for an access state by the first matching rule of section 4.
 
     Args:
         state: The request's access state.
-
-    Raises:
-        NotImplementedError: Until the implementation gate.
     """
-    raise NotImplementedError("access-policy is specified (components/access-policy.md) but not implemented yet.")
+    if state.account_id is None:
+        return _only_public_tools("sign_in_required")
+    if state.blocked:
+        return _only_public_tools("blocked")
+    if state.email_verified is False:
+        return _only_public_tools("email_not_verified")
+    if not state.account_backed:
+        return _development_user()
+    return {
+        Capability.PUBLIC_TOOLS: ALLOWED,
+        Capability.SESSION: ALLOWED,
+        Capability.ACCOUNT_DATA: ALLOWED,
+        **_own_use(state),
+        **_administration(state.role),
+    }
+
+
+def _refused(reason: str, message: Optional[str] = None) -> Decision:
+    """A refusal with its reason's message, or with a message of its own."""
+    return Decision(allowed=False, reason=reason, message=message or MESSAGES[reason])
+
+
+def _only_public_tools(reason: str) -> Dict[Capability, Decision]:
+    """A gate: everything but the public tools is refused with the gate's reason."""
+    decisions = {capability: _refused(reason) for capability in Capability}
+    decisions[Capability.PUBLIC_TOOLS] = ALLOWED
+    return decisions
+
+
+def _own_use(state: AccessState) -> Dict[Capability, Decision]:
+    """The account's own use of the tools, by its terms and application."""
+    if not state.terms_accepted:
+        return {capability: _refused("terms_not_accepted") for capability in OWN_USE}
+    if state.application == "approved" or state.role in ("admin", "owner"):
+        return {capability: ALLOWED for capability in OWN_USE}
+    has_uses = state.uses_left_today > 0
+    return {
+        Capability.DECOMPOSE: Decision(
+            allowed=has_uses,
+            reason=None if has_uses else "daily_limit",
+            message=None if has_uses else MESSAGES["daily_limit"],
+            uses_left_today=state.uses_left_today,
+            resets_at=state.resets_at,
+        ),
+        Capability.SAVE_AND_REVIEW: ALLOWED,
+        Capability.PUBLISH: _refused("approval_required", _APPROVAL_REQUIRED[Capability.PUBLISH]),
+        Capability.RETRACT_OWN: _refused("approval_required", _APPROVAL_REQUIRED[Capability.RETRACT_OWN]),
+    }
+
+
+def _administration(role: str) -> Dict[Capability, Decision]:
+    """The admin capabilities, by role; the current terms do not matter here (D-018)."""
+    admin = ALLOWED if role in ("admin", "owner") else _refused("admin_required")
+    return {
+        **{capability: admin for capability in ADMINISTRATION},
+        Capability.MANAGE_ADMINS: ALLOWED if role == "owner" else _refused("owner_required"),
+    }
+
+
+def _development_user() -> Dict[Capability, Decision]:
+    """The user of a deployment with authentication disabled: an approved admin without account features."""
+    decisions = {capability: ALLOWED for capability in Capability}
+    for capability, message in _ACCOUNTS_DISABLED.items():
+        decisions[capability] = _refused("accounts_disabled", message)
+    return decisions

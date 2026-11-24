@@ -4,6 +4,8 @@ This module is intentionally thin. All behavior lives in:
 
 * ``app.core`` — config (``Settings``), shared state/text leaves, auth dependencies
   + middleware, logging.
+* ``app.storage`` — the database: connections, migrations, backups, space.
+* ``app.access`` — what a request may do: one capability per route.
 * ``app.clients`` — OpenRouter / PSNC / HTTP plumbing.
 * ``app.services`` — llm, enrichment (entity linking), prompts, validation, rdf_ttl,
   nanopub_service, orcid.
@@ -20,7 +22,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .core.dependencies import auth_store, authentication_middleware, record_store
+from .access.dependencies import AccessRefused, access_refused_response
+from .core.dependencies import auth_store, authentication_middleware
 from .core.logging import configure_logging
 from .pipeline import warmup_assets
 from .routers import admin, auth, decompose, nanopub, records, system
@@ -39,9 +42,8 @@ There are two decomposition endpoints on purpose:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Initialize the auth store and the record tables, and warm up cached assets at startup."""
+    """Migrate the database, initialize the auth store, and warm up cached assets at startup."""
     auth_store.init()
-    record_store.init()
     warmup_assets()
     yield
 
@@ -66,6 +68,7 @@ def create_app() -> FastAPI:
 
     # Authentication middleware (defined in core.dependencies, registered here).
     application.middleware("http")(authentication_middleware)
+    application.add_exception_handler(AccessRefused, access_refused_response)
 
     # Mount routers. Order mirrors the original single-file registration so the
     # generated OpenAPI path order is unchanged.

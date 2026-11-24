@@ -1,8 +1,8 @@
 """Shared FastAPI dependencies, the auth store singleton, and auth middleware.
 
-Every router imports the ``auth_store`` singleton and the ``require_current_user`` /
-``require_admin_user`` dependencies from here, so there is exactly one auth store
-per process and routers never import the app factory (which would be circular).
+Every router imports the ``auth_store`` singleton and the ``require_current_user``
+dependency from here, so there is exactly one auth store per process and routers never
+import the app factory (which would be circular). What a user may do is ``app.access``'s.
 
 The authentication middleware is defined here as a plain coroutine and registered
 by the app factory via ``app.middleware("http")``.
@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Dict
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 
+from ..accounts import AccountStore
 from ..auth import AuthStore
 from ..records import RecordStore
 from .config import settings
@@ -32,8 +33,9 @@ auth_store = AuthStore(
     audit_max_payload_bytes=settings.audit_max_payload_bytes,
 )
 
-# Decomposition records (D-036) share the auth database and follow its path.
+# Decomposition records (D-036) and accounts share the auth database and follow its path.
 record_store = RecordStore(auth_store)
+account_store = AccountStore(auth_store)
 
 # API paths that bypass the authentication middleware.
 PUBLIC_API_PATHS = {
@@ -69,7 +71,7 @@ def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns:
         The public user dict (id, username, display_name, email, roles,
-        is_active, auth_provider, external_subject).
+        is_active, auth_provider, external_subject, role).
     """
     return {
         "id": user["id"],
@@ -80,17 +82,13 @@ def public_user(user: Dict[str, Any]) -> Dict[str, Any]:
         "is_active": user.get("is_active", True),
         "auth_provider": user.get("auth_provider", "local"),
         "external_subject": user.get("external_subject"),
+        "role": user["role"],
     }
 
 
 def require_current_user(request: Request) -> Dict[str, Any]:
     """FastAPI dependency: return the authenticated user or raise 401."""
     return auth_store.require_user(request)
-
-
-def require_admin_user(request: Request) -> Dict[str, Any]:
-    """FastAPI dependency: return the authenticated admin user or raise 401/403."""
-    return auth_store.require_admin(request)
 
 
 async def authentication_middleware(

@@ -16,6 +16,8 @@ from typing import Any, Dict, Iterator, Optional, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from ..access.dependencies import require
+from ..access.policy import Capability
 from ..auth import utc_now
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from ..core.dependencies import API_PREFIX, auth_store, record_store, require_current_user
@@ -140,6 +142,7 @@ def model_options() -> ModelOptionsResponse:
         "by one `final` event containing the same final payload shape as `/decompose`. An `error` event is emitted "
         "if the streamed output cannot be parsed or the backend fails."
     ),
+    dependencies=[Depends(require(Capability.DECOMPOSE))],
     tags=["Decomposition"],
     responses={
         200: {
@@ -247,6 +250,7 @@ def decompose_stream(
         "object. This is useful for scripts, API clients, tests, and debugging tools. The frontend normally uses "
         "`/decompose/stream` so users can see raw LLM output progressively."
     ),
+    dependencies=[Depends(require(Capability.DECOMPOSE))],
     tags=["Decomposition"],
 )
 def decompose(
