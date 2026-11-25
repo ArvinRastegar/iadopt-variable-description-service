@@ -1,4 +1,7 @@
-# I-ADOPT Variable Description Service
+# I-ADOPT Variable Description Service: manual
+
+This is the manual. The overview is in the [README](../README.md), the measurements are in
+[evaluation.md](evaluation.md).
 
 This project provides a simple web interface for **decomposing variable definitions into the I-ADOPT ontology structure** and **visualizing the result**.
 
@@ -64,34 +67,17 @@ It performs the following steps:
 
 ### The measured configuration
 
-By default the decomposition step (2–4) runs a configuration measured on a
-held-out set by the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
+By default the decomposition step (2–4) runs a configuration chosen in the experiments of the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
 `matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
 examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Each example
 is shown as its definition followed by its answer as indented JSON, in the shape of
-the output the model is asked for. Micro Close F1 **0.6117 ± 0.0190** over 15
-repetitions on the 24 variables held out from example selection, in an exploratory
-side test of 2026-11-18. In the same test the earlier layout, one compact JSON line
-with every answer before its definition, scored 0.4924 (0.4890 when it was first
-measured).
-
-Read that figure carefully before relying on it. It comes from a side test, not
-from the lab's official experiment, and that test chose the new layout on the same
-24 variables, so for this prompt they are no longer strictly held out. It covers one
-set of 25 examples, which were selected with the earlier layout, and the new layout
-changes three things at once (order, field order and layout). The first measurement found that this example selection
-beat a deliberately-bad and a domain-stratified selection decisively, but was *not*
-significantly better than the best of three random 25-example draws; in that
-measurement 3 of 24 held-out items were exactly right and 7 of 24 scored zero.
+the output the model is asked for. How this prompt was measured, and what that does and does not show, is in [evaluation.md](evaluation.md).
 **Decompositions are drafts for review, not answers.**
 
 That prompt returns six lexical fields and forbids regenerating the label,
 comment, or definition, which is why step 5 exists as a separate call. Changing the
 prompt, the examples, the model, or any sampling parameter means the service is no
-longer running what was measured and the figure above no longer describes it. See
-the separate private workflow repository, `iadopt-variable-description-service-docs/`
-(`decisions.md` and `components/`), for the full record. It is an optional local
-checkout and is not needed to build or run the service.
+longer running what was measured and the measurements no longer describe it.
 
 ### Entity linking
 
@@ -207,8 +193,8 @@ This will start:
 # 1. Clone the Repository
 
 ```bash
-git clone (https://github.com/ArvinRastegar/i-adopt-service-website.git)
-cd i-adopt-service-website
+git clone https://github.com/ArvinRastegar/iadopt-variable-description-service.git
+cd iadopt-variable-description-service
 ```
 
 ---
@@ -223,32 +209,35 @@ Create a file called:
 
 in the **project root**.
 
-Inside the file add:
+Start from the sample (`cp .env.example .env`). These values are yours to set:
 
 ```
+IADOPT_SESSION_SECRET=a-long-random-secret
+IADOPT_BOOTSTRAP_ADMIN_USERNAME=admin
+IADOPT_BOOTSTRAP_ADMIN_PASSWORD=a-strong-password
+IADOPT_COOKIE_SECURE=false
 OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxxxxxxxxxx
 PSNC_API_KEY=your-psnc-api-key
 NANOPUB_PRIVATE_KEY=base64-body-of-private-key
-NANOPUB_ORCID_ID=0009-0006-1978-4302
-NANOPUB_PROFILE_NAME=Barbara Magagna
-NANOPUB_AGENT_INTRO_URI=https://w3id.org/np/RAwy2xTZzt5Y3ix-7f1HDTewgZqa6eRm5YnmrSKCy0PTA
+NANOPUB_ORCID_ID=0000-0000-0000-0000
+NANOPUB_AGENT_INTRO_URI=https://w3id.org/np/...
 ```
+
+The backend does not start without `IADOPT_SESSION_SECRET` while accounts are on. `IADOPT_COOKIE_SECURE=false` is for plain http on your
+own machine only. A provider key must not be empty, even when you do not decompose: the start check asks for it.
 
 Replace the keys with your **OpenRouter API key** and, if you want to use PSNC models, your **PSNC API key**.
 
 These keys are used by the backend to call the selected LLM provider.
 The nanopub values are used by the backend to sign and publish nanopublications from the frontend's Turtle payload.
-`NANOPUB_ORCID_ID` and `NANOPUB_PROFILE_NAME` identify the **signing profile** (the key owner) only. They are never used as the creator of a nanopublication or of generated Turtle: the person publishing or retracting types their own **Creator ORCID** below the diagram, and publishing or retracting without one is refused.
+`NANOPUB_ORCID_ID` identifies the **signing profile** (the key owner) only. It is never used as the creator of a nanopublication or of generated Turtle: the person publishing or retracting types their own **Creator ORCID** below the diagram, and publishing or retracting without one is refused.
 `NANOPUB_PRIVATE_KEY` and `NANOPUB_PUBLIC_KEY` can be provided either as one-line base64 key bodies or as PEM strings with `\n` escapes.
 
 Optional nanopub settings:
 
 ```
 NANOPUB_PUBLIC_KEY=...
-NANOPUB_AGENT_URI=...
-NANOPUB_PROFILE_INTRODUCTION_URI=...
 NANOPUB_LICENSE_URI=https://creativecommons.org/publicdomain/zero/1.0/
-NANOPUB_USE_TEST_SERVER=false
 MODEL_NAMES=qwen/qwen3.5-flash-02-23,qwen/qwen3-32b,qwen/qwen3.5-397b-a17b
 PSNC_API_BASE_URL=https://llm.hpc.psnc.pl
 PSNC_MODEL_NAME=Qwen3.8-27B
@@ -297,8 +286,10 @@ http://localhost:5173
 Backend API:
 
 ```
-http://localhost:8000/docs
+http://localhost:5173/api/docs
 ```
+
+(after signing in)
 
 ---
 
@@ -477,8 +468,7 @@ anyway.
 
 Then it sends all 102 corpus definitions through the backend's own pipeline inside the
 container. Each definition runs the whole pipeline (decomposition, label and linking with its
-vocabulary searches), so one run makes hundreds of calls to the provider; the first run took
-76 seconds. It writes no records. Each answer is scored with the lab's extraction, validation
+vocabulary searches), so one run makes hundreds of calls to the provider. It writes no records. Each answer is scored with the lab's extraction, validation
 and Close F1 scorer, as the lab's example-layout side test scores its answers. An answer the
 app failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's
 official workflow differs: it retries an invalid answer up to three times.)
@@ -496,11 +486,10 @@ Read the verdict with two caveats:
 
 * 25 of the 102 variables are the prompt's own few-shot examples, shown to the model with
   their answers, so they score far higher than the rest. The gate prints both groups apart,
-  for information. The first run (2026-11-18) scored 0.695 on all 102, **0.571** on the 77
-  variables the prompt does not show, and 0.976 on the 25 examples. The 0.60 on all 102 is a
+  for information. The 0.60 on all 102 is a
   floor against regressions, not a claim that new variables score 0.60.
-* Runs vary. In the lab's side test, repeated runs on 24 variables had a standard deviation
-  of 0.019; the spread on all 102 has not been measured. A result near 0.60 can pass or fail
+* Runs vary. In the lab, repeated runs with 20 to 30 examples on 72 variables had a standard deviation of 0.016 to
+  0.018 ([evaluation.md](evaluation.md)); the spread on all 102 has not been measured. A result near 0.60 can pass or fail
   by chance, so run it again before acting on a narrow result.
 
 ---
@@ -508,7 +497,7 @@ Read the verdict with two caveats:
 # Project Structure
 
 ```
-i-adopt-service-website
+iadopt-variable-description-service
 │
 ├── backend
 │   ├── app
