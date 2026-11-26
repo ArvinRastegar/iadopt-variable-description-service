@@ -20,7 +20,7 @@ graph is stored once, with the text it first arrived in, which may be another pe
 
 The files are written one row at a time into a file object, normally a temporary file, so
 memory use does not grow with the number of records. Read them inside one
-:meth:`app.records.RecordStore.snapshot`, so every file shows the same moment.
+:func:`app.storage.snapshot`, so every file shows the same moment.
 """
 
 from __future__ import annotations
@@ -578,7 +578,7 @@ def write_export(conn: sqlite3.Connection, target: BinaryIO, *, exported_at: dat
     """Write the export's ZIP into ``target``, one row at a time.
 
     Args:
-        conn: A connection from :meth:`app.records.RecordStore.snapshot`, so every file shows
+        conn: A connection from :func:`app.storage.snapshot`, so every file shows
             the same moment.
         target: A writable binary file, normally a temporary file.
         exported_at: When the export was made (UTC), for the README.

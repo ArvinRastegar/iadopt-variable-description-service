@@ -142,8 +142,9 @@ class PublicUser(BaseModel):
         email: Email address (empty string when unset).
         roles: Assigned roles (subset of ``{"admin", "user"}``).
         is_active: Whether the account is active.
-        auth_provider: Authentication provider (``"local"``).
+        auth_provider: Authentication provider (``"local"`` or ``"oidc"``).
         external_subject: External subject identifier, if any.
+        role: ``user``, ``admin`` or ``owner``, derived for every request.
     """
 
     id: int
@@ -154,10 +155,11 @@ class PublicUser(BaseModel):
     is_active: bool
     auth_provider: str
     external_subject: Optional[str]
+    role: str
 
 
 class AuthUserResponse(BaseModel):
-    """Body of ``/api/auth/login`` and ``/api/auth/me``.
+    """Body of ``/api/auth/login``.
 
     Attributes:
         user: The authenticated user's public projection.
@@ -166,6 +168,39 @@ class AuthUserResponse(BaseModel):
 
     user: PublicUser
     auth_enabled: bool
+
+
+class CapabilityDecision(BaseModel):
+    """What the session may do with one capability.
+
+    Attributes:
+        allowed: Whether the capability is granted.
+        reason: The reason code of a refusal, else ``None``.
+        message: The message of a refusal, else ``None``.
+        uses_left_today: For ``decompose`` only: the uses left under a daily cap, else ``None``.
+        resets_at: For ``decompose`` only: when the daily count resets (ISO-8601), else ``None``.
+    """
+
+    allowed: bool
+    reason: Optional[str]
+    message: Optional[str]
+    uses_left_today: Optional[int] = None
+    resets_at: Optional[str] = None
+
+
+class CurrentUserResponse(AuthUserResponse):
+    """Body of ``/api/auth/me``.
+
+    Attributes:
+        capabilities: What the session may do, keyed by capability name.
+        sign_in: What started the session, ``password`` or ``rohub``; ``None`` for the development user.
+        csrf_token: What an unsafe request with a ROHub session must carry in ``X-CSRF-Token``;
+            ``None`` otherwise.
+    """
+
+    capabilities: Dict[str, CapabilityDecision]
+    sign_in: Optional[str]
+    csrf_token: Optional[str]
 
 
 class SavedOrcid(BaseModel):
@@ -280,9 +315,19 @@ class RecordSummaryResponse(BaseModel):
 
 
 class StatusOkResponse(BaseModel):
-    """A bare ``{"status": "ok"}`` acknowledgement (logout, events, livez, health)."""
+    """A bare ``{"status": "ok"}`` acknowledgement (events, livez, health)."""
 
     status: str
+
+
+class SignOutResponse(StatusOkResponse):
+    """Body of ``/api/auth/logout``.
+
+    Attributes:
+        end_session_url: Where the page goes next to sign out at ROHub; ``None`` for a password session.
+    """
+
+    end_session_url: Optional[str]
 
 
 class ReadyzResponse(BaseModel):
@@ -297,16 +342,81 @@ class ReadyzResponse(BaseModel):
     checks: Dict[str, bool]
 
 
-class UserResponse(BaseModel):
-    """Body of the admin user create/update routes: ``{"user": ...}``."""
+class AccountIdentity(BaseModel):
+    """An identity-provider identity that leads to an account.
 
-    user: PublicUser
+    Attributes:
+        issuer: The provider's issuer URL.
+        subject: The subject the provider gives the person.
+        last_login_at: The last login through it (ISO-8601 UTC), or ``None``.
+    """
+
+    issuer: str
+    subject: str
+    last_login_at: Optional[str]
+
+
+class AdminUser(PublicUser):
+    """An account as admins see it.
+
+    Attributes:
+        blocked: Whether the account is blocked.
+        email_verified: Whether the identity provider verified the email; ``None`` when unknown.
+        local: Whether the account has a usable password.
+        identities: The identity-provider identities that lead to it.
+        created_at: When the account was created (ISO-8601 UTC).
+        last_login_at: The account's last login (ISO-8601 UTC), or ``None``.
+        approval: ``approved`` by an admin, ``waiting``, or ``not_needed`` for a local account, an
+            admin and the owner.
+        approved_at: When it was approved (ISO-8601 UTC), or ``None``.
+        approved_by: The username of who approved it, or ``None``.
+    """
+
+    blocked: bool
+    email_verified: Optional[bool]
+    local: bool
+    identities: List[AccountIdentity]
+    created_at: str
+    last_login_at: Optional[str]
+    approval: str
+    approved_at: Optional[str]
+    approved_by: Optional[str]
+
+
+class UserResponse(BaseModel):
+    """Body of the admin routes that change one account: ``{"user": ...}``."""
+
+    user: AdminUser
 
 
 class UsersResponse(BaseModel):
     """Body of ``/api/admin/users``: ``{"users": [...]}``."""
 
-    users: List[PublicUser]
+    users: List[AdminUser]
+
+
+class AccountChange(BaseModel):
+    """One change in an account's history.
+
+    Attributes:
+        action: What changed, such as ``blocked`` or ``admin_granted``.
+        actor: The username of the account that acted, or ``offline`` or ``bootstrap``.
+        reason: The reason given, if any.
+        details: What else belongs to the change.
+        created_at: When it happened (ISO-8601 UTC).
+    """
+
+    action: str
+    actor: str
+    reason: Optional[str]
+    details: Dict[str, Any]
+    created_at: str
+
+
+class AccountHistoryResponse(BaseModel):
+    """Body of ``/api/admin/users/{user_id}/history``, newest change first."""
+
+    history: List[AccountChange]
 
 
 # --------------------------------------------------------------------------- #

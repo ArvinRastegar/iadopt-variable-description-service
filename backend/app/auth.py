@@ -4,11 +4,13 @@ Owns the SQLite-backed user store, PBKDF2-SHA256 password hashing, HMAC-signed
 opaque session tokens, and the audit-event log. This module is security-sensitive:
 it handles password hashing, session signing, and (via the bootstrap admin) initial
 credentials. It is a leaf below the service/router layers — nothing in ``app.auth``
-imports services or routers.
+imports services or routers. The tables come from the migrations of ``app.storage``;
+roles, blocks and the owner belong to ``app.accounts``.
 
-Authentication is local username/password (NOT ORCID, NOT JWT). Sessions are random
-``secrets.token_urlsafe(32)`` tokens, HMAC-SHA256-signed with ``IADOPT_SESSION_SECRET``
-and stored SHA-256-hashed in SQLite; only the hash is persisted. See
+People sign in with a local username and password or with ROHub (``app.oidc``), as the
+sign-in mode allows. Sessions of both kinds are random ``secrets.token_urlsafe(32)``
+tokens, HMAC-SHA256-signed with ``IADOPT_SESSION_SECRET`` and stored SHA-256-hashed in
+SQLite, each kind in its own table and cookie; only the hash is persisted. See
 iadopt-variable-description-service-docs/CONTRACTS.md for the full contract.
 """
 
@@ -18,21 +20,56 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import pathlib
 import secrets
 import sqlite3
 import threading
 import time
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, Request, Response, status
 
+from . import storage
+from .account_model import ACCOUNT_COLUMNS, account_from_row, add_history, find_account
+from .guards import client_ip, exact_cookie
+from .oidc import store as oidc_store
+from .oidc.settings import current as sign_in_settings
 from .schemas.common import canonical_orcid_uri
+
+logger = logging.getLogger(__name__)
 
 MAX_SAVED_ORCIDS = 20
 """How many ORCID iDs one account can keep for publishing and retracting."""
+
+PASSWORD = "password"
+ROHUB = "rohub"
+"""The two kinds of session, by what started them."""
+
+ROHUB_COOKIE = "iadopt_rohub_session"
+"""The cookie of a ROHub session; with ``Secure`` its name has the prefix ``__Host-``."""
+
+NOBODY: Dict[str, Any] = {}
+"""The acting user of an audit event that names nobody, whatever session its browser has."""
+
+
+@dataclass(frozen=True)
+class AppSession:
+    """A request's session.
+
+    Attributes:
+        kind: ``password`` or ``rohub``.
+        user: The account's user dict.
+        csrf_token: What an unsafe request with a ROHub session must carry; ``None`` for a password.
+    """
+
+    kind: str
+    user: Dict[str, Any]
+    csrf_token: Optional[str] = None
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -92,7 +129,8 @@ class AuthStore:
 
     A single instance is shared process-wide (see ``app.core.dependencies``). All
     mutating operations are guarded by an ``RLock`` and run against the configured
-    SQLite database (WAL mode, foreign keys on).
+    SQLite database through ``app.storage``, whose immediate transactions keep
+    check-and-write sections correct across processes.
     """
 
     def __init__(
@@ -131,103 +169,26 @@ class AuthStore:
         self._last_cleanup = 0.0
 
     def init(self) -> None:
-        """Create the database directory, schema, and bootstrap admin; prune old audit rows.
+        """Migrate the database, create the bootstrap admin if it holds no account, prune old audit rows.
 
         Raises:
             RuntimeError: If auth is enabled but no ``session_secret`` is configured.
         """
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         if self.enabled and not self.session_secret:
             raise RuntimeError("IADOPT_SESSION_SECRET must be set when IADOPT_AUTH_ENABLED=true.")
-
-        with self._connect() as conn:
-            self._create_schema(conn)
-            self._seed_bootstrap_admin(conn)
-
+        storage.migrate(self.db_path)
+        self._seed_bootstrap_admin()
         self.cleanup_old_audit(force=True)
 
-    def _connect(self) -> sqlite3.Connection:
-        """Open a SQLite connection with Row rows, foreign keys, and WAL journaling."""
-        conn = sqlite3.connect(self.db_path, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
-        return conn
+    def _connect(self, *, immediate: bool = False) -> AbstractContextManager[sqlite3.Connection]:
+        """Open a transaction on the store's database; immediate for check-and-write sections."""
+        return storage.transaction(immediate, path=self.db_path)
 
-    def _create_schema(self, conn: sqlite3.Connection) -> None:
-        """Create the ``users``, ``sessions``, ``audit_events`` and ``saved_orcids`` tables if absent.
+    def _seed_bootstrap_admin(self) -> None:
+        """Create the configured bootstrap admin on a database without accounts (D-045).
 
-        Args:
-            conn: An open SQLite connection.
-        """
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                password_hash TEXT NOT NULL,
-                display_name TEXT NOT NULL DEFAULT '',
-                email TEXT NOT NULL DEFAULT '',
-                roles TEXT NOT NULL DEFAULT '["user"]',
-                is_active INTEGER NOT NULL DEFAULT 1,
-                auth_provider TEXT NOT NULL DEFAULT 'local',
-                external_subject TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                last_login_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                ip_address TEXT NOT NULL DEFAULT '',
-                user_agent TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE TABLE IF NOT EXISTS audit_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                user_id INTEGER,
-                username TEXT NOT NULL DEFAULT '',
-                action TEXT NOT NULL,
-                method TEXT NOT NULL DEFAULT '',
-                path TEXT NOT NULL DEFAULT '',
-                status_code INTEGER,
-                latency_ms INTEGER,
-                ip_address TEXT NOT NULL DEFAULT '',
-                user_agent TEXT NOT NULL DEFAULT '',
-                request_payload TEXT,
-                response_payload TEXT,
-                metadata TEXT,
-                error TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS saved_orcids (
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                orcid TEXT NOT NULL,
-                name TEXT,
-                created_at TEXT NOT NULL,
-                last_used_at TEXT NOT NULL,
-                PRIMARY KEY (user_id, orcid)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_events(created_at);
-            CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_events(user_id);
-            CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events(action);
-            """
-        )
-
-    def _seed_bootstrap_admin(self, conn: sqlite3.Connection) -> None:
-        """Ensure the configured bootstrap admin exists and is active (idempotent).
-
-        Reads ``IADOPT_BOOTSTRAP_ADMIN_*`` env vars. If the user exists, it is
-        reactivated and promoted to admin; otherwise it is created.
-
-        Args:
-            conn: An open SQLite connection.
+        Reads the ``IADOPT_BOOTSTRAP_ADMIN_*`` env vars. Once any account exists they change
+        nothing, so a restart never undoes the owner's block or revocation.
 
         Raises:
             RuntimeError: If no users exist and no bootstrap credentials are configured.
@@ -235,53 +196,42 @@ class AuthStore:
         if not self.enabled:
             return
 
-        existing_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         username = (os.getenv("IADOPT_BOOTSTRAP_ADMIN_USERNAME") or "").strip()
         password = os.getenv("IADOPT_BOOTSTRAP_ADMIN_PASSWORD") or ""
         display_name = (os.getenv("IADOPT_BOOTSTRAP_ADMIN_DISPLAY_NAME") or username or "Administrator").strip()
         email = (os.getenv("IADOPT_BOOTSTRAP_ADMIN_EMAIL") or "").strip()
+        configured = bool(username and password)
 
-        if not username or not password:
-            if existing_count == 0:
-                raise RuntimeError(
-                    "No users exist. Set IADOPT_BOOTSTRAP_ADMIN_USERNAME and "
-                    "IADOPT_BOOTSTRAP_ADMIN_PASSWORD for the first startup."
-                )
+        with self._connect() as conn:
+            accounts = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if accounts:
+            if configured:
+                logger.info("Ignored the bootstrap admin settings: the database already holds accounts.")
             return
+        if not configured:
+            raise RuntimeError(
+                "No users exist. Set IADOPT_BOOTSTRAP_ADMIN_USERNAME and "
+                "IADOPT_BOOTSTRAP_ADMIN_PASSWORD for the first startup."
+            )
 
-        existing = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        password_hash = self.hash_password(password)
         now = utc_iso()
-        if existing:
-            conn.execute(
+        with self._lock, self._connect(immediate=True) as conn:
+            if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+                return  # another process created the first account meanwhile
+            cursor = conn.execute(
                 """
-                UPDATE users
-                   SET roles = ?, is_active = 1, display_name = COALESCE(NULLIF(display_name, ''), ?),
-                       email = COALESCE(NULLIF(email, ''), ?), updated_at = ?
-                 WHERE id = ?
+                INSERT INTO users (
+                    username, password_hash, display_name, email, roles, is_active,
+                    auth_provider, external_subject, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, 1, 'local', ?, ?, ?)
                 """,
-                (json.dumps(["admin", "user"]), display_name, email, now, existing["id"]),
+                (username, password_hash, display_name, email, json.dumps(["admin", "user"]), username, now, now),
             )
-            return
-
-        conn.execute(
-            """
-            INSERT INTO users (
-                username, password_hash, display_name, email, roles, is_active,
-                auth_provider, external_subject, created_at, updated_at
+            add_history(
+                conn, user_id=int(cursor.lastrowid or 0), action="admin_granted", actor_kind="bootstrap", at=now
             )
-            VALUES (?, ?, ?, ?, ?, 1, 'local', ?, ?, ?)
-            """,
-            (
-                username,
-                self.hash_password(password),
-                display_name,
-                email,
-                json.dumps(["admin", "user"]),
-                username,
-                now,
-                now,
-            ),
-        )
 
     def hash_password(self, password: str) -> str:
         """Hash a password with PBKDF2-SHA256 (390k iterations, 16-byte salt).
@@ -300,6 +250,19 @@ class AuthStore:
             base64.b64encode(salt).decode("ascii"),
             base64.b64encode(digest).decode("ascii"),
         )
+
+    def hash_new_password(self, password: str) -> str:
+        """Hash a password someone sets, refusing one that is too short.
+
+        Args:
+            password: The plaintext password.
+
+        Raises:
+            ValueError: If it has fewer than 8 characters.
+        """
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters long.")
+        return self.hash_password(password)
 
     def verify_password(self, password: str, password_hash: str) -> bool:
         """Verify a plaintext password against a stored hash, constant-time.
@@ -335,14 +298,22 @@ class AuthStore:
             or the password is wrong. Updates ``last_login_at`` on success.
         """
         with self._lock, self._connect() as conn:
-            row = conn.execute("SELECT * FROM users WHERE username = ?", (username.strip(),)).fetchone()
-            if not row or not row["is_active"]:
-                return None
-            if not self.verify_password(password, row["password_hash"]):
-                return None
-            conn.execute("UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?", (utc_iso(), utc_iso(), row["id"]))
-            refreshed = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
-            return self._user_from_row(refreshed)
+            row = conn.execute(
+                "SELECT id, is_active, password_hash FROM users WHERE username = ?", (username.strip(),)
+            ).fetchone()
+        if not row or not row["is_active"]:
+            return None
+        # Checked outside the write transaction: hashing a password takes a while.
+        if not self.verify_password(password, row["password_hash"]):
+            return None
+        now = utc_iso()
+        with self._lock, self._connect(immediate=True) as conn:
+            signed_in = conn.execute(
+                "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ? AND is_active = 1 AND password_hash = ?",
+                (now, now, row["id"], row["password_hash"]),
+            )
+            # Nothing updated: the account was blocked or its password changed meanwhile.
+            return find_account(conn, row["id"]) if signed_in.rowcount else None
 
     def create_session(self, user_id: int, request: Request) -> str:
         """Create a session for a user and return the signed cookie value.
@@ -353,7 +324,8 @@ class AuthStore:
 
         Returns:
             The ``<token>.<signature>`` cookie value; only the SHA-256 of the token
-            is stored in the database.
+            is stored in the database. A blocked account gets no session, so its value
+            opens nothing.
         """
         token = secrets.token_urlsafe(32)
         token_hash = self._hash_session_token(token)
@@ -364,15 +336,15 @@ class AuthStore:
             conn.execute(
                 """
                 INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip_address, user_agent)
-                VALUES (?, ?, ?, ?, ?, ?)
+                SELECT ?, id, ?, ?, ?, ? FROM users WHERE id = ? AND is_active = 1
                 """,
                 (
                     token_hash,
-                    user_id,
                     utc_iso(now),
                     utc_iso(expires_at),
                     self.client_ip(request),
                     request.headers.get("user-agent", ""),
+                    user_id,
                 ),
             )
 
@@ -405,30 +377,130 @@ class AuthStore:
         response.delete_cookie(self.cookie_name, path="/")
 
     def delete_session(self, request: Request) -> None:
-        """Delete the request's session from the database (no-op if absent).
+        """Delete the request's sessions of both kinds from the database (no-op if absent).
 
         Args:
-            request: The request carrying the session cookie.
+            request: The request carrying the session cookies.
         """
+        with self._lock, self._connect() as conn:
+            self._delete_sessions(conn, request)
+
+    def _delete_sessions(self, conn: sqlite3.Connection, request: Request) -> None:
+        """Delete the sessions, of both kinds, that a request's browser has."""
         token = self._session_token_from_request(request)
-        if not token:
+        if token:
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (self._hash_session_token(token),))
+        self._delete_rohub_session(conn, request)
+
+    def _delete_rohub_session(self, conn: sqlite3.Connection, request: Request) -> None:
+        """Delete the ROHub session that a request's browser has."""
+        token = self._rohub_token(request)
+        if token:
+            oidc_store.delete_session(conn, self._hash_session_token(token))
+
+    def end_rohub_session(self, request: Request, response: Response) -> None:
+        """End the ROHub session a request's browser has and remove its cookie (no-op if absent).
+
+        Args:
+            request: The request.
+            response: The response to clear the cookie on.
+        """
+        if exact_cookie(request, self.rohub_cookie_name) is None:
             return
         with self._lock, self._connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (self._hash_session_token(token),))
+            self._delete_rohub_session(conn, request)
+        self.clear_rohub_cookie(request, response)
+
+    @property
+    def rohub_cookie_name(self) -> str:
+        """The name of a ROHub session's cookie on this deployment."""
+        return self.host_cookie_name(ROHUB_COOKIE)
+
+    def host_cookie_name(self, name: str) -> str:
+        """Return a cookie's name: with ``Secure`` it has the prefix that binds it to this host.
+
+        Args:
+            name: The name without the prefix.
+        """
+        return f"__Host-{name}" if self.cookie_secure else name
+
+    def create_rohub_session(
+        self, user_id: int, request: Request, *, issuer: str, subject: str, sid: Optional[str]
+    ) -> Optional[str]:
+        """Create a ROHub session and end the sessions, of either kind, that the same browser had.
+
+        Args:
+            user_id: The account that signed in.
+            request: The request that signed it in.
+            issuer: The provider's issuer.
+            subject: The subject the provider gives the person.
+            sid: The provider's session id, when it gave one.
+
+        Returns:
+            The signed cookie value, or ``None`` for a blocked account, whose browser keeps what it had.
+        """
+        token = secrets.token_urlsafe(32)
+        now = utc_now()
+        with self._lock, self._connect(immediate=True) as conn:
+            stored = oidc_store.add_session(
+                conn,
+                token_hash=self._hash_session_token(token),
+                user_id=user_id,
+                issuer=issuer,
+                subject=subject,
+                sid=sid,
+                created_at=utc_iso(now),
+                expires_at=utc_iso(now + self.session_ttl),
+                ip_address=self.client_ip(request),
+                user_agent=request.headers.get("user-agent", ""),
+            )
+            if not stored:
+                return None
+            self._delete_sessions(conn, request)
+        return f"{token}.{self._sign_session_token(token)}"
+
+    def set_rohub_cookie(self, response: Response, cookie_value: str) -> None:
+        """Set a ROHub session's cookie on a response.
+
+        Args:
+            response: The response to attach the cookie to.
+            cookie_value: The signed session cookie value.
+        """
+        response.set_cookie(
+            self.rohub_cookie_name,
+            cookie_value,
+            max_age=int(self.session_ttl.total_seconds()),
+            httponly=True,
+            secure=self.cookie_secure,
+            samesite="lax",
+            path="/",
+        )
+
+    def clear_rohub_cookie(self, request: Request, response: Response) -> None:
+        """Remove a ROHub session's cookie, with the attributes it was set with, from a browser that sent it.
+
+        Args:
+            request: The request.
+            response: The response to clear the cookie on.
+        """
+        if exact_cookie(request, self.rohub_cookie_name) is not None:
+            response.delete_cookie(
+                self.rohub_cookie_name, path="/", secure=self.cookie_secure, httponly=True, samesite="lax"
+            )
 
     def user_from_request(self, request: Request) -> Optional[Dict[str, Any]]:
-        """Resolve the user from the request's session cookie.
+        """Resolve the user from the request's session cookies.
 
         When auth is disabled, returns a synthetic development admin. Otherwise
-        validates the signed cookie against the sessions table and caches the
+        validates the signed cookies against the session tables and caches the
         result on ``request.state.current_user``.
 
         Args:
-            request: The request carrying the session cookie.
+            request: The request carrying the session cookies.
 
         Returns:
-            The user dict, or ``None`` if no valid session is present (and auth
-            is enabled). Expired sessions are deleted on access.
+            The user dict, or ``None`` if no session counts (and auth is enabled).
+            Expired sessions are deleted on access.
         """
         if not self.enabled:
             return {
@@ -437,6 +509,7 @@ class AuthStore:
                 "display_name": "Development User",
                 "email": "",
                 "roles": ["admin", "user"],
+                "role": "admin",
                 "is_active": True,
                 "auth_provider": "local",
                 "external_subject": "development",
@@ -446,6 +519,53 @@ class AuthStore:
         if cached:
             return cached
 
+        session = self._session_from_request(request)
+        if session is None:
+            return None
+        request.state.current_user = session.user
+        request.state.session = session
+        return session.user
+
+    def session_of(self, request: Request) -> Optional[AppSession]:
+        """Return the request's session; ``None`` without one, and for the development user.
+
+        Args:
+            request: The request carrying the session cookies.
+        """
+        if not self.enabled or not self.user_from_request(request):
+            return None
+        session: Optional[AppSession] = getattr(request.state, "session", None)
+        return session
+
+    def _session_from_request(self, request: Request) -> Optional[AppSession]:
+        """Return the session that counts in the sign-in mode: a ROHub one before a password one."""
+        settings = sign_in_settings()
+        if settings.rohub:
+            session = self._rohub_session(request, settings.issuer)
+            if session:
+                return session
+        if not settings.password:
+            return None
+        user = self._password_user(request)
+        return AppSession(PASSWORD, user) if user else None
+
+    def _rohub_session(self, request: Request, issuer: str) -> Optional[AppSession]:
+        """Return the browser's ROHub session of an issuer, deleting one that has ended."""
+        token = self._rohub_token(request)
+        if not token:
+            return None
+        token_hash, now = self._hash_session_token(token), utc_iso()
+        with self._lock, self._connect() as conn:
+            row = oidc_store.session_account(conn, token_hash=token_hash, issuer=issuer, now=now)
+        if row is None:
+            with self._lock, self._connect() as conn:
+                oidc_store.delete_ended_session(conn, token_hash=token_hash, now=now)
+            return None
+        # Bound to the session and known only to who may read its answers: not stored anywhere.
+        return AppSession(ROHUB, account_from_row(row), csrf_token=self._sign_session_token(f"csrf:{token}"))
+
+    def _password_user(self, request: Request) -> Optional[Dict[str, Any]]:
+        """Return the user of the browser's password session, deleting one that has ended."""
         token = self._session_token_from_request(request)
         if not token:
             return None
@@ -453,8 +573,8 @@ class AuthStore:
         token_hash = self._hash_session_token(token)
         with self._lock, self._connect() as conn:
             row = conn.execute(
-                """
-                SELECT users.*
+                f"""
+                SELECT {ACCOUNT_COLUMNS}
                   FROM sessions
                   JOIN users ON users.id = sessions.user_id
                  WHERE sessions.token_hash = ?
@@ -463,13 +583,22 @@ class AuthStore:
                 """,
                 (token_hash, utc_iso()),
             ).fetchone()
-            if not row:
-                conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
-                return None
+        if not row:
+            with self._lock, self._connect() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM sessions
+                     WHERE token_hash = ?
+                       AND NOT EXISTS (
+                           SELECT 1 FROM users
+                            WHERE users.id = sessions.user_id AND users.is_active = 1 AND sessions.expires_at > ?
+                       )
+                    """,
+                    (token_hash, utc_iso()),
+                )
+            return None
 
-        user = self._user_from_row(row)
-        request.state.current_user = user
-        return user
+        return account_from_row(row)
 
     def require_user(self, request: Request) -> Dict[str, Any]:
         """Return the authenticated user or raise 401.
@@ -488,157 +617,78 @@ class AuthStore:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
         return user
 
-    def require_admin(self, request: Request) -> Dict[str, Any]:
-        """Return an authenticated admin user or raise 401/403.
-
-        Args:
-            request: The request carrying the session cookie.
-
-        Returns:
-            The authenticated admin user dict.
-
-        Raises:
-            HTTPException: 401 if unauthenticated; 403 if the user is not an admin.
-        """
-        user = self.require_user(request)
-        if "admin" not in user.get("roles", []):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
-        return user
-
-    def create_user(
-        self,
-        *,
-        username: str,
-        password: str,
-        display_name: str = "",
-        email: str = "",
-        roles: Optional[Iterable[str]] = None,
-        is_active: bool = True,
-    ) -> Dict[str, Any]:
-        """Create a new local user.
+    def create_user(self, *, username: str, password: str, display_name: str = "", email: str = "") -> Dict[str, Any]:
+        """Create an ordinary local user; ``ValueError`` for a short password or a taken username.
 
         Args:
             username: Login name (1-120 chars, case-insensitive unique).
             password: Plaintext password (>= 8 chars).
             display_name: Optional display name.
             email: Optional email.
-            roles: Optional role iterable; defaults to ``["user"]``.
-            is_active: Whether the account is active.
+
+        Returns:
+            The created user dict.
+        """
+        username = self.normalize_username(username)
+        password_hash = self.hash_new_password(password)
+        with self._lock, self._connect() as conn:
+            return self.insert_user(
+                conn, username=username, password_hash=password_hash, display_name=display_name, email=email
+            )
+
+    def insert_user(
+        self, conn: sqlite3.Connection, *, username: str, password_hash: str, display_name: str, email: str
+    ) -> Dict[str, Any]:
+        """Insert an ordinary local user in the caller's transaction.
+
+        Args:
+            conn: The transaction's connection.
+            username: A normalized login name.
+            password_hash: The hash of its password.
+            display_name: The display name, empty for none.
+            email: The email, empty for none.
 
         Returns:
             The created user dict.
 
         Raises:
-            ValueError: If the password is too short or the username is taken.
+            ValueError: If the username is taken.
         """
-        username = self._normalize_username(username)
-        if len(password) < 8:
-            raise ValueError("Password must be at least 8 characters long.")
-
         now = utc_iso()
-        normalized_roles = self._normalize_roles(roles)
-        with self._lock, self._connect() as conn:
-            try:
-                cursor = conn.execute(
-                    """
-                    INSERT INTO users (
-                        username, password_hash, display_name, email, roles, is_active,
-                        auth_provider, external_subject, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, 'local', ?, ?, ?)
-                    """,
-                    (
-                        username,
-                        self.hash_password(password),
-                        display_name.strip(),
-                        email.strip(),
-                        json.dumps(normalized_roles),
-                        1 if is_active else 0,
-                        username,
-                        now,
-                        now,
-                    ),
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO users (
+                    username, password_hash, display_name, email, roles, is_active,
+                    auth_provider, external_subject, created_at, updated_at
                 )
-            except sqlite3.IntegrityError as e:
-                raise ValueError(f"User '{username}' already exists.") from e
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
-            return self._user_from_row(row)
+                VALUES (?, ?, ?, ?, ?, 1, 'local', ?, ?, ?)
+                """,
+                (
+                    username,
+                    password_hash,
+                    display_name.strip(),
+                    email.strip(),
+                    json.dumps(["user"]),
+                    username,
+                    now,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError as e:
+            raise ValueError(f"User '{username}' already exists.") from e
+        return self._account(conn, int(cursor.lastrowid or 0))
 
     def list_users(self) -> List[Dict[str, Any]]:
         """Return all users, active first then by case-insensitive username."""
         with self._lock, self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT * FROM users
-                 ORDER BY is_active DESC, username COLLATE NOCASE ASC
+                f"""
+                SELECT {ACCOUNT_COLUMNS} FROM users
+                 ORDER BY users.is_active DESC, users.username COLLATE NOCASE ASC
                 """
             ).fetchall()
-        return [self._user_from_row(row) for row in rows]
-
-    def update_user(self, user_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Partially update a user (only the provided fields are changed).
-
-        Args:
-            user_id: The user to update.
-            updates: Dict of fields to change (username, password, display_name,
-                email, roles, is_active). When deactivating, all sessions are deleted.
-
-        Returns:
-            The updated user dict.
-
-        Raises:
-            ValueError: On unknown fields, short password, missing user, duplicate
-                username, or attempting to disable the last active admin.
-        """
-        allowed = {"username", "password", "display_name", "email", "roles", "is_active"}
-        unknown = set(updates) - allowed
-        if unknown:
-            raise ValueError(f"Unsupported user field(s): {', '.join(sorted(unknown))}")
-
-        assignments: List[str] = []
-        values: List[Any] = []
-
-        if "username" in updates:
-            assignments.append("username = ?")
-            values.append(self._normalize_username(str(updates["username"])))
-        if "password" in updates and updates["password"]:
-            password = str(updates["password"])
-            if len(password) < 8:
-                raise ValueError("Password must be at least 8 characters long.")
-            assignments.append("password_hash = ?")
-            values.append(self.hash_password(password))
-        if "display_name" in updates:
-            assignments.append("display_name = ?")
-            values.append(str(updates["display_name"] or "").strip())
-        if "email" in updates:
-            assignments.append("email = ?")
-            values.append(str(updates["email"] or "").strip())
-        if "roles" in updates:
-            assignments.append("roles = ?")
-            values.append(json.dumps(self._normalize_roles(updates["roles"])))
-        if "is_active" in updates:
-            assignments.append("is_active = ?")
-            values.append(1 if bool(updates["is_active"]) else 0)
-
-        if not assignments:
-            return self.get_user(user_id)
-
-        assignments.append("updated_at = ?")
-        values.append(utc_iso())
-        values.append(user_id)
-
-        with self._lock, self._connect() as conn:
-            self._assert_not_removing_last_admin(conn, user_id, updates)
-            try:
-                conn.execute(f"UPDATE users SET {', '.join(assignments)} WHERE id = ?", values)
-            except sqlite3.IntegrityError as e:
-                raise ValueError("A user with that username already exists.") from e
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-            if not row:
-                raise ValueError("User not found.")
-            if "is_active" in updates and not bool(updates["is_active"]):
-                conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-            return self._user_from_row(row)
+        return [account_from_row(row) for row in rows]
 
     def get_user(self, user_id: int) -> Dict[str, Any]:
         """Return a user by id.
@@ -647,16 +697,21 @@ class AuthStore:
             user_id: The user id.
 
         Returns:
-            The user dict.
+            The user dict; ``ValueError`` if no user has that id.
+        """
+        with self._lock, self._connect() as conn:
+            return self._account(conn, user_id)
+
+    def _account(self, conn: sqlite3.Connection, user_id: int) -> Dict[str, Any]:
+        """Read a user on an open connection.
 
         Raises:
             ValueError: If no user has that id.
         """
-        with self._lock, self._connect() as conn:
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not row:
+        account = find_account(conn, user_id)
+        if account is None:
             raise ValueError("User not found.")
-        return self._user_from_row(row)
+        return account
 
     def list_orcids(self, user_id: int) -> List[Dict[str, Any]]:
         """Return the ORCID iDs a user saved, most recently used first.
@@ -691,7 +746,7 @@ class AuthStore:
         """
         orcid = canonical_orcid_uri(orcid)
         now = utc_iso()
-        with self._lock, self._connect() as conn:
+        with self._lock, self._connect(immediate=True) as conn:
             updated = conn.execute(
                 "UPDATE saved_orcids SET last_used_at = ?, name = COALESCE(?, name) WHERE user_id = ? AND orcid = ?",
                 (now, name, user_id, orcid),
@@ -757,8 +812,8 @@ class AuthStore:
         """Record an audit event, truncating large payloads.
 
         When ``user`` is omitted but ``request`` is provided, the user is resolved
-        from the request. Payloads/metadata are JSON-serialized and truncated to
-        ``audit_max_payload_bytes``. Failures are logged, never raised.
+        from the request; ``NOBODY`` names nobody. Payloads/metadata are JSON-serialized
+        and truncated to ``audit_max_payload_bytes``. Failures are logged, never raised.
 
         Args:
             action: The action name (e.g. ``"auth.login"``, ``"decompose"``).
@@ -911,10 +966,11 @@ class AuthStore:
         with self._lock, self._connect() as conn:
             conn.execute("DELETE FROM audit_events WHERE created_at < ?", (cutoff,))
             conn.execute("DELETE FROM sessions WHERE expires_at < ?", (utc_iso(),))
+            conn.execute("DELETE FROM oidc_sessions WHERE expires_at < ?", (utc_iso(),))
         self._last_cleanup = now
 
     def client_ip(self, request: Optional[Request]) -> str:
-        """Extract the client IP, preferring the first ``X-Forwarded-For`` value.
+        """Return the address a request comes from (``app.guards.client_ip``).
 
         Args:
             request: The request, or ``None``.
@@ -922,15 +978,10 @@ class AuthStore:
         Returns:
             The client IP string, or ``""`` when unavailable.
         """
-        if not request:
-            return ""
-        forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
-            return forwarded.split(",", 1)[0].strip()
-        return request.client.host if request.client else ""
+        return client_ip(request)
 
     def _session_token_from_request(self, request: Request) -> Optional[str]:
-        """Extract and signature-verify the session token from the request cookie.
+        """Extract and signature-verify a password session's token from the request cookie.
 
         Args:
             request: The request carrying the session cookie.
@@ -938,12 +989,20 @@ class AuthStore:
         Returns:
             The bare token if the signature is valid, else ``None``.
         """
-        value = request.cookies.get(self.cookie_name)
+        return self._signed_token(request.cookies.get(self.cookie_name))
+
+    def _rohub_token(self, request: Request) -> Optional[str]:
+        """Extract and signature-verify a ROHub session's token from the request cookie."""
+        return self._signed_token(exact_cookie(request, self.rohub_cookie_name))
+
+    def _signed_token(self, value: Optional[str]) -> Optional[str]:
+        """Return the session token of a cookie's value; ``None`` without a valid signature."""
         if not value or "." not in value:
             return None
         token, signature = value.rsplit(".", 1)
         expected = self._sign_session_token(token)
-        if not hmac.compare_digest(signature, expected):
+        # As bytes: a browser can send a signature that is no ASCII text.
+        if not hmac.compare_digest(signature.encode("utf-8", "replace"), expected.encode("ascii")):
             return None
         return token
 
@@ -955,8 +1014,11 @@ class AuthStore:
         """SHA-256-hash a token for database storage (only the hash is persisted)."""
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    def _normalize_username(self, username: str) -> str:
+    def normalize_username(self, username: str) -> str:
         """Strip and validate a username (1-120 chars).
+
+        Args:
+            username: The username as given.
 
         Raises:
             ValueError: If empty or longer than 120 characters.
@@ -967,73 +1029,6 @@ class AuthStore:
         if len(normalized) > 120:
             raise ValueError("Username must be 120 characters or fewer.")
         return normalized
-
-    def _normalize_roles(self, roles: Optional[Iterable[str]]) -> List[str]:
-        """Normalize a role iterable to a sorted, validated list (admin implies user).
-
-        Raises:
-            ValueError: If any role is not in ``{"admin", "user"}``.
-        """
-        normalized = sorted({str(role).strip().lower() for role in (roles or ["user"]) if str(role).strip()})
-        if "admin" in normalized and "user" not in normalized:
-            normalized.append("user")
-            normalized = sorted(normalized)
-        allowed = {"admin", "user"}
-        invalid = set(normalized) - allowed
-        if invalid:
-            raise ValueError(f"Unsupported role(s): {', '.join(sorted(invalid))}")
-        return normalized or ["user"]
-
-    def _assert_not_removing_last_admin(
-        self,
-        conn: sqlite3.Connection,
-        user_id: int,
-        updates: Dict[str, Any],
-    ) -> None:
-        """Guard against disabling or demoting the last active admin.
-
-        Args:
-            conn: An open SQLite connection.
-            user_id: The user being updated.
-            updates: The pending updates (only ``roles``/``is_active`` are relevant).
-
-        Raises:
-            ValueError: If the update would leave no active admin.
-        """
-        if "roles" not in updates and "is_active" not in updates:
-            return
-
-        current = conn.execute("SELECT id, roles, is_active FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not current:
-            return
-
-        current_roles = json.loads(current["roles"] or "[]")
-        next_roles = self._normalize_roles(updates["roles"]) if "roles" in updates else current_roles
-        next_active = bool(updates["is_active"]) if "is_active" in updates else bool(current["is_active"])
-        if "admin" not in current_roles or ("admin" in next_roles and next_active):
-            return
-
-        rows = conn.execute("SELECT id, roles FROM users WHERE is_active = 1 AND id != ?", (user_id,)).fetchall()
-        has_other_admin = any("admin" in json.loads(row["roles"] or "[]") for row in rows)
-        if not has_other_admin:
-            raise ValueError("Cannot disable or remove the role from the last active admin.")
-
-    def _user_from_row(self, row: sqlite3.Row) -> Dict[str, Any]:
-        """Convert a ``users`` row into the internal user dict (with parsed roles)."""
-        roles = json.loads(row["roles"] or "[]")
-        return {
-            "id": row["id"],
-            "username": row["username"],
-            "display_name": row["display_name"],
-            "email": row["email"],
-            "roles": roles,
-            "is_active": bool(row["is_active"]),
-            "auth_provider": row["auth_provider"],
-            "external_subject": row["external_subject"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-            "last_login_at": row["last_login_at"],
-        }
 
     def _event_from_row(self, row: sqlite3.Row) -> Dict[str, Any]:
         """Convert an ``audit_events`` row into the audit-event dict (metadata parsed)."""

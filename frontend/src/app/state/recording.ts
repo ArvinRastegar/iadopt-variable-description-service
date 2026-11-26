@@ -6,7 +6,6 @@ import { clampChanges, clip, diffComponents, snapshotComponents, type ComponentS
 import {
   ApiError,
   AuthRequiredError,
-  isRecordedAccount,
   postRecordEvent,
   startRecord,
   type RecordChange,
@@ -188,9 +187,10 @@ export function useRecorder(auth: Auth, initial: RecordState | null): Recorder {
 
     /** The account whose work is recorded now, or why nothing is. */
     const account = (): number | string => {
-      const { user, authEnabled } = authRef.current;
+      const { user, recorded, recordRefusal } = authRef.current;
       if (!user) return SIGN_IN;
-      if (offRef.current || !isRecordedAccount(user, authEnabled)) return AUTH_OFF;
+      if (recordRefusal) return recordRefusal;
+      if (offRef.current || !recorded) return AUTH_OFF;
       return user.id as number;
     };
 

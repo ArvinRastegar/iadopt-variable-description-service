@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse
 
+from ..access.dependencies import require
+from ..access.policy import Capability
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from ..core.dependencies import API_PREFIX, auth_store, require_current_user
 from ..schemas import ReadyzResponse, StatusOkResponse
@@ -47,25 +49,36 @@ def readiness_checks() -> Dict[str, bool]:
     }
 
 
-@router.get(f"{API_PREFIX}/docs", include_in_schema=False)
-def protected_docs(request: Request, _: Dict[str, Any] = Depends(require_current_user)) -> HTMLResponse:
+@router.get(
+    f"{API_PREFIX}/docs", include_in_schema=False, dependencies=[Depends(require(Capability.SESSION))]
+)
+def protected_docs(request: Request) -> HTMLResponse:
     """Serve the auth-gated Swagger UI."""
     return get_swagger_ui_html(openapi_url=f"{API_PREFIX}/openapi.json", title=f"{request.app.title} - Swagger UI")
 
 
-@router.get(f"{API_PREFIX}/redoc", include_in_schema=False)
-def protected_redoc(request: Request, _: Dict[str, Any] = Depends(require_current_user)) -> HTMLResponse:
+@router.get(
+    f"{API_PREFIX}/redoc", include_in_schema=False, dependencies=[Depends(require(Capability.SESSION))]
+)
+def protected_redoc(request: Request) -> HTMLResponse:
     """Serve the auth-gated ReDoc UI."""
     return get_redoc_html(openapi_url=f"{API_PREFIX}/openapi.json", title=f"{request.app.title} - ReDoc")
 
 
-@router.get(f"{API_PREFIX}/openapi.json", include_in_schema=False)
-def protected_openapi(request: Request, _: Dict[str, Any] = Depends(require_current_user)) -> Dict[str, Any]:
+@router.get(
+    f"{API_PREFIX}/openapi.json", include_in_schema=False, dependencies=[Depends(require(Capability.SESSION))]
+)
+def protected_openapi(request: Request) -> Dict[str, Any]:
     """Serve the auth-gated raw OpenAPI schema."""
     return request.app.openapi()
 
 
-@router.post(f"{API_PREFIX}/events", response_model=StatusOkResponse, tags=["System"])
+@router.post(
+    f"{API_PREFIX}/events",
+    response_model=StatusOkResponse,
+    dependencies=[Depends(require(Capability.SESSION))],
+    tags=["System"],
+)
 def record_frontend_event(
     req: FrontendEventRequest,
     request: Request,

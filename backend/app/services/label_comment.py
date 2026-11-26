@@ -17,6 +17,7 @@ import re
 from typing import Any, Dict, Optional, Tuple
 
 from ..core.config import PSNC_MODEL_PROVIDER
+from ..core.provider_keys import without_keys
 from .call_log import CallLog, mark_unusable
 from .llm import call_model, call_psnc_model
 
@@ -174,7 +175,7 @@ def generate_label_and_comment(
             # The call returned text, but none of it can be used: record why (D-037, stage 2).
             mark_unusable(calls, "label", "The answer held no usable label or comment.")
     except Exception as exc:  # noqa: BLE001 - labelling must never break a decomposition
-        print(f"Label/comment generation failed: {exc}")
+        print(f"Label/comment generation failed: {without_keys(exc)}")
         return fallback_label, fallback_comment
 
     # Per-field fallback: a good comment survives a missing label and vice versa.

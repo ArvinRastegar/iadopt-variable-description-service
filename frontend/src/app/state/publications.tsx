@@ -1,10 +1,13 @@
 import * as React from 'react';
 
+import { registerWork } from '@/lib/leaving';
 import {
   markRetracted as storeRetracted,
   PUBLISHED_NANOPUBS_KEY,
   readPublished,
   rememberPublished,
+  REMEMBERED_ORCID_KEY,
+  writeString,
   type PublishedNanopub,
 } from '@/lib/storage';
 
@@ -37,6 +40,15 @@ export function PublicationsProvider({ children }: { children: React.ReactNode }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  // "Sign out and clear this browser" empties the list, here and in storage, with the remembered iD.
+  React.useEffect(() => registerWork({
+    clear: () => {
+      setEntries([]);
+      writeString(PUBLISHED_NANOPUBS_KEY, null);
+      writeString(REMEMBERED_ORCID_KEY, null);
+    },
+  }), []);
 
   // Changes start from the list on the page, not from storage, so entries of this session stay
   // listed when storage is blocked or full. Other tabs' changes arrive through `storage` events.

@@ -14,6 +14,8 @@ from nanopub import Nanopub, NanopubConf
 from rdflib import Graph, Literal
 from rdflib.namespace import RDFS
 
+from ..access.dependencies import require
+from ..access.policy import Capability
 from ..core.config import settings
 from ..core.dependencies import API_PREFIX, auth_store, record_store, require_current_user
 from ..core.logging import get_logger
@@ -58,7 +60,12 @@ def nanopub_preparation_options() -> NanopubPreparationOptionsResponse:
     )
 
 
-@router.post(f"{API_PREFIX}/nanopub/publish", response_model=PublishNanopubResponse, tags=["Nanopub"])
+@router.post(
+    f"{API_PREFIX}/nanopub/publish",
+    response_model=PublishNanopubResponse,
+    dependencies=[Depends(require(Capability.PUBLISH))],
+    tags=["Nanopub"],
+)
 def publish_nanopub(
     req: PublishNanopubRequest,
     request: Request,
@@ -227,7 +234,12 @@ def publish_nanopub(
         raise HTTPException(status_code=500, detail=f"Nanopub publish failed: {e}") from e
 
 
-@router.post(f"{API_PREFIX}/nanopub/retract", response_model=RetractNanopubResponse, tags=["Nanopub"])
+@router.post(
+    f"{API_PREFIX}/nanopub/retract",
+    response_model=RetractNanopubResponse,
+    dependencies=[Depends(require(Capability.RETRACT_OWN))],
+    tags=["Nanopub"],
+)
 def retract_nanopub(
     req: RetractNanopubRequest,
     request: Request,

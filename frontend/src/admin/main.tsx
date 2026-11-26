@@ -4,19 +4,26 @@ import { AlertTriangleIcon, ArrowLeftIcon, CircleCheckIcon, DownloadIcon, LogOut
 
 import '@/styles/globals.css';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/controls';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Callout, Pill, Toaster } from '@/components/ui/feedback';
 import { Input, Label } from '@/components/ui/fields';
 import { downloadBlob } from '@/lib/download';
+import { navigation } from '@/lib/leaving';
 import { cn } from '@/lib/utils';
-import { adminApi, ApiError, AuthRequiredError, fetchCurrentUser, signOut, type AdminStats, type AuditEvent, type User } from '@/shared/api';
+import {
+  ADMIN_PAGE_CAPABILITIES, adminApi, allows, ApiError, AuthRequiredError, fetchSession, signOut,
+  type Account, type AdminStats, type AuditEvent, type Capabilities, type User,
+} from '@/shared/api';
 import { Brand } from '@/shared/AppHeader';
 import { displayName } from '@/shared/auth';
 import { ThemeProvider, ThemeToggle, useTheme } from '@/shared/theme';
+import { AccountsTable, formatTime, waitingAccounts } from './accounts';
 import { NewPasswordFields } from './NewPasswordFields';
 
-/* Admin dashboard over the existing admin API: statistics, readiness, users and the audit log. */
+/*
+ * Admin dashboard over the admin API: statistics, readiness, accounts, the records export and the
+ * audit log. Each part shows when the capabilities of the session allow it.
+ */
 
 const CHECK_LABELS: Record<string, string> = {
   schema_exists: 'JSON schema file',
@@ -38,42 +45,48 @@ function formatLatency(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`;
 }
 
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
 function AdminPage() {
   const { theme } = useTheme();
   const [me, setMe] = React.useState<User | null>(null);
-  const [denied, setDenied] = React.useState(false);
+  const [capabilities, setCapabilities] = React.useState<Capabilities>({});
   const [stats, setStats] = React.useState<AdminStats | null>(null);
-  const [users, setUsers] = React.useState<User[]>([]);
+  const [accounts, setAccounts] = React.useState<Account[] | null>(null);
   const [events, setEvents] = React.useState<AuditEvent[]>([]);
   const [status, setStatus] = React.useState<{ text: string; error?: boolean } | null>({ text: 'Loading…' });
   const [creating, setCreating] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
 
+  const loads = React.useRef(0);
+
   const load = React.useCallback(async () => {
+    loads.current += 1;
+    const serial = loads.current;
+    // A slow answer must not replace what a later load already shows.
+    const outdated = () => serial !== loads.current;
     setStatus({ text: 'Loading…' });
     try {
-      const user = await fetchCurrentUser();
-      if (!user) {
+      const session = await fetchSession();
+      if (outdated()) return;
+      if (!session.user) {
         toLogin();
         return;
       }
-      setMe(user);
-      if (!user.roles?.includes('admin')) {
-        setDenied(true);
-        setStatus(null);
-        return;
-      }
-      const [nextStats, nextUsers, nextAudit] = await Promise.all([adminApi.stats(), adminApi.users(), adminApi.audit(100)]);
+      setMe(session.user);
+      setCapabilities(session.capabilities);
+      const seesActivity = allows(session.capabilities, 'view_activity');
+      const seesAccounts = allows(session.capabilities, 'manage_users');
+      const [nextStats, nextAccounts, nextAudit] = await Promise.all([
+        seesActivity ? adminApi.stats() : null,
+        seesAccounts ? adminApi.users() : null,
+        seesActivity ? adminApi.audit(100) : null,
+      ]);
+      if (outdated()) return;
       setStats(nextStats);
-      setUsers(nextUsers.users ?? []);
-      setEvents(nextAudit.events ?? []);
+      setAccounts(nextAccounts ? nextAccounts.users ?? [] : null);
+      setEvents(nextAudit?.events ?? []);
       setStatus(null);
     } catch (error) {
+      if (outdated()) return;
       if (error instanceof AuthRequiredError) {
         toLogin();
         return;
@@ -86,15 +99,10 @@ function AdminPage() {
     void load();
   }, [load]);
 
-  async function update(user: User, updates: Record<string, unknown>) {
-    try {
-      await adminApi.updateUser(user.id as number, updates);
-      await load();
-    } catch (error) {
-      if (error instanceof AuthRequiredError) return toLogin();
-      setStatus({ text: error instanceof Error ? error.message : 'Could not update user.', error: true });
-    }
-  }
+  const seesActivity = allows(capabilities, 'view_activity');
+  const managesAccounts = allows(capabilities, 'manage_users');
+  const waiting = managesAccounts && accounts ? waitingAccounts(accounts).length : 0;
+  const denied = me !== null && !ADMIN_PAGE_CAPABILITIES.some((name) => allows(capabilities, name));
 
   async function downloadRecords() {
     setExporting(true);
@@ -117,18 +125,21 @@ function AdminPage() {
         <Pill>Admin</Pill>
         <div className="flex-1" />
         <Button variant="ghost" asChild>
-          <a href="./index.html#/" className="no-underline"><ArrowLeftIcon aria-hidden="true" />Back to the app</a>
+          <a href="./index.html#/" className="no-underline"><ArrowLeftIcon aria-hidden="true" /><HeaderLabel>Back to the app</HeaderLabel></a>
         </Button>
         <ThemeToggle />
         {me && (
           <Button
             variant="outline"
             onClick={async () => {
-              await signOut().catch(() => {});
-              window.location.href = './login.html';
+              try {
+                navigation.leave((await signOut()) ?? './login.html');
+              } catch (error) {
+                setStatus({ text: error instanceof Error ? error.message : 'Could not sign out. Please try again.', error: true });
+              }
             }}
           >
-            <LogOutIcon aria-hidden="true" />Sign out
+            <LogOutIcon aria-hidden="true" /><HeaderLabel>Sign out</HeaderLabel>
           </Button>
         )}
       </header>
@@ -150,7 +161,13 @@ function AdminPage() {
 
         {denied && <Callout tone="warning" title="Admin access required">This account cannot open the admin dashboard.</Callout>}
 
-        {stats && (
+        {waiting > 0 && (
+          <Callout tone="warning" title={waiting === 1 ? '1 account waits for approval' : `${waiting} accounts wait for approval`}>
+            <a href="#waiting-for-approval">Go to {waiting === 1 ? 'it' : 'them'}</a>
+          </Callout>
+        )}
+
+        {seesActivity && stats && (
           <>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(min(190px,100%),1fr))] gap-3">
               <StatTile label="Readiness">
@@ -200,17 +217,22 @@ function AdminPage() {
           </>
         )}
 
-        {!denied && stats && (
+        {managesAccounts && accounts && (
           <Card
             title="Users"
-            subtitle="Local accounts"
+            subtitle="Roles, approvals, blocks and sign-in of every account"
             action={<Button size="sm" onClick={() => setCreating(true)}><PlusIcon aria-hidden="true" />Create user</Button>}
           >
-            <UsersTable users={users} onUpdate={update} />
+            <AccountsTable
+              accounts={accounts}
+              viewer={{ id: me?.id, role: me?.role, capabilities }}
+              onChanged={load}
+              onSignInNeeded={toLogin}
+            />
           </Card>
         )}
 
-        {!denied && stats && (
+        {allows(capabilities, 'export_research') && (
           <Card
             title="Decomposition records"
             subtitle="Every record, for analysis offline"
@@ -228,7 +250,7 @@ function AdminPage() {
           </Card>
         )}
 
-        {!denied && stats && (
+        {seesActivity && stats && (
           <Card title="Recent audit events" subtitle="Latest 100">
             <AuditTable events={events} />
           </Card>
@@ -246,6 +268,11 @@ function AdminPage() {
       <Toaster theme={theme} />
     </div>
   );
+}
+
+/** The text of a button in the header; a phone shows only the icon. */
+function HeaderLabel({ children }: { children: React.ReactNode }) {
+  return <span className="sr-only sm:not-sr-only">{children}</span>;
 }
 
 function StatTile({ label, children }: { label: string; children: React.ReactNode }) {
@@ -301,112 +328,8 @@ function Bars({ data }: { data: Record<string, number> }) {
   );
 }
 
-function UsersTable({ users, onUpdate }: { users: User[]; onUpdate: (user: User, updates: Record<string, unknown>) => Promise<void> }) {
-  const [resetFor, setResetFor] = React.useState<User | null>(null);
-  if (!users.length) return <p className="m-0 py-2 text-[13px] text-muted-foreground">No users yet.</p>;
-  return (
-    <div className="-mx-[18px] overflow-x-auto">
-      <table className="w-full min-w-[900px] border-collapse text-left text-[13px]">
-        <thead>
-          <tr className="border-b border-border text-xs text-muted-foreground">
-            <th scope="col" className="px-[18px] py-2 font-semibold">Username</th>
-            <th scope="col" className="px-2 py-2 font-semibold">Display name</th>
-            <th scope="col" className="px-2 py-2 font-semibold">Email</th>
-            <th scope="col" className="px-2 py-2 font-semibold">Role</th>
-            <th scope="col" className="px-2 py-2 font-semibold">Status</th>
-            <th scope="col" className="px-2 py-2 font-semibold">Last login</th>
-            <th scope="col" className="px-[18px] py-2 text-right font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((user) => <UserRow key={user.id} user={user} onUpdate={onUpdate} onReset={() => setResetFor(user)} />)}
-        </tbody>
-      </table>
-      <ResetPasswordDialog user={resetFor} onClose={() => setResetFor(null)} onSubmit={async (password) => {
-        if (!resetFor) return;
-        await onUpdate(resetFor, { password });
-        setResetFor(null);
-      }} />
-    </div>
-  );
-}
-
-function UserRow({ user, onUpdate, onReset }: { user: User; onUpdate: (user: User, updates: Record<string, unknown>) => Promise<void>; onReset: () => void }) {
-  const initial = React.useMemo(() => ({
-    username: user.username,
-    display_name: user.display_name || '',
-    email: user.email || '',
-    role: user.roles?.includes('admin') ? 'admin' : 'user',
-  }), [user]);
-  const [fields, setFields] = React.useState(initial);
-  React.useEffect(() => setFields(initial), [initial]);
-  const dirty = JSON.stringify(fields) !== JSON.stringify(initial);
-  const id = `user-${user.id}`;
-
-  return (
-    <tr className="border-b border-border last:border-b-0">
-      <td className="px-[18px] py-2"><Input aria-label={`Username of ${user.username}`} id={`${id}-username`} value={fields.username} onChange={(event) => setFields({ ...fields, username: event.target.value })} className="h-8" /></td>
-      <td className="px-2 py-2"><Input aria-label={`Display name of ${user.username}`} value={fields.display_name} onChange={(event) => setFields({ ...fields, display_name: event.target.value })} className="h-8" /></td>
-      <td className="px-2 py-2"><Input aria-label={`Email of ${user.username}`} type="email" value={fields.email} onChange={(event) => setFields({ ...fields, email: event.target.value })} className="h-8" /></td>
-      <td className="px-2 py-2">
-        <Select value={fields.role} onValueChange={(role) => setFields({ ...fields, role })}>
-          <SelectTrigger aria-label={`Role of ${user.username}`} className="h-8 w-28"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="user">User</SelectItem>
-            <SelectItem value="admin">Admin</SelectItem>
-          </SelectContent>
-        </Select>
-      </td>
-      <td className="px-2 py-2">{user.is_active ? <Pill tone="success" dot>Active</Pill> : <Pill tone="danger" dot>Disabled</Pill>}</td>
-      <td className="px-2 py-2 whitespace-nowrap text-text-2">{user.last_login_at ? formatTime(user.last_login_at) : '—'}</td>
-      <td className="px-[18px] py-2">
-        <div className="flex justify-end gap-1.5">
-          <Button size="sm" disabled={!dirty} onClick={() => void onUpdate(user, {
-            username: fields.username,
-            display_name: fields.display_name,
-            email: fields.email,
-            roles: fields.role === 'admin' ? ['admin', 'user'] : ['user'],
-          })}>Save</Button>
-          <Button size="sm" variant="outline" onClick={() => void onUpdate(user, { is_active: !user.is_active })}>{user.is_active ? 'Disable' : 'Enable'}</Button>
-          <Button size="sm" variant="outline" onClick={onReset}>Reset password</Button>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-function ResetPasswordDialog({ user, onClose, onSubmit }: { user: User | null; onClose: () => void; onSubmit: (password: string) => Promise<void> }) {
-  const [password, setPassword] = React.useState('');
-  React.useEffect(() => setPassword(''), [user]);
-  return (
-    <Dialog open={user !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md">
-        <form className="flex min-h-0 flex-col" onSubmit={(event) => { event.preventDefault(); void onSubmit(password); }}>
-          <DialogHeader>
-            <DialogTitle>Reset password</DialogTitle>
-            <DialogDescription>Set a new password for {user?.username}. Tell them through a secure channel.</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="flex flex-col gap-4">
-            <NewPasswordFields
-              idPrefix="reset-password"
-              password={password}
-              onPasswordChange={setPassword}
-              passwordLabel="New password, at least 8 characters"
-              confirmationLabel="Confirm the new password"
-            />
-          </DialogBody>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={password.length < 8}>Set password</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function CreateUserDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (open: boolean) => void; onCreated: () => Promise<void> }) {
-  const empty = { username: '', password: '', display_name: '', email: '', role: 'user' };
+  const empty = { username: '', password: '', display_name: '', email: '' };
   const [fields, setFields] = React.useState(empty);
   const [error, setError] = React.useState('');
   React.useEffect(() => {
@@ -426,8 +349,6 @@ function CreateUserDialog({ open, onOpenChange, onCreated }: { open: boolean; on
         password: fields.password,
         display_name: fields.display_name.trim(),
         email: fields.email.trim(),
-        roles: fields.role === 'admin' ? ['admin', 'user'] : ['user'],
-        is_active: true,
       });
       await onCreated();
     } catch (caught) {
@@ -442,7 +363,7 @@ function CreateUserDialog({ open, onOpenChange, onCreated }: { open: boolean; on
         <form onSubmit={submit} className="flex min-h-0 flex-col">
           <DialogHeader>
             <DialogTitle>Create user</DialogTitle>
-            <DialogDescription>Creates a local account with a username and password.</DialogDescription>
+            <DialogDescription>Creates a local account with a username and password. It is an ordinary user; the owner can make it an admin.</DialogDescription>
           </DialogHeader>
           <DialogBody className="grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] gap-4">
             <div className="flex flex-col gap-1.5">
@@ -464,16 +385,6 @@ function CreateUserDialog({ open, onOpenChange, onCreated }: { open: boolean; on
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="new-email">Email</Label>
               <Input id="new-email" type="email" value={fields.email} onChange={(event) => setFields({ ...fields, email: event.target.value })} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-role">Role</Label>
-              <Select value={fields.role} onValueChange={(role) => setFields({ ...fields, role })}>
-                <SelectTrigger id="new-role"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="user">User</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
             {error && <div className="col-span-full"><Callout tone="danger">{error}</Callout></div>}
           </DialogBody>

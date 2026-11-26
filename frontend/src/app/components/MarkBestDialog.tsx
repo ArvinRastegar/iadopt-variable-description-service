@@ -23,8 +23,9 @@ export const NOTE_PROMPT = 'To help us improve, please tell us how you changed i
 /** Why marking is not possible now, or null. */
 export function markBlockedReason(
   workspace: Pick<ReturnType<typeof useWorkspace>, 'decomposing' | 'turtleDirty' | 'layout'>,
-  auth: Pick<ReturnType<typeof useAuth>, 'user' | 'recorded'>,
+  auth: Pick<ReturnType<typeof useAuth>, 'user' | 'recorded' | 'recordRefusal'>,
 ): string | null {
+  if (auth.recordRefusal) return auth.recordRefusal;
   if (auth.user && !auth.recorded) {
     return 'Only accounts can mark a version as best, and sign-in is switched off on this deployment, so nothing can be published from it.';
   }

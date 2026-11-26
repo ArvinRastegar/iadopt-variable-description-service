@@ -239,7 +239,10 @@ class AdminCreateUserRequest(BaseModel):
 
 
 class AdminUpdateUserRequest(BaseModel):
-    """Input for ``PATCH /api/admin/users/{user_id}`` (all fields optional/partial)."""
+    """Input for ``PATCH /api/admin/users/{user_id}`` (all fields optional/partial).
+
+    ``roles`` and ``is_active`` are named only so that the route can say which routes change them.
+    """
 
     username: Optional[str] = Field(default=None, min_length=1, max_length=120)
     password: Optional[str] = Field(default=None, min_length=8)
@@ -247,6 +250,16 @@ class AdminUpdateUserRequest(BaseModel):
     email: Optional[str] = None
     roles: Optional[List[str]] = None
     is_active: Optional[bool] = None
+
+
+class AccountActionRequest(BaseModel):
+    """Input for the routes that change an account's block, approval or role.
+
+    Attributes:
+        reason: Why; a block needs one of 1 to 500 characters, which the route checks.
+    """
+
+    reason: Optional[str] = None
 
 
 class RecordChange(BaseModel):

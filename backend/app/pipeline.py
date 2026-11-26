@@ -22,6 +22,7 @@ from openai import APIStatusError, OpenAIError
 from .clients.http import get_http_session
 from .clients.openai_client import get_openai_client
 from .core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
+from .core.provider_keys import without_keys
 from .core.state import app_state
 from .services.call_log import CallLog, PendingCall, mark_unusable, start_call
 from .services.enrichment import enrich_with_uris
@@ -73,7 +74,11 @@ def warmup_assets() -> None:
     """
     # OpenRouter is only initialized when it is enabled for this deployment.
     if OPENROUTER_MODEL_PROVIDER in settings.enabled_model_providers and settings.openrouter_api_key:
-        get_openai_client()
+        try:
+            get_openai_client()
+        except RuntimeError as e:
+            # A key that cannot be sent stops the runs that need it, not the service and the other provider.
+            print(f"OpenRouter cannot be used: {without_keys(e)}")
 
     # Cache schema validator (shared via app.core.state so services can read it
     # without importing this module).
@@ -136,7 +141,7 @@ def _finalize_pipeline_output(
         try:
             enriched = enrich_with_uris(pred, linker=linker)
         except Exception as e:
-            print(f"Entity linking failed: {e}")
+            print(f"Entity linking failed: {without_keys(e)}")
             enriched = pred
     else:
         enriched = pred
@@ -385,7 +390,7 @@ def stream_pipeline_events(
                 all_display_parts.append(retry_note)
                 yield stream_event("raw_delta", delta=retry_note)
 
-            # A try is recorded once its request is about to go out: a missing key fails before.
+            # A try is recorded once its request is about to go out: a missing or malformed key fails before.
             pending: Optional[PendingCall] = None
             usage: Dict[str, Any] = {}
             try:
@@ -452,9 +457,9 @@ def stream_pipeline_events(
                 try:
                     pred = parse_llm_json(attempt_content, definition)
                 except Exception as e:
-                    last_error_message = str(e)
-                    pending.finish("unusable", error=f"Not valid JSON: {e}", usage=usage or None)
-                    print(f"LLM parse attempt {attempt} failed: {e}")
+                    last_error_message = without_keys(e)
+                    pending.finish("unusable", error=f"Not valid JSON: {last_error_message}", usage=usage or None)
+                    print(f"LLM parse attempt {attempt} failed: {last_error_message}")
                     continue
 
                 pending.finish("ok", usage=usage or None)
@@ -478,20 +483,20 @@ def stream_pipeline_events(
                 return
 
             except APIStatusError as e:
-                last_error_message = str(e)
+                last_error_message = without_keys(e)
                 if pending is not None:
                     pending.finish("error", error=call_error(e), usage=usage or None)
-                print(f"APIStatusError attempt {attempt}: {e}")
+                print(f"APIStatusError attempt {attempt}: {last_error_message}")
             except (OpenAIError, httpx.HTTPError) as e:
-                last_error_message = str(e)
+                last_error_message = without_keys(e)
                 if pending is not None:
                     pending.finish("error", error=call_error(e), usage=usage or None)
-                print(f"Transport error attempt {attempt}: {e}")
+                print(f"Transport error attempt {attempt}: {last_error_message}")
             except Exception as e:
-                last_error_message = str(e)
+                last_error_message = without_keys(e)
                 if pending is not None:
                     pending.finish("error", error=call_error(e), usage=usage or None)
-                print(f"Unexpected streaming error attempt {attempt}: {e}")
+                print(f"Unexpected streaming error attempt {attempt}: {last_error_message}")
             finally:
                 # A stream the client closes mid-answer ends here with GeneratorExit, which no
                 # handler above catches; every other exit has finished the call already.
@@ -523,9 +528,9 @@ def stream_pipeline_events(
                     try:
                         pred = parse_llm_json(fallback_raw, definition)
                     except Exception as e:
-                        mark_unusable(calls, "decomposition", f"Not valid JSON: {e}")
-                        last_error_message = str(e)
-                        print(f"Fallback parse attempt {attempt} failed: {e}")
+                        last_error_message = without_keys(e)
+                        mark_unusable(calls, "decomposition", f"Not valid JSON: {last_error_message}")
+                        print(f"Fallback parse attempt {attempt} failed: {last_error_message}")
                         continue
                     try:
                         pred = _labelled_prediction(
@@ -542,8 +547,8 @@ def stream_pipeline_events(
                         )
                     except Exception as e:
                         mark_unusable(calls, "decomposition", f"The answer could not be used: {type(e).__name__}")
-                        last_error_message = str(e)
-                        print(f"Fallback parse attempt {attempt} failed: {e}")
+                        last_error_message = without_keys(e)
+                        print(f"Fallback parse attempt {attempt} failed: {last_error_message}")
                         continue
                     yield stream_event("final", data=final_payload)
                     return
@@ -552,11 +557,11 @@ def stream_pipeline_events(
             "error", detail=f"Could not extract valid JSON from the model output. Last error: {last_error_message}"
         )
     except ValueError as e:
-        yield stream_event("error", detail=str(e))
+        yield stream_event("error", detail=without_keys(e))
     except RuntimeError as e:
-        yield stream_event("error", detail=str(e))
+        yield stream_event("error", detail=without_keys(e))
     except Exception as e:
-        yield stream_event("error", detail=f"Unexpected backend error: {e}")
+        yield stream_event("error", detail=f"Unexpected backend error: {without_keys(e)}")
 
 
 def run_pipeline(

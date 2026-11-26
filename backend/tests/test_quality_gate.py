@@ -395,7 +395,10 @@ out.flush()
 
 def test_the_protocol_keeps_its_own_output_while_the_app_prints():
     program = NOISY_PROGRAM.replace("PROGRAM", repr(str(TOOLS / "quality_gate_container.py")))
-    completed = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, timeout=60)
+    # -u: unbuffered, as in the container (PYTHONUNBUFFERED=1 in the Dockerfile). Each print is then written at once,
+    # its newline apart, and can spoil a protocol line. Without -u, Python 3.12 before 3.12.5 garbles the prints of
+    # threads that print together (python/cpython#119506), and the checks of standard error fail now and then.
+    completed = subprocess.run([sys.executable, "-u", "-c", program], capture_output=True, text=True, timeout=60)
     assert completed.returncode == 0, completed.stderr
     assert [json.loads(line)["variable_id"] for line in completed.stdout.splitlines()] == list(range(300))
     assert completed.stderr.count("noise") == 1200

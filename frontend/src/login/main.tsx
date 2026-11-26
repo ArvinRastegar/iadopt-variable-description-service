@@ -3,31 +3,71 @@ import { createRoot } from 'react-dom/client';
 
 import '@/styles/globals.css';
 import { Button } from '@/components/ui/button';
+import { Callout } from '@/components/ui/feedback';
 import { Input, Label, PasswordInput } from '@/components/ui/fields';
+import { navigation, ROHUB_SIGN_OUT_ADDRESS, rohubSignInAddress } from '@/lib/leaving';
 import { safeRedirect } from '@/lib/safeRedirect';
-import { fetchCurrentUser, signIn } from '@/shared/api';
+import { fetchSession, SessionError, signIn, type SignInMethod } from '@/shared/api';
 import { Brand } from '@/shared/AppHeader';
+import { OrDivider, RohubButton } from '@/shared/auth';
 import { ThemeProvider, ThemeToggle } from '@/shared/theme';
 
 /*
  * Stand-alone sign-in page. nginx sends visitors here when a protected page (the admin page)
- * needs a session; afterwards they go back to `?redirect=`.
+ * needs a session; afterwards they go back to `?redirect=`. A ROHub sign-in that did not work
+ * ends here too, with a code in `?error=`: the page then says what happened and stays.
  */
 
-function LoginPage() {
-  const redirect = React.useMemo(() => safeRedirect(new URLSearchParams(window.location.search).get('redirect')), []);
+const GENERAL_ERROR = 'The sign-in did not work. Please try again.';
+
+const ERROR_TEXTS = new Map([
+  ['cancelled', 'The sign-in was cancelled.'],
+  ['sign_in_expired', 'This sign-in is no longer valid. Please start again.'],
+  ['provider_unavailable', 'ROHub cannot be reached right now. Please try again later.'],
+  ['provider_refused', 'ROHub did not complete the sign-in. Please start again.'],
+  ['token_invalid', 'ROHub\'s answer could not be verified, so you were not signed in.'],
+  ['email_not_verified', 'ROHub did not confirm your email address. Verify it, then sign in again.'],
+  ['blocked', 'This account is blocked.'],
+  ['rate_limited', 'Too many sign-in attempts from your network. Please wait a minute.'],
+  ['sign_out_incomplete', 'ROHub\'s sign-out page cannot be reached, so you may still be signed in there.'],
+]);
+
+/** How long the page waits to learn how people sign in here before it shows the password form. */
+const ANSWER_MS = 150;
+
+/** The codes after which the person is still signed in at ROHub and may want to be no more. */
+const SIGNED_IN_AT_ROHUB = ['blocked', 'email_not_verified'];
+
+export function LoginPage() {
+  const { redirect, errorCode } = React.useMemo(() => {
+    const parameters = new URLSearchParams(window.location.search);
+    return { redirect: safeRedirect(parameters.get('redirect')), errorCode: parameters.get('error') };
+  }, []);
+  // Null until the backend said how people sign in here.
+  const [methods, setMethods] = React.useState<SignInMethod[] | null>(null);
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
 
+  // The password form does not wait for a slow answer: without ROHub it was there from the start.
   React.useEffect(() => {
-    fetchCurrentUser()
-      .then((user) => {
-        if (user) window.location.replace(redirect);
+    const handle = window.setTimeout(() => setMethods((current) => current ?? ['password']), ANSWER_MS);
+    return () => window.clearTimeout(handle);
+  }, []);
+
+  React.useEffect(() => {
+    fetchSession()
+      .then((session) => {
+        // A sign-in that was refused is explained first, also to someone who still has a session.
+        if (session.user && errorCode === null) window.location.replace(redirect);
+        else setMethods(session.methods);
       })
-      .catch((caught) => console.error(caught));
-  }, [redirect]);
+      .catch((caught) => {
+        console.error(caught);
+        setMethods(caught instanceof SessionError ? caught.methods : ['password']);
+      });
+  }, [errorCode, redirect]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -44,6 +84,9 @@ function LoginPage() {
     }
   }
 
+  const withPassword = methods?.includes('password') ?? false;
+  const withRohub = methods?.includes('rohub') ?? false;
+
   return (
     <div className="canvas-dots flex min-h-screen flex-col">
       <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-5">
@@ -59,29 +102,50 @@ function LoginPage() {
               <a href="./index.html#/">Continue without signing in</a> to visualize, edit and export Turtle.
             </p>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="username">Username</Label>
-            <Input id="username" autoComplete="username" required autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password">Password</Label>
-            <PasswordInput id="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
-          </div>
-          <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">{error}</p>
-          <Button type="submit" size="lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+          {errorCode !== null && (
+            <Callout tone="warning" role="alert">
+              {ERROR_TEXTS.get(errorCode) ?? GENERAL_ERROR}
+              {SIGNED_IN_AT_ROHUB.includes(errorCode) && (
+                <>
+                  {' '}You are still signed in at ROHub. <a href={ROHUB_SIGN_OUT_ADDRESS} className="font-medium text-current underline">Sign out at ROHub</a> to use another account.
+                </>
+              )}
+            </Callout>
+          )}
+          {withPassword && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="username">Username</Label>
+                <Input id="username" autoComplete="username" required autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="password">Password</Label>
+                <PasswordInput id="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+              </div>
+              <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">{error}</p>
+              <Button type="submit" size="lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+            </>
+          )}
+          {withPassword && withRohub && <OrDivider />}
+          {withRohub && <RohubButton size="lg" autoFocus={!withPassword} onClick={() => navigation.leave(rohubSignInAddress(redirect))} />}
         </form>
       </main>
     </div>
   );
 }
 
-const element = document.getElementById('root');
-if (element) {
-  createRoot(element).render(
+/** Mount the sign-in page into an element; tests mount it into their own container. */
+export function mountLogin(element: HTMLElement) {
+  const root = createRoot(element);
+  root.render(
     <React.StrictMode>
       <ThemeProvider>
         <LoginPage />
       </ThemeProvider>
     </React.StrictMode>,
   );
+  return root;
 }
+
+const element = document.getElementById('root');
+if (element) mountLogin(element);

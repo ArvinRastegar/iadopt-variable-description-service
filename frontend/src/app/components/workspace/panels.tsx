@@ -23,6 +23,12 @@ export function DefinitionPanel() {
     .map((item) => ({ label: item.label, kind: item.kind }));
   const segments = findHighlights(workspace.definition, terms);
   const hasHighlights = segments.some((segment) => segment.kind);
+  // On a phone this panel is below the diagram, so why a decomposition failed comes into view by itself.
+  const failure = workspace.decomposing ? null : workspace.decomposeError;
+  const failureRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (failure) failureRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [failure]);
 
   return (
     <section aria-labelledby="definition-heading" className="flex flex-col gap-2.5">
@@ -83,8 +89,8 @@ export function DefinitionPanel() {
           <RunSettingsPopover />
         </div>
       </div>
-      {workspace.decomposeError && !workspace.decomposing && (
-        <Callout tone="danger" title="Decomposition failed">{workspace.decomposeError}</Callout>
+      {failure && (
+        <Callout ref={failureRef} tone="danger" role="alert" title="Decomposition failed" className="scroll-my-4">{failure}</Callout>
       )}
     </section>
   );

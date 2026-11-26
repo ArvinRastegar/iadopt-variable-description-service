@@ -10,6 +10,7 @@ import { clientInfo } from '@/lib/clientInfo';
 import { componentName, recordRole, snapshotComponents, type ComponentState } from '@/lib/iadopt/changes';
 import { DEFAULT_ORDER, layoutVariable, type Layout } from '@/lib/iadopt/layout';
 import { labelOf, listComponents, stableKey, type ComponentInfo } from '@/lib/iadopt/model';
+import { dropTabCopy, readTabCopy, registerWork, saveTabCopy } from '@/lib/leaving';
 import { readJson, WORKSPACE_DRAFT_KEY, writeJson, writeString } from '@/lib/storage';
 import { AuthRequiredError, fetchModelOptions, fetchPreparationOptions, streamDecomposition, type ModelOptions, type PreparationOptions } from '@/shared/api';
 import { useAuth } from '@/shared/auth';
@@ -136,6 +137,18 @@ function initialTurtleFromUrl(): string | null {
   }
 }
 
+/** Whether a draft holds other work than another one; when it was saved does not matter. */
+function otherWork(draft: Draft, other: Draft): boolean {
+  return (draft.definition ?? '') !== (other.definition ?? '')
+    || (draft.rawOutput ?? '') !== (other.rawOutput ?? '')
+    || !sameTurtle(draft.turtle ?? '', other.turtle ?? '')
+    || JSON.stringify(Object.keys(draft.checks ?? {}).sort()) !== JSON.stringify(Object.keys(other.checks ?? {}).sort());
+}
+
+function holdsWork(draft: Draft): boolean {
+  return Boolean(draft.definition?.trim() || draft.rawOutput?.trim() || draft.turtle?.trim());
+}
+
 function parsesAsTurtle(text: string): boolean {
   try {
     new Parser().parse(text);
@@ -151,8 +164,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const urlTurtle = React.useMemo(() => initialTurtleFromUrl(), []);
   const savedDraft = React.useMemo(() => readJson<Draft | null>(WORKSPACE_DRAFT_KEY, null), []);
+  // The work this tab left with, for ROHub; it is used once, by this page load.
+  const tabCopy = React.useMemo(() => readTabCopy<Draft>(), []);
   // A shared ?ttl= link opens its Turtle; the earlier draft can still be restored from a notice.
-  const draft = urlTurtle === null ? savedDraft : null;
+  const draft = urlTurtle === null ? tabCopy ?? savedDraft : null;
 
   const [definition, setDefinition] = React.useState(draft?.definition ?? '');
   const [rawOutput, setRawOutput] = React.useState(draft?.rawOutput ?? '');
@@ -209,6 +224,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const urlRecordHandled = React.useRef(urlTurtle === null);
   // Counts drawings: only the latest one may change what the workspace shows.
   const renderSeq = React.useRef(0);
+  // Counts how often the browser was cleared: what began before shows nothing any more.
+  const clearings = React.useRef(0);
   // Maps a component of the current model to its review key (set below, once components exist).
   const keyOfRef = React.useRef<(comp: Concept) => string>(stableKey);
 
@@ -322,6 +339,20 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (next.turtle?.trim()) void visualize(next.turtle, { log: false });
   }, [clearDiagram, recordRestored, visualize]);
 
+  /** Offer a draft back that other work replaced; not once the browser was cleared. */
+  const offerDraft = React.useCallback((message: string, earlier: Draft) => {
+    const seen = clearings.current;
+    toast(message, {
+      duration: 20_000,
+      action: {
+        label: 'Restore draft',
+        onClick: () => {
+          if (seen === clearings.current) restoreDraft(earlier);
+        },
+      },
+    });
+  }, [restoreDraft]);
+
   // A shared link: drop ?ttl= from the address, so a reload keeps later edits (they are in the
   // draft), and offer the draft it replaced.
   const urlHandled = React.useRef(false);
@@ -335,17 +366,28 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Keeping the parameter only means that a reload opens the link again.
     }
-    const earlier = savedDraft;
+    const earlier = tabCopy ?? savedDraft;
     const replaced = earlier && (
       earlier.definition?.trim() || earlier.rawOutput?.trim() || (earlier.turtle?.trim() && !sameTurtle(earlier.turtle, urlTurtle))
     );
-    if (earlier && replaced) {
-      toast('The shared Turtle replaced the draft you had in this browser.', {
-        duration: 20_000,
-        action: { label: 'Restore draft', onClick: () => restoreDraft(earlier) },
-      });
+    if (earlier && replaced) offerDraft('The shared Turtle replaced the draft you had in this browser.', earlier);
+  }, [offerDraft, savedDraft, tabCopy, urlTurtle]);
+
+  // Back from ROHub: the copy has served, also when the browser shows this page again as it was.
+  // Another tab may have saved a draft meanwhile; it is offered back.
+  const copyHandled = React.useRef(false);
+  React.useEffect(() => {
+    dropTabCopy();
+    const onShow = (event: PageTransitionEvent) => {
+      if (event.persisted) dropTabCopy();
+    };
+    window.addEventListener('pageshow', onShow);
+    if (!copyHandled.current && urlTurtle === null && tabCopy && savedDraft && holdsWork(savedDraft) && otherWork(tabCopy, savedDraft)) {
+      copyHandled.current = true;
+      offerDraft('The work of this tab replaced a draft that another tab saved meanwhile.', savedDraft);
     }
-  }, [restoreDraft, savedDraft, urlTurtle]);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, [offerDraft, savedDraft, tabCopy, urlTurtle]);
 
   // A shared ?ttl= link opens Turtle. For an account signed in when the page loads, its record
   // starts as soon as both the drawing and the sign-in check are done, if nothing changed meanwhile.
@@ -402,9 +444,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       await visualize(before, { log: false });
       return;
     }
+    const seen = clearings.current;
     const merged = await mergeCurrentTurtle(before, variable, {
       syncVariableLabels: Boolean(result && result.syncVariableLabels),
     });
+    if (seen !== clearings.current) return;
     if (!parsesAsTurtle(merged)) {
       toast.error('The change could not be written as valid Turtle, so it was not saved.');
       await visualize(before, { log: false });
@@ -440,8 +484,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       conformsToUri: preparationOptions.conforms_to_uri,
       createdWithLabel: preparationOptions.created_with_label,
     };
+    const seen = clearings.current;
     try {
       const output = await applyPreNanopubSettingsToTurtle(input, settings);
+      if (seen !== clearings.current) return false;
       setTurtle(output);
       logEvent('apply_pre_nanopub_settings', { input_turtle: input, output_turtle: output, settings });
       // Redraw for a new IRI; the previous page logged only the apply event here.
@@ -498,6 +544,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setDecomposing(true);
     setDecomposeError(null);
     setDecomposeStartedAt(Date.now());
+    // Clearing the browser ends what this run may still show.
+    const started = clearings.current;
+    const cleared = () => started !== clearings.current;
     try {
       const result = await runProtected(() => streamDecomposition(
         // Always without reasoning, the default setup; the page offers no switch for it. The
@@ -505,15 +554,17 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         { definition: text, model_provider: provider, model_name: model, disable_thinking: true, client: clientInfo() },
         {
           onStart: () => {
+            if (cleared()) return;
             setRawOutput('');
             setValidationErrors(null);
             setSchemaValid(null);
           },
           onDelta: (delta) => {
-            if (delta) setRawOutput((current) => current + delta);
+            if (delta && !cleared()) setRawOutput((current) => current + delta);
           },
         },
       ), 'decompose a variable');
+      if (cleared()) return;
 
       setRawOutput((current) => result.raw_llm_output || current);
       setValidationErrors(result.validation_errors ?? []);
@@ -530,7 +581,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (ttl.trim()) await visualize(ttl);
     } catch (error) {
       console.error(error);
-      if (!(error instanceof AuthRequiredError)) {
+      if (!(error instanceof AuthRequiredError) && !cleared()) {
         const message = error instanceof Error ? error.message : 'Unknown backend error.';
         setDecomposeError(message || 'Unknown backend error.');
       }
@@ -593,21 +644,37 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const record = recorder.record;
   const ownRecord = record && auth.user?.id === record.ownerId ? record : null;
+  const clearRef = React.useRef(() => {});
   React.useEffect(() => {
+    const seen = clearings.current;
+    const currentDraft = (): Draft => ({
+      definition, rawOutput, validationErrors, schemaValid, turtle, checks, run, savedAt: new Date().toISOString(), record,
+    });
     const save = () => {
       if (!hasContent) {
         writeString(WORKSPACE_DRAFT_KEY, null);
         return;
       }
-      const next: Draft = { definition, rawOutput, validationErrors, schemaValid, turtle, checks, run, savedAt: new Date().toISOString(), record };
-      writeJson(WORKSPACE_DRAFT_KEY, next);
+      // What this render still holds was cleared meanwhile.
+      if (seen !== clearings.current) return;
+      writeJson(WORKSPACE_DRAFT_KEY, currentDraft());
     };
     const handle = window.setTimeout(save, 600);
     // Leaving the page within the delay still keeps the latest edit.
     window.addEventListener('pagehide', save);
+    // Leaving for ROHub keeps the work in this tab.
+    const withdraw = registerWork({
+      save: () => {
+        if (hasContent && seen === clearings.current) return saveTabCopy(currentDraft());
+        dropTabCopy();
+        return true;
+      },
+      clear: () => clearRef.current(),
+    });
     return () => {
       window.clearTimeout(handle);
       window.removeEventListener('pagehide', save);
+      withdraw();
     };
   }, [checks, definition, hasContent, rawOutput, record, run, schemaValid, turtle, validationErrors]);
 
@@ -624,6 +691,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     clearDiagram();
     writeString(WORKSPACE_DRAFT_KEY, null);
   }, [clearDiagram, recordOpened]);
+
+  // "Sign out and clear this browser": nothing of the work stays on the page or is saved again.
+  clearRef.current = () => {
+    clearings.current += 1;
+    reset();
+  };
 
   const value: WorkspaceValue = {
     definition,
