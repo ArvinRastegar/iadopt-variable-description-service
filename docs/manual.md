@@ -397,16 +397,18 @@ grow the volume, and start again. `SchemaMismatch` or `MigrationChanged` mean th
 one this code can take over; nothing was changed then either.
 
 **Rolling back.** Until the passwords are purged, the previous image runs on a migrated database.
-Unset `IADOPT_BOOTSTRAP_ADMIN_USERNAME` and `IADOPT_BOOTSTRAP_ADMIN_PASSWORD` **before** you start
-it: while they are set it re-enables that account and makes it an admin at every start, without a
-record, which undoes a block or revocation of it. Every other block and revocation holds.
+Roll the frontend back together with the backend: the new pages deny everyone the admin page on the
+previous backend. Sessions that ROHub started are no sessions there. Unset
+`IADOPT_BOOTSTRAP_ADMIN_USERNAME` and `IADOPT_BOOTSTRAP_ADMIN_PASSWORD` **before** you start it: while
+they are set it re-enables that account and makes it an admin at every start, without a record, which
+undoes a block or revocation of it. Every other block and revocation holds.
 
 ## Accounts, admins and the owner
 
 Accounts are ordinary users, admins, or the one owner. Admins manage ordinary accounts, see
 activity and download the records; only the owner grants and revokes admin, and blocks admins.
 Nobody can block the owner or take its admin rights on the admin page. Each grant, revocation,
-block and unblock is kept in the account's history with who did it and why.
+block, unblock, approval and withdrawal is kept in the account's history with who did it and why.
 
 **Once, after the first release with these roles, bind the owner** to an existing account. Until
 then nobody can grant or revoke admin or block an admin:
@@ -426,6 +428,16 @@ Once any account exists they change nothing, and the log says so at each start.
 **Local accounts.** Until the cutover to the identity provider, admins create local accounts with a
 password on the admin page, always as ordinary users, and edit them.
 
+**Approving ROHub accounts.** An account that ROHub signs in waits until an admin or the owner approves
+it on the admin page, which lists the waiting accounts first. Until then it can use the public tools and
+keeps its saved ORCID iDs; decomposing, saving work, publishing and retracting are refused with
+`approval_required` (with a [daily limit](#daily-decomposition-limit) set, only publishing and retracting).
+Approved, it may do what a local account may. **Withdraw approval** takes effect at the account's next
+request and deletes nothing. The optional note, for example how the terms were accepted, stays in the
+account's history; the application itself asks nobody for the terms yet. Admins and the owner need no
+approval as long as they are that, nor does a local account until `legacy link` or `legacy fold` makes it a
+ROHub account: then it has to be approved once.
+
 **At the cutover** the operator prepares the local accounts, offline. Commands that change an account
 need a bound owner, and the account's history keeps the change with the reason given:
 
@@ -437,7 +449,78 @@ need a bound owner, and the account's history keeps the change with the reason g
 | `legacy purge-passwords --confirm-cutover` | Ends every password login, in this image and the previous one. Without the flag it only counts |
 
 Link and fold take an account with a password and no identity yet, so do both **before**
-`legacy purge-passwords`.
+`legacy purge-passwords`. Fold a new account **before** you approve it: an account that was ever approved
+has a history and counts as empty no more. After the purge nobody can sign in to a local account that was
+neither linked nor folded into. A session of an ordinary one that is still open may decompose, save, publish and
+retract nothing (`password_ended`), and no approval changes that; an admin or the owner keeps what the role gives.
+
+## Signing in with ROHub
+
+One switch, `IADOPT_AUTH_MODE`, decides how people sign in:
+
+| Mode | Password | ROHub |
+|---|---|---|
+| `local` (default) | yes | no; its routes answer 404 |
+| `oidc` | no | yes |
+| `both`, only with `IADOPT_ENVIRONMENT=development` | yes | yes |
+
+With authentication enabled and no new setting, nothing changes. Disabled authentication now needs
+`IADOPT_ENVIRONMENT=development`. A start with a missing or malformed setting stops with one message
+that names every setting at fault.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `IADOPT_ENVIRONMENT` | `production` or `development`. Only `development` allows `both`, disabled authentication, and `http` to `localhost`, a name ending in `.localhost`, `127.0.0.1` or `[::1]` | `production` |
+| `IADOPT_AUTH_MODE` | The switch | `local` |
+| `IADOPT_OIDC_ISSUER` | The issuer URL exactly as the provider writes it | needed in `oidc` and `both` |
+| `IADOPT_OIDC_CLIENT_ID` | The client ID; the client is public, so there is no secret | needed in `oidc` and `both` |
+| `IADOPT_PUBLIC_URL` | Where browsers reach the application: scheme, host and optional port. The callback is `<public URL>/api/auth/callback` | needed in `oidc` and `both` |
+| `IADOPT_OIDC_POST_LOGOUT` | `true` once the provider has registered `<public URL>/` as the return address after a sign-out | `false` |
+| `IADOPT_COOKIE_SECURE` | Must be `true` with an `https` public URL and `false` with an `http` one | `false` |
+| `IADOPT_TRUSTED_PROXY_HOPS` | How many proxies in front of the backend append to `X-Forwarded-For`, 0 to 10 | unset; needed with `oidc` in `production` |
+| `IADOPT_SIGN_IN_LIMIT` | Sign-ins one network address may start, and finish, as `<requests>/<seconds>` | `120/300` |
+
+A person who signs in with ROHub for the first time gets an ordinary account, found again by ROHub's
+subject, never by email. ROHub must report a verified email. The account waits until an admin approves
+it ([Accounts, admins and the owner](#accounts-admins-and-the-owner)), on a development machine as in
+production. Roles never come from ROHub: the operator binds the owner with `owner bind`, and the owner
+makes admins.
+
+"Sign out" ends the session here and then goes to ROHub's sign-out page. "Sign out and clear this
+browser" also deletes the draft, the remembered ORCID iD and the list of publications from it.
+
+`python -m app.cli oidc check` asks the configured provider whether it is set up for us; `--pkce` also
+sees that the client requires PKCE S256, and `--refused-callback URL` that a callback is refused. It
+sends requests to the provider and writes nothing.
+
+[`deploy/keycloak/README.md`](../deploy/keycloak/README.md) says what the client at ROHub must have, holds the
+runbooks for an operator, and describes a Keycloak of your own for trying all of this on one machine.
+
+## Daily decomposition limit
+
+Switched off unless one setting is set. It is only for accounts that no admin has approved: approved
+accounts, local accounts, admins and the owner have no daily limit, whatever it says.
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `IADOPT_DAILY_DECOMPOSITIONS` | Decompositions an account that is not approved has per day, a whole number from 1 to 1000; anything else stops the start | empty: it has none and waits for its approval; nothing is counted |
+
+**A number lets people in without an approval.** Everyone who can sign in with ROHub may then decompose
+that many times a day, and that work is recorded, although no admin has checked that they accepted the
+terms. Only publishing and retracting still need the approval.
+
+Set it, for example to `3`, or empty it, and start the backend again with its settings: with Docker
+Compose `docker compose up -d backend` (a plain `restart` does not read `.env` again).
+
+The day is a calendar day in Europe/Berlin. A use is reserved before a model is called, so requests at
+the same moment cannot pass the limit together. Beyond it a request is refused with 429, the reason
+`daily_limit`, the time of the reset and `Retry-After`; `GET /api/auth/me` shows what is left.
+
+A result counts, and so does a failure of the model, of the way to it or of its output, and a run whose
+browser went away. Nothing counts when the definition, the provider or the model was not valid, when no
+request went out because a key or the address is missing or malformed, and when the provider refused
+every request with a client error other than 408, 409 and 429. A run in which the server stopped is
+given back at the next start with the limit switched on.
 
 ---
 

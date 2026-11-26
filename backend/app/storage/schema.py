@@ -316,3 +316,64 @@ BEGIN SELECT RAISE(ABORT, 'account_history is append-only'); END;
 
 ``users.email_verified`` is NULL (unknown) for local accounts and 0 or 1 from the identity provider.
 """
+
+OIDC_IDENTITY_SQL = """
+-- Sign-ins on their way to the identity provider and back. Only hashes of the state and the browser's key are kept.
+CREATE TABLE oidc_transactions (
+    state_hash TEXT PRIMARY KEY,
+    browser_key_hash TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    redirect TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+
+-- Sessions an identity provider started. The previous image knows neither the table nor the cookie.
+CREATE TABLE oidc_sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    sid TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX idx_oidc_transactions_expires ON oidc_transactions(expires_at);
+CREATE INDEX idx_oidc_sessions_user ON oidc_sessions(user_id);
+CREATE INDEX idx_oidc_sessions_subject ON oidc_sessions(issuer, subject);
+CREATE INDEX idx_oidc_sessions_sid ON oidc_sessions(issuer, sid);
+CREATE INDEX idx_oidc_sessions_expires ON oidc_sessions(expires_at);
+"""
+"""``0004_oidc_identity``: the data of oidc-identity, section 11."""
+
+DAILY_DECOMPOSITIONS_SQL = """
+-- Decompositions counted against the daily limit, one row each, written before a model is called.
+-- Without an outcome it is still running. A released one was given back and no longer counts.
+CREATE TABLE decomposition_uses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    berlin_date TEXT NOT NULL,
+    reserved_at TEXT NOT NULL,
+    outcome TEXT,
+    released INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_decomposition_uses_account_day ON decomposition_uses(user_id, berlin_date);
+"""
+"""``0005_daily_decompositions``: the data of the daily limit (a slice of usage-ledger).
+
+``berlin_date`` is the date in Europe/Berlin that the use counts for.
+"""
+
+ACCOUNT_APPROVAL_SQL = """
+-- When an admin approved an account, and the id of who did; both empty without an approval. The
+-- note of each approval and withdrawal is in account_history.
+ALTER TABLE users ADD COLUMN approved_at TEXT;
+ALTER TABLE users ADD COLUMN approved_by INTEGER;
+"""
+"""``0006_account_approval``: the approval of accounts that an identity provider signs in."""

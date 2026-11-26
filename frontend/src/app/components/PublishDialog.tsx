@@ -126,7 +126,8 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const creatorName = orcid.saved.find((item) => item.orcid === orcid.uri)?.name;
   // Publishing needs the best mark on the version shown here (D-037).
   const marked = auth.recorded && workspace.markStatus === 'marked';
-  const canContinueCheck = !workspace.turtleDirty && missing !== null && missing.length === 0 && !checkError && marked;
+  const refused = auth.recordRefusal ?? auth.publishRefusal;
+  const canContinueCheck = !workspace.turtleDirty && missing !== null && missing.length === 0 && !checkError && marked && !refused;
 
   async function publish() {
     if (!settings || !orcid.uri) return;
@@ -233,6 +234,12 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                     title="You are signed out"
                     text="Sign in again to mark this version as best and publish it. Your work stays on this page."
                     action={<Button size="sm" onClick={() => auth.openSignIn('publish a nanopublication')}>Sign in</Button>}
+                  />
+                ) : refused ? (
+                  <CheckItem
+                    error
+                    title="This account cannot publish yet"
+                    text={refused}
                   />
                 ) : !auth.recorded ? (
                   <CheckItem

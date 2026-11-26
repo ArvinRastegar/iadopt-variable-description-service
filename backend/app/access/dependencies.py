@@ -9,12 +9,12 @@ to ``None`` for a public route.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
+from .. import usage
 from ..core.dependencies import API_PREFIX
 from .policy import AccessState, Capability, Decision, decide
 from .state import access_state
@@ -24,6 +24,10 @@ ROUTE_CAPABILITIES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("GET", f"{API_PREFIX}/readyz"): None,
     ("GET", f"{API_PREFIX}/health"): None,
     ("POST", f"{API_PREFIX}/auth/login"): None,
+    ("GET", f"{API_PREFIX}/auth/login"): None,
+    ("GET", f"{API_PREFIX}/auth/callback"): None,
+    ("GET", f"{API_PREFIX}/auth/end-session"): None,
+    ("POST", f"{API_PREFIX}/auth/backchannel-logout"): None,
     ("GET", f"{API_PREFIX}/model-options"): Capability.PUBLIC_TOOLS,
     ("GET", f"{API_PREFIX}/nanopub/preparation-options"): Capability.PUBLIC_TOOLS,
     ("GET", f"{API_PREFIX}/auth/verify"): Capability.SESSION,
@@ -42,6 +46,7 @@ ROUTE_CAPABILITIES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("POST", f"{API_PREFIX}/records/{{record_id}}/events"): Capability.SAVE_AND_REVIEW,
     # Another account's record also needs VIEW_ACTIVITY, which the route checks itself.
     ("GET", f"{API_PREFIX}/records/{{record_id}}"): Capability.SAVE_AND_REVIEW,
+    ("GET", f"{API_PREFIX}/auth/verify/admin"): Capability.VIEW_ACTIVITY,
     ("GET", f"{API_PREFIX}/admin/stats"): Capability.VIEW_ACTIVITY,
     ("GET", f"{API_PREFIX}/admin/audit"): Capability.VIEW_ACTIVITY,
     ("POST", f"{API_PREFIX}/nanopub/publish"): Capability.PUBLISH,
@@ -53,6 +58,8 @@ ROUTE_CAPABILITIES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("GET", f"{API_PREFIX}/admin/users/{{user_id}}/history"): Capability.MANAGE_USERS,
     ("POST", f"{API_PREFIX}/admin/users/{{user_id}}/block"): Capability.MANAGE_USERS,
     ("POST", f"{API_PREFIX}/admin/users/{{user_id}}/unblock"): Capability.MANAGE_USERS,
+    ("POST", f"{API_PREFIX}/admin/users/{{user_id}}/approve"): Capability.REVIEW_APPLICATIONS,
+    ("POST", f"{API_PREFIX}/admin/users/{{user_id}}/withdraw-approval"): Capability.REVIEW_APPLICATIONS,
     ("POST", f"{API_PREFIX}/admin/users/{{user_id}}/grant-admin"): Capability.MANAGE_ADMINS,
     ("POST", f"{API_PREFIX}/admin/users/{{user_id}}/revoke-admin"): Capability.MANAGE_ADMINS,
 }
@@ -104,7 +111,8 @@ def refusal_of(decision: Decision) -> AccessRefused:
     if reason == "daily_limit":
         body["resets_at"] = decision.resets_at.isoformat() if decision.resets_at else None
         if decision.resets_at:
-            seconds = (decision.resets_at - datetime.now(timezone.utc)).total_seconds()
+            # Timestamps: a difference of two times in Berlin would miss a change of its clocks.
+            seconds = decision.resets_at.timestamp() - usage.now().timestamp()
             headers["Retry-After"] = str(max(0, math.ceil(seconds)))
     return AccessRefused(_STATUS.get(reason, 403), body, headers)
 

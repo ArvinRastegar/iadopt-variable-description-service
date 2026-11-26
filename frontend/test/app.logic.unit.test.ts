@@ -78,6 +78,53 @@ describe('safeRedirect', () => {
     expect(safeRedirect('/\\example.org')).toBe('/');
     expect(safeRedirect(null)).toBe('/');
   });
+
+  // The rule of oidc-identity section 5 "Redirect targets". Covers: AC-oidc-identity-008 (its part for login.html).
+  test.each([
+    '/', '/#/workspace', '/index.html?x=1#/workspace', '/admin.html', '/admin.html?x=y', '/remote.html',
+    // Every kind of name character; and `api` and `login.html` are refused as whole names only.
+    '/a_b-C.9', '/api.html', '/login',
+  ])('returns to %j as it is', (target) => {
+    expect(safeRedirect(target)).toBe(target);
+  });
+
+  test.each([
+    // A scheme or another host, also where it only appears once the path is normalized.
+    'https://evil.example/', 'https:/admin.html', 'javascript:alert(1)', 'evil.example', '//evil.example', '/\\evil.example',
+    '/.//evil.example', '/..//evil.example', '/%2e//evil.example', '/%2E%2e//evil.example', '/x/..//evil.example',
+    '/./\\evil.example', '/.\\/evil.example', '/x/..\\\\evil.example', '/.\t//evil.example', '/\t/evil.example',
+    // Not a page: a second name, the API, the sign-in page (encoded or not), no letter or digit, no slash in front.
+    '/x/y', '/admin.html/', '/api', '/api?x=y', '/api#x', '/api/x', '/%61pi/x', '/a%70i',
+    '/login.html', '/login.html?redirect=/admin.html', '/login.html#x', '/%6cogin.html', '/login%2ehtml',
+    '/.', '/..', '/-', '/_', 'admin.html', '?x=y', '#/workspace',
+    // A space, backslash, control or non-ASCII character in the name or around the target.
+    ' /admin.html', '/admin.html ', '/ad min.html', '/admin\\html', '\n/admin.html', '/admin.html\n', '/\u00e4dmin.html', '/\u212a.html',
+  ])('does not return to %j', (target) => {
+    expect(safeRedirect(target)).toBe('/');
+  });
+
+  test('takes letters, digits, ".", "_" and "-" in the name, and printable ASCII without a space or backslash after it', () => {
+    for (let code = 0; code <= 0x17f; code += 1) {
+      const character = String.fromCharCode(code);
+      const inName = /[A-Za-z0-9._?#-]/.test(character); // `?` and `#` end the name.
+      const after = code > 0x20 && code < 0x7f && character !== '\\';
+      const targets: Array<[string, boolean]> = [
+        [`/a${character}b`, inName], [`/admin.html?x=${character}`, after], [`/admin.html#${character}`, after], [`/?x=y#${character}`, after],
+      ];
+      for (const [target, taken] of targets) expect(safeRedirect(target), JSON.stringify(target)).toBe(taken ? target : '/');
+    }
+  });
+
+  test('takes at most 2,048 characters', () => {
+    const longest = `/admin.html?${'x'.repeat(2048 - '/admin.html?'.length)}`;
+    expect(safeRedirect(longest)).toBe(longest);
+    expect(safeRedirect(`${longest}x`)).toBe('/');
+  });
+
+  test('gives the fallback the caller names', () => {
+    for (const target of ['/.//evil.example', '', null, undefined]) expect(safeRedirect(target, '/index.html')).toBe('/index.html');
+    expect(safeRedirect('/admin.html', '/index.html')).toBe('/admin.html');
+  });
 });
 
 describe('published nanopublications in storage', () => {

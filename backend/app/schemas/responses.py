@@ -193,9 +193,14 @@ class CurrentUserResponse(AuthUserResponse):
 
     Attributes:
         capabilities: What the session may do, keyed by capability name.
+        sign_in: What started the session, ``password`` or ``rohub``; ``None`` for the development user.
+        csrf_token: What an unsafe request with a ROHub session must carry in ``X-CSRF-Token``;
+            ``None`` otherwise.
     """
 
     capabilities: Dict[str, CapabilityDecision]
+    sign_in: Optional[str]
+    csrf_token: Optional[str]
 
 
 class SavedOrcid(BaseModel):
@@ -310,9 +315,19 @@ class RecordSummaryResponse(BaseModel):
 
 
 class StatusOkResponse(BaseModel):
-    """A bare ``{"status": "ok"}`` acknowledgement (logout, events, livez, health)."""
+    """A bare ``{"status": "ok"}`` acknowledgement (events, livez, health)."""
 
     status: str
+
+
+class SignOutResponse(StatusOkResponse):
+    """Body of ``/api/auth/logout``.
+
+    Attributes:
+        end_session_url: Where the page goes next to sign out at ROHub; ``None`` for a password session.
+    """
+
+    end_session_url: Optional[str]
 
 
 class ReadyzResponse(BaseModel):
@@ -351,6 +366,10 @@ class AdminUser(PublicUser):
         identities: The identity-provider identities that lead to it.
         created_at: When the account was created (ISO-8601 UTC).
         last_login_at: The account's last login (ISO-8601 UTC), or ``None``.
+        approval: ``approved`` by an admin, ``waiting``, or ``not_needed`` for a local account, an
+            admin and the owner.
+        approved_at: When it was approved (ISO-8601 UTC), or ``None``.
+        approved_by: The username of who approved it, or ``None``.
     """
 
     blocked: bool
@@ -359,6 +378,9 @@ class AdminUser(PublicUser):
     identities: List[AccountIdentity]
     created_at: str
     last_login_at: Optional[str]
+    approval: str
+    approved_at: Optional[str]
+    approved_by: Optional[str]
 
 
 class UserResponse(BaseModel):

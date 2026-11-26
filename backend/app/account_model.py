@@ -31,8 +31,12 @@ _IS_OWNER = f"""EXISTS (
 )"""
 
 ACCOUNT_COLUMNS = f"""users.*, {_IS_OWNER} AS is_owner,
-    EXISTS (SELECT 1 FROM account_identities WHERE account_identities.user_id = users.id) AS has_identity"""
+    EXISTS (SELECT 1 FROM account_identities WHERE account_identities.user_id = users.id) AS has_identity,
+    (SELECT approver.username FROM users AS approver WHERE approver.id = users.approved_by) AS approver_username"""
 """What a query selects from ``users`` for :func:`account_from_row`."""
+
+DEVELOPMENT_ACTOR = "development"
+"""Who acted when it was the development user, who has no account."""
 
 
 def account_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -41,12 +45,14 @@ def account_from_row(row: sqlite3.Row) -> Dict[str, Any]:
     The role is derived: the account that holds the bound identity is the owner, else ``admin`` in
     ``roles`` makes an admin, else it is a user. ``email_verified`` is ``None`` when unknown,
     ``local`` says whether the account has a usable password, and ``has_identity`` whether an
-    identity provider's identity leads to it.
+    identity provider's identity leads to it. ``approved_at`` and ``approved_by`` (a username) are
+    ``None`` without an admin's approval.
 
     Args:
         row: The row.
     """
     roles = json.loads(row["roles"] or "[]")
+    approved_at = row["approved_at"]
     return {
         "id": row["id"],
         "username": row["username"],
@@ -63,7 +69,32 @@ def account_from_row(row: sqlite3.Row) -> Dict[str, Any]:
         "email_verified": None if row["email_verified"] is None else bool(row["email_verified"]),
         "local": row["password_hash"] != UNUSABLE_PASSWORD,
         "has_identity": bool(row["has_identity"]),
+        "approved_at": approved_at,
+        "approved_by": (row["approver_username"] or DEVELOPMENT_ACTOR) if approved_at else None,
     }
+
+
+def is_legacy(account: Mapping[str, Any]) -> bool:
+    """Return whether an account is a legacy local one: a usable password and no identity (accounts-roles, section 3).
+
+    Args:
+        account: The account's dict.
+    """
+    return bool(account["local"] and not account["has_identity"])
+
+
+def approval_of(account: Mapping[str, Any]) -> str:
+    """Return where an account stands: ``approved`` by an admin, ``not_needed`` or ``waiting``.
+
+    Legacy local accounts, admins and the owner count as approved by what they are. Without an
+    identity nobody waits: nobody can sign in to a local account whose password was purged.
+
+    Args:
+        account: The account's dict.
+    """
+    if account["approved_at"]:
+        return "approved"
+    return "waiting" if account["has_identity"] and account["role"] == "user" else "not_needed"
 
 
 def find_account(conn: sqlite3.Connection, user_id: int) -> Optional[Dict[str, Any]]:

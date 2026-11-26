@@ -253,7 +253,7 @@ class AdminUpdateUserRequest(BaseModel):
 
 
 class AccountActionRequest(BaseModel):
-    """Input for the block, unblock, grant-admin and revoke-admin routes.
+    """Input for the routes that change an account's block, approval or role.
 
     Attributes:
         reason: Why; a block needs one of 1 to 500 characters, which the route checks.

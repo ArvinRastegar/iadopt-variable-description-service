@@ -19,6 +19,7 @@ from . import storage
 from .access.policy import MESSAGES
 from .account_model import (
     ACCOUNT_COLUMNS,
+    DEVELOPMENT_ACTOR,
     LOCAL_ISSUER,
     UNUSABLE_PASSWORD,
     account_from_row,
@@ -47,9 +48,19 @@ _REFUSALS: Dict[str, Tuple[int, str]] = {
     "owner_required": (403, MESSAGES["owner_required"]),
     "provider_account": (400, "This account's email and sign-in belong to its identity provider."),
     "target_blocked": (400, "Unblock the account before granting admin."),
+    "approval_not_needed": (400, "A local account needs no approval."),
+    "approval_unchanged": (400, "This account is already approved; see its history."),
 }
 """Section 4's refusals: 403 for who may not act on whom, 400 for what the target does not allow. The
 first two are access-policy's, for an actor who lost the capability while the request waited."""
+
+_APPROVAL_MESSAGES: Dict[str, str] = {
+    "owner_protected": "The owner needs no approval.",
+    "own_account": "You cannot approve your own account or withdraw its approval.",
+}
+"""What the same refusals say about an approval."""
+
+_NOT_APPROVED = "This account is not approved; see its history."
 
 _HELD_DATA = {
     "record items": "SELECT COUNT(*) FROM record_items WHERE user_id = ?",
@@ -63,14 +74,16 @@ _HELD_DATA = {
 class AccountRefused(Exception):
     """A change section 4 does not allow, with its reason code, status and message."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, message: Optional[str] = None) -> None:
         """Look up the reason's status and message.
 
         Args:
             reason: One of section 4's reason codes.
+            message: What to say instead of the reason's own message.
         """
         self.reason = reason
-        self.status_code, self.message = _REFUSALS[reason]
+        self.status_code, default = _REFUSALS[reason]
+        self.message = message or default
         super().__init__(self.message)
 
 
@@ -203,7 +216,7 @@ class AccountStore:
             {
                 "action": row["action"],
                 # Accounts are never deleted: an acting account without a row is the development user.
-                "actor": row["actor_username"] or ("development" if row["actor_kind"] == "account" else row["actor_kind"]),
+                "actor": row["actor_username"] or (DEVELOPMENT_ACTOR if row["actor_kind"] == "account" else row["actor_kind"]),
                 "reason": row["reason"],
                 "details": json.loads(row["details"] or "{}"),
                 "created_at": row["created_at"],
@@ -337,6 +350,74 @@ class AccountStore:
                 return target, False
             return self._set_active(conn, target, True, actor=actor, action="unblocked", reason=reason), True
 
+    def approve(
+        self, *, actor: Dict[str, Any], user_id: int, reason: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], bool]:
+        """Approve an account that an identity provider signs in: it may then do what a local account may.
+
+        Who may act on whom is as with a block, and an account without an identity needs no approval.
+
+        Args:
+            actor: The signed-in admin or owner.
+            user_id: The account to approve; ``UnknownAccount`` when there is none.
+            reason: A note, such as how the terms were accepted; it is kept or the change is refused.
+
+        Returns:
+            The account, and whether it changed.
+        """
+        return self._change_approval(True, actor=actor, user_id=user_id, reason=reason)
+
+    def withdraw_approval(
+        self, *, actor: Dict[str, Any], user_id: int, reason: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], bool]:
+        """Withdraw an account's approval, which reaches its sessions at their next request.
+
+        Args:
+            actor: The signed-in admin or owner.
+            user_id: The account; ``UnknownAccount`` when there is none.
+            reason: A note; it is kept or the change is refused.
+
+        Returns:
+            The account, and whether it changed.
+        """
+        return self._change_approval(False, actor=actor, user_id=user_id, reason=reason)
+
+    def _change_approval(
+        self, approved: bool, *, actor: Dict[str, Any], user_id: int, reason: Optional[str]
+    ) -> Tuple[Dict[str, Any], bool]:
+        """Store or remove an account's approval, with its history row.
+
+        Raises:
+            AccountRefused: For whom the actor may not act on, ``approval_not_needed`` for an account
+                without an identity, and ``approval_unchanged`` for a note with nothing to keep it with.
+        """
+        reason = _reason(reason)
+        with self._transaction(immediate=True) as conn:
+            self._check_actor(conn, actor)
+            target = self._account(conn, user_id)
+            self._check_block(conn, actor, target, _APPROVAL_MESSAGES)
+            if not target["has_identity"]:
+                raise AccountRefused("approval_not_needed")
+            if bool(target["approved_at"]) == approved:
+                if reason:
+                    raise AccountRefused("approval_unchanged", None if approved else _NOT_APPROVED)
+                return target, False
+            now = utc_iso()
+            conn.execute(
+                "UPDATE users SET approved_at = ?, approved_by = ?, updated_at = ? WHERE id = ?",
+                (now if approved else None, actor["id"] if approved else None, now, user_id),
+            )
+            add_history(
+                conn,
+                user_id=user_id,
+                action="approved" if approved else "approval_withdrawn",
+                actor_kind="account",
+                actor_user_id=actor["id"],
+                reason=reason,
+                at=now,
+            )
+            return self._account(conn, user_id), True
+
     def _check_actor(self, conn: sqlite3.Connection, actor: Dict[str, Any]) -> None:
         """Refuse an actor who was blocked or lost admin while the request waited for the write lock.
 
@@ -351,19 +432,31 @@ class AccountStore:
         if current["role"] == "user":
             raise AccountRefused("admin_required")
 
-    def _check_block(self, conn: sqlite3.Connection, actor: Dict[str, Any], target: Dict[str, Any]) -> None:
-        """Refuse a block or unblock section 4 does not allow; the first refusal of its table wins.
+    def _check_block(
+        self,
+        conn: sqlite3.Connection,
+        actor: Dict[str, Any],
+        target: Dict[str, Any],
+        messages: Mapping[str, str] = {},
+    ) -> None:
+        """Refuse a block, unblock or approval change section 4 does not allow; the first refusal of its table wins.
+
+        Args:
+            conn: The transaction's connection.
+            actor: Who acts.
+            target: The account acted on.
+            messages: What the refusals say instead of what they say about a block.
 
         Raises:
             AccountRefused: ``owner_protected``, ``own_account`` or ``owner_required``.
         """
         owner = owner_id(conn)
         if target["id"] == owner:
-            raise AccountRefused("owner_protected")
+            raise AccountRefused("owner_protected", messages.get("owner_protected"))
         if target["id"] == actor["id"]:
-            raise AccountRefused("own_account")
+            raise AccountRefused("own_account", messages.get("own_account"))
         if target["role"] == "admin" and actor["id"] != owner:
-            raise AccountRefused("owner_required")
+            raise AccountRefused("owner_required", messages.get("owner_required"))
 
     def _set_admin(
         self,
@@ -407,10 +500,11 @@ class AccountStore:
         conn.execute("UPDATE users SET roles = ?, updated_at = ? WHERE id = ?", (json.dumps(sorted(roles)), at, target["id"]))
 
     def _write_active(self, conn: sqlite3.Connection, user_id: int, active: bool, *, at: str) -> None:
-        """Store an account's block state; a block ends its sessions."""
+        """Store an account's block state; a block ends its sessions of both kinds."""
         conn.execute("UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?", (int(active), at, user_id))
         if not active:
             conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM oidc_sessions WHERE user_id = ?", (user_id,))
 
     # ------------------------------------------------------------------ #
     # Local accounts, until the cutover (D-045)

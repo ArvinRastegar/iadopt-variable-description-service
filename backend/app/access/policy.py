@@ -49,6 +49,7 @@ MESSAGES: Dict[str, str] = {
     "blocked": "This account is blocked.",
     "email_not_verified": "Verify your email address to use this account.",
     "terms_not_accepted": "Accept the current terms to continue.",
+    "password_ended": "Password sign-in has ended for this account. Ask an admin how to continue.",
     "admin_required": "Admin access required.",
     "owner_required": "Only the owner can do this.",
     "daily_limit": "No decompositions left today.",
@@ -59,6 +60,9 @@ _APPROVAL_REQUIRED: Dict[Capability, str] = {
     Capability.PUBLISH: "Publishing needs an approved account.",
     Capability.RETRACT_OWN: "Ask an admin to retract this publication.",
 }
+
+_APPROVAL_FIRST = "An admin must approve your account first."
+"""What an account reads whose whole own use waits for an approval; only an admin can retract for it meanwhile."""
 
 _RECORDS_DISABLED = "Records need accounts, and authentication is disabled."
 _ACCOUNTS_DISABLED: Dict[Capability, str] = {
@@ -82,8 +86,12 @@ class AccessState:
         email_verified: True, False, or ``None`` when unknown (an email an admin entered).
         terms_accepted: Whether the current terms version is accepted.
         application: ``none``, ``pending``, ``approved``, ``rejected`` or ``withdrawn``.
-        uses_left_today: Decompositions left today, at least 0.
+        uses_left_today: Decompositions left today, at least 0; ``None`` when no daily cap applies.
         resets_at: When the daily count resets, or ``None`` when unknown.
+        approval_first: Whether an account may use the tools only once it is approved, instead of
+            decomposing under a daily cap and saving its work before.
+        password_ended: Whether nobody can sign in to the account any more, and so nobody can approve
+            it: its password was purged and no identity leads to it. A session may still be open.
     """
 
     account_id: Optional[int]
@@ -93,8 +101,10 @@ class AccessState:
     email_verified: Optional[bool] = None
     terms_accepted: bool = False
     application: str = "none"
-    uses_left_today: int = 0
+    uses_left_today: Optional[int] = 0
     resets_at: Optional[datetime] = None
+    approval_first: bool = False
+    password_ended: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,19 +170,32 @@ def _own_use(state: AccessState) -> Dict[Capability, Decision]:
         return {capability: _refused("terms_not_accepted") for capability in OWN_USE}
     if state.application == "approved" or state.role in ("admin", "owner"):
         return {capability: ALLOWED for capability in OWN_USE}
-    has_uses = state.uses_left_today > 0
+    if state.password_ended:
+        return {capability: _refused("password_ended") for capability in OWN_USE}
+    retract_own = _refused("approval_required", _APPROVAL_REQUIRED[Capability.RETRACT_OWN])
+    if state.approval_first:
+        waiting = {capability: _refused("approval_required", _APPROVAL_FIRST) for capability in OWN_USE}
+        return {**waiting, Capability.RETRACT_OWN: retract_own}
     return {
-        Capability.DECOMPOSE: Decision(
-            allowed=has_uses,
-            reason=None if has_uses else "daily_limit",
-            message=None if has_uses else MESSAGES["daily_limit"],
-            uses_left_today=state.uses_left_today,
-            resets_at=state.resets_at,
-        ),
+        Capability.DECOMPOSE: _decompose(state),
         Capability.SAVE_AND_REVIEW: ALLOWED,
         Capability.PUBLISH: _refused("approval_required", _APPROVAL_REQUIRED[Capability.PUBLISH]),
-        Capability.RETRACT_OWN: _refused("approval_required", _APPROVAL_REQUIRED[Capability.RETRACT_OWN]),
+        Capability.RETRACT_OWN: retract_own,
     }
+
+
+def _decompose(state: AccessState) -> Decision:
+    """Decomposing for an account that is not approved: by its uses left today, where a daily cap applies."""
+    if state.uses_left_today is None:
+        return ALLOWED
+    has_uses = state.uses_left_today > 0
+    return Decision(
+        allowed=has_uses,
+        reason=None if has_uses else "daily_limit",
+        message=None if has_uses else MESSAGES["daily_limit"],
+        uses_left_today=state.uses_left_today,
+        resets_at=state.resets_at,
+    )
 
 
 def _administration(role: str) -> Dict[Capability, Decision]:

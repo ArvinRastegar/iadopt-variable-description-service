@@ -4,14 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Callout, Pill } from '@/components/ui/feedback';
 import { Input, Label, Textarea } from '@/components/ui/fields';
-import { adminApi, allows, AuthRequiredError, type Account, type AccountChange, type Capabilities, type Role } from '@/shared/api';
+import { adminApi, allows, AuthRequiredError, type Account, type AccountChange, type AccountChangeRoute, type Capabilities, type Role } from '@/shared/api';
 import { displayName } from '@/shared/auth';
 import { NewPasswordFields } from './NewPasswordFields';
 
 /*
- * The accounts of the admin page (accounts-roles, section 10): role, block state, last login and
- * how each account signs in, with the actions the rules allow the viewer. The backend decides
- * every action again; its refusal is shown as the error.
+ * The accounts of the admin page (accounts-roles, section 10): role, block state, approval, last
+ * login and how each account signs in, with the actions the rules allow the viewer. Accounts that
+ * wait for an approval come first. The backend decides every action again; its refusal is shown as
+ * the error.
  */
 
 /** The longest reason the backend keeps. */
@@ -24,6 +25,8 @@ const CHANGE_LABELS: Record<string, string> = {
   admin_revoked: 'Admin removed',
   blocked: 'Blocked',
   unblocked: 'Unblocked',
+  approved: 'Approved',
+  approval_withdrawn: 'Approval withdrawn',
   owner_bound: 'Became the owner',
   owner_rebound: 'Became the owner, replacing the previous one',
   identity_linked: 'Identity linked',
@@ -41,9 +44,11 @@ function changesWith({ details }: AccountChange): string[] {
   ].filter((label): label is string => Boolean(label));
 }
 
-type Action = 'block' | 'unblock' | 'make-admin' | 'remove-admin' | 'edit' | 'reset' | 'history';
+type Action = 'approve' | 'withdraw-approval' | 'block' | 'unblock' | 'make-admin' | 'remove-admin' | 'edit' | 'reset' | 'history';
 
 const ACTION_LABELS: Record<Action, string> = {
+  approve: 'Approve',
+  'withdraw-approval': 'Withdraw approval',
   block: 'Block',
   unblock: 'Unblock',
   'make-admin': 'Make admin',
@@ -60,6 +65,13 @@ export interface Viewer {
   capabilities: Capabilities;
 }
 
+/** The accounts that wait for an approval, the oldest first; a blocked one does not wait. */
+export function waitingAccounts(accounts: Account[]): Account[] {
+  return accounts
+    .filter((account) => account.approval === 'waiting' && !account.blocked)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
 /** The actions section 4 of accounts-roles allows the viewer on an account. */
 function actionsFor(account: Account, viewer: Viewer): Action[] {
   const actions: Action[] = [];
@@ -67,7 +79,12 @@ function actionsFor(account: Account, viewer: Viewer): Action[] {
   const isSelf = account.id === viewer.id;
   const byOwner = viewer.role === 'owner';
   const ordinary = account.role === 'user';
-  if (allows(viewer.capabilities, 'manage_users') && !isOwner && !isSelf && (byOwner || ordinary)) {
+  const actsOn = !isOwner && !isSelf && (byOwner || ordinary);
+  if (allows(viewer.capabilities, 'review_applications') && actsOn) {
+    if (account.approval === 'waiting') actions.push('approve');
+    if (account.approval === 'approved') actions.push('withdraw-approval');
+  }
+  if (allows(viewer.capabilities, 'manage_users') && actsOn) {
     actions.push(account.blocked ? 'unblock' : 'block');
   }
   if (allows(viewer.capabilities, 'manage_admins') && !isOwner) {
@@ -118,8 +135,93 @@ export function AccountsTable({ accounts, viewer, onChanged, onSignInNeeded }: {
   const close = React.useCallback((serial: number) => {
     setDialog((current) => (current?.serial === serial ? { ...current, open: false } : current));
   }, []);
+  const actions = (account: Account) => actionsFor(account, viewer).map((action) => (
+    <Button
+      key={action}
+      size="sm"
+      variant={action === 'approve' ? 'default' : 'outline'}
+      aria-label={`${ACTION_LABELS[action]} ${account.username}`}
+      onClick={() => setDialog((current) => ({ serial: (current?.serial ?? 0) + 1, action, account, open: true }))}
+    >
+      {ACTION_LABELS[action]}
+    </Button>
+  ));
 
   if (!accounts.length) return <p className="m-0 py-2 text-[13px] text-muted-foreground">No accounts yet.</p>;
+  const waiting = waitingAccounts(accounts);
+  return (
+    <div className="flex flex-col gap-3">
+      {waiting.length > 0 && (
+        <section id="waiting-for-approval" aria-labelledby="waiting-heading" className="flex scroll-mt-20 flex-col gap-2">
+          <h3 id="waiting-heading" className="m-0 text-[13px] leading-5 font-semibold">Waiting for approval ({waiting.length})</h3>
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {waiting.map((account) => (
+              <li key={account.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-warning-line bg-warning-soft px-3 py-2.5 text-[13px]">
+                <div className="min-w-0 break-words">
+                  <AccountName account={account} />
+                  <div className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                    <SignsInWith account={account} />
+                    <span>created {formatTime(account.created_at)}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">{actions(account)}</div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <AccountRows accounts={accounts.filter((account) => !waiting.includes(account))} actions={actions} />
+      {dialog && (
+        <AccountDialog
+          dialog={dialog}
+          onClose={() => close(dialog.serial)}
+          onChanged={onChanged}
+          onSignInNeeded={onSignInNeeded}
+        />
+      )}
+    </div>
+  );
+}
+
+function AccountName({ account }: { account: Account }) {
+  return (
+    <>
+      <div className="font-medium">{displayName(account)}</div>
+      <div className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+        <span className="font-mono">{account.username}</span>
+        {account.email && <span>{account.email}</span>}
+      </div>
+    </>
+  );
+}
+
+function SignsInWith({ account }: { account: Account }) {
+  return (
+    <>
+      {account.local && <div>Password</div>}
+      {account.identities.map((identity) => (
+        <div key={`${identity.issuer} ${identity.subject}`} title={identity.issuer}>{issuerName(identity.issuer)}</div>
+      ))}
+      {!account.local && !account.identities.length && '—'}
+    </>
+  );
+}
+
+function Status({ account }: { account: Account }) {
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {account.blocked ? <Pill tone="danger" dot>Blocked</Pill> : <Pill tone="success" dot>Active</Pill>}
+      {account.approval === 'waiting' && <span className="text-xs text-muted-foreground">Not approved</span>}
+      {account.approval === 'approved' && (
+        <span className="text-xs text-muted-foreground">
+          Approved{account.approved_by && ` by ${account.approved_by}`}{account.approved_at && `, ${formatTime(account.approved_at)}`}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function AccountRows({ accounts, actions }: { accounts: Account[]; actions: (account: Account) => React.ReactNode }) {
   return (
     <div className="-mx-[18px] overflow-x-auto">
       <table className="w-full min-w-[900px] border-collapse text-left text-[13px]">
@@ -136,50 +238,18 @@ export function AccountsTable({ accounts, viewer, onChanged, onSignInNeeded }: {
         <tbody>
           {accounts.map((account) => (
             <tr key={account.id} className="border-b border-border last:border-b-0">
-              <td className="px-[18px] py-2">
-                <div className="font-medium">{displayName(account)}</div>
-                <div className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-                  <span className="font-mono">{account.username}</span>
-                  {account.email && <span>{account.email}</span>}
-                </div>
-              </td>
+              <td className="px-[18px] py-2"><AccountName account={account} /></td>
               <td className="px-2 py-2"><Pill tone={account.role === 'user' ? 'neutral' : 'info'}>{ROLE_LABELS[account.role] ?? account.role}</Pill></td>
-              <td className="px-2 py-2">{account.blocked ? <Pill tone="danger" dot>Blocked</Pill> : <Pill tone="success" dot>Active</Pill>}</td>
-              <td className="px-2 py-2 text-text-2">
-                {account.local && <div>Password</div>}
-                {account.identities.map((identity) => (
-                  <div key={`${identity.issuer} ${identity.subject}`} title={identity.issuer}>{issuerName(identity.issuer)}</div>
-                ))}
-                {!account.local && !account.identities.length && '—'}
-              </td>
+              <td className="px-2 py-2"><Status account={account} /></td>
+              <td className="px-2 py-2 text-text-2"><SignsInWith account={account} /></td>
               <td className="px-2 py-2 whitespace-nowrap text-text-2">{account.last_login_at ? formatTime(account.last_login_at) : '—'}</td>
               <td className="px-[18px] py-2">
-                <div className="flex flex-wrap justify-end gap-1.5">
-                  {actionsFor(account, viewer).map((action) => (
-                    <Button
-                      key={action}
-                      size="sm"
-                      variant="outline"
-                      aria-label={`${ACTION_LABELS[action]} ${account.username}`}
-                      onClick={() => setDialog((current) => ({ serial: (current?.serial ?? 0) + 1, action, account, open: true }))}
-                    >
-                      {ACTION_LABELS[action]}
-                    </Button>
-                  ))}
-                </div>
+                <div className="flex flex-wrap justify-end gap-1.5">{actions(account)}</div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {dialog && (
-        <AccountDialog
-          dialog={dialog}
-          onClose={() => close(dialog.serial)}
-          onChanged={onChanged}
-          onSignInNeeded={onSignInNeeded}
-        />
-      )}
     </div>
   );
 }
@@ -207,6 +277,29 @@ function AccountDialog({ dialog, onClose, onChanged, onSignInNeeded }: {
         {action === 'edit' && <EditForm {...shared} />}
         {action === 'reset' && <ResetPasswordForm {...shared} />}
         {action === 'history' && <History {...shared} />}
+        {action === 'approve' && (
+          <ChangeForm
+            {...shared}
+            change="approve"
+            title={`Approve ${account.username}?`}
+            description={`They can then decompose, save their work, publish, and retract any publication of this service, like a local account. ${account.blocked ? 'They stay blocked until you unblock them.' : 'It takes effect at once.'}`}
+            button={ACTION_LABELS.approve}
+            label="Note"
+            placeholder="For example: accepted the terms by email on 25 November"
+          />
+        )}
+        {action === 'withdraw-approval' && (
+          <ChangeForm
+            {...shared}
+            change="withdraw-approval"
+            title={`Withdraw the approval of ${account.username}?`}
+            description={account.role !== 'user'
+              ? 'An admin needs no approval: nothing changes as long as they are one.'
+              : `What the approval allowed ends at once. ${account.blocked ? 'Their data stays.' : 'They stay signed in and their data stays.'}`}
+            button={ACTION_LABELS['withdraw-approval']}
+            label="Note"
+          />
+        )}
         {action === 'block' && (
           <ChangeForm
             {...shared}
@@ -240,7 +333,7 @@ function AccountDialog({ dialog, onClose, onChanged, onSignInNeeded }: {
             {...shared}
             change="revoke-admin"
             title={`Remove admin from ${account.username}?`}
-            description="They stay signed in as an ordinary user."
+            description={`${account.blocked ? 'They become an ordinary user' : 'They stay signed in as an ordinary user'}${account.approval === 'not_needed' && account.identities.length > 0 ? ', who waits for approval.' : '.'}`}
             button={ACTION_LABELS['remove-admin']}
           />
         )}
@@ -276,13 +369,15 @@ function useChange({ onDone, onSignInNeeded }: Pick<FormProps, 'onDone' | 'onSig
   return { busy, error, run };
 }
 
-/** A role or block change, with the reason it is recorded with. */
-function ChangeForm({ account, onCancel, onDone, onSignInNeeded, change, title, description, button, reasonNeeded = false }: FormProps & {
-  change: 'block' | 'unblock' | 'grant-admin' | 'revoke-admin';
+/** A role, block or approval change, with the reason or note it is recorded with. */
+function ChangeForm({ account, onCancel, onDone, onSignInNeeded, change, title, description, button, reasonNeeded = false, label = 'Reason', placeholder }: FormProps & {
+  change: AccountChangeRoute;
   title: string;
   description: string;
   button: string;
   reasonNeeded?: boolean;
+  label?: string;
+  placeholder?: string;
 }) {
   const [reason, setReason] = React.useState('');
   const { busy, error, run } = useChange({ onDone, onSignInNeeded }, 'Could not change the account.');
@@ -302,13 +397,14 @@ function ChangeForm({ account, onCancel, onDone, onSignInNeeded, change, title, 
       <DialogBody className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="account-change-reason">
-            Reason {!reasonNeeded && <span className="font-normal text-muted-foreground">(optional)</span>}
+            {label} {!reasonNeeded && <span className="font-normal text-muted-foreground">(optional)</span>}
           </Label>
           <Textarea
             id="account-change-reason"
             rows={3}
             maxLength={MAX_REASON_CHARS}
             required={reasonNeeded}
+            placeholder={placeholder}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
           />
@@ -398,7 +494,7 @@ function ResetPasswordForm({ account, onCancel, onDone, onSignInNeeded }: FormPr
   );
 }
 
-/** Role, block and identity changes of an account, newest first. */
+/** Role, block, approval and identity changes of an account, newest first. */
 function History({ account, onCancel, onSignInNeeded }: FormProps) {
   const [history, setHistory] = React.useState<AccountChange[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -421,7 +517,7 @@ function History({ account, onCancel, onSignInNeeded }: FormProps) {
     <div className="flex min-h-0 flex-col">
       <DialogHeader>
         <DialogTitle>History of {account.username}</DialogTitle>
-        <DialogDescription>Role, block and identity changes, newest first.</DialogDescription>
+        <DialogDescription>Role, block, approval and identity changes, newest first.</DialogDescription>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-4">
         {error && <Callout tone="danger">{error}</Callout>}

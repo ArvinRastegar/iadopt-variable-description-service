@@ -54,6 +54,10 @@ MESSAGE = {
     "daily_limit": "No decompositions left today.",
 }
 APPROVAL_MESSAGE = {C.PUBLISH: "Publishing needs an approved account.", C.RETRACT_OWN: "Ask an admin to retract this publication."}
+APPROVAL_FIRST = {
+    **{capability: ("approval_required", "An admin must approve your account first.") for capability in OWN_USE},
+    C.RETRACT_OWN: ("approval_required", APPROVAL_MESSAGE[C.RETRACT_OWN]),
+}
 RECORDS_DISABLED = "Records need accounts, and authentication is disabled."
 DISABLED_MESSAGE = {
     C.ACCOUNT_DATA: "Saved ORCID iDs need accounts, and authentication is disabled.",
@@ -72,6 +76,12 @@ EXPECTED_ROUTES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("GET", "/api/readyz"): None,
     ("GET", "/api/health"): None,
     ("POST", "/api/auth/login"): None,
+    # oidc-identity, section 10 (increment 2).
+    ("GET", "/api/auth/login"): None,
+    ("GET", "/api/auth/callback"): None,
+    ("GET", "/api/auth/end-session"): None,
+    ("POST", "/api/auth/backchannel-logout"): None,
+    ("GET", "/api/auth/verify/admin"): C.VIEW_ACTIVITY,
     ("GET", "/api/model-options"): C.PUBLIC_TOOLS,
     ("GET", "/api/nanopub/preparation-options"): C.PUBLIC_TOOLS,
     ("GET", "/api/auth/verify"): C.SESSION,
@@ -100,6 +110,9 @@ EXPECTED_ROUTES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("GET", "/api/admin/users/{user_id}/history"): C.MANAGE_USERS,
     ("POST", "/api/admin/users/{user_id}/block"): C.MANAGE_USERS,
     ("POST", "/api/admin/users/{user_id}/unblock"): C.MANAGE_USERS,
+    # The approval of accounts (the owner, 2026-11-25).
+    ("POST", "/api/admin/users/{user_id}/approve"): C.REVIEW_APPLICATIONS,
+    ("POST", "/api/admin/users/{user_id}/withdraw-approval"): C.REVIEW_APPLICATIONS,
     ("POST", "/api/admin/users/{user_id}/grant-admin"): C.MANAGE_ADMINS,
     ("POST", "/api/admin/users/{user_id}/revoke-admin"): C.MANAGE_ADMINS,
 }
@@ -318,7 +331,7 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
 
 class RouteTableTests(unittest.TestCase):
     def test_every_route_declares_exactly_its_one_capability(self):
-        """Covers: AC-access-policy-010."""
+        """Covers: AC-access-policy-010, AC-oidc-identity-043 (with the rows of its section 10)."""
         routes = {(method, route.path): route for route in main.app.routes if isinstance(route, APIRoute) for method in route.methods}
         self.assertEqual(sorted(set(routes) - set(EXPECTED_ROUTES)), [], "routes without a capability")
         self.assertEqual(sorted(set(EXPECTED_ROUTES) - set(routes)), [], "routes of the contract that are missing")
@@ -510,10 +523,9 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
         sign_in_as(client, account["id"])
         admin_side = {capability: ("admin_required", MESSAGE["admin_required"]) for capability in ADMIN}
         admin_side[C.MANAGE_ADMINS] = ("owner_required", MESSAGE["owner_required"])
-        own_use = {capability: ("terms_not_accepted", MESSAGE["terms_not_accepted"]) for capability in OWN_USE}
-        self.assert_capabilities(self.capabilities(client), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA], {**own_use, **admin_side})
+        self.assert_capabilities(self.capabilities(client), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA], {**APPROVAL_FIRST, **admin_side})
 
-        refusal = {"detail": MESSAGE["terms_not_accepted"], "reason": "terms_not_accepted"}
+        refusal = {"detail": APPROVAL_FIRST[C.DECOMPOSE][1], "reason": "approval_required"}
         with patch.object(decompose_router, "run_pipeline", side_effect=AssertionError("Unexpected model call")) as pipeline:
             response = client.post("/api/decompose", json={"definition": "air temperature"})
         self.assertEqual((response.status_code, response.json()), (403, refusal))
@@ -524,7 +536,10 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
         self.assertEqual(self.rows("SELECT * FROM record_items"), [])
 
     def test_an_identity_provider_admin_keeps_the_admin_capabilities_of_its_role(self):
-        """Covers: AC-access-policy-012 (such an admin keeps its role's capabilities), AC-access-policy-005."""
+        """Covers: AC-access-policy-012 (such an admin keeps its role's capabilities), AC-access-policy-005.
+
+        An admin counts as approved, and nobody is asked for the terms here (the owner, 2026-11-25).
+        """
         account = self.provider_account("subject-2")
         self.bind_owner("admin")
         owner = self.client()
@@ -533,10 +548,12 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
 
         client = self.client()
         sign_in_as(client, account["id"])
-        own_use = {capability: ("terms_not_accepted", MESSAGE["terms_not_accepted"]) for capability in OWN_USE}
-        self.assert_capabilities(self.capabilities(client), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA, *ADMIN],
-                                 {**own_use, C.MANAGE_ADMINS: ("owner_required", MESSAGE["owner_required"])})
+        self.assert_capabilities(self.capabilities(client), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA, *OWN_USE, *ADMIN],
+                                 {C.MANAGE_ADMINS: ("owner_required", MESSAGE["owner_required"])})
         self.assertEqual(client.get("/api/admin/users").status_code, 200)
+        self.assertEqual(self.decompose(client).status_code, 200)
+
+        self.assertEqual(owner.post(f"/api/admin/users/{account['id']}/revoke-admin", json={}).status_code, 200)
         self.assertEqual(client.post("/api/decompose", json={"definition": "air temperature"}).status_code, 403)
 
     def test_a_legacy_account_linked_before_the_cutover_keeps_its_session_and_ids_but_not_its_tools(self):
@@ -551,8 +568,7 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
 
         admin_side = {capability: ("admin_required", MESSAGE["admin_required"]) for capability in ADMIN}
         admin_side[C.MANAGE_ADMINS] = ("owner_required", MESSAGE["owner_required"])
-        own_use = {capability: ("terms_not_accepted", MESSAGE["terms_not_accepted"]) for capability in OWN_USE}
-        self.assert_capabilities(self.capabilities(client), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA], {**own_use, **admin_side})
+        self.assert_capabilities(self.capabilities(client), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA], {**APPROVAL_FIRST, **admin_side})
         self.assertEqual([item["orcid"] for item in client.get("/api/auth/me/orcids").json()["orcids"]], [ORCID])
 
     def test_an_identity_provider_account_with_a_false_email_claim_keeps_only_the_public_tools(self):

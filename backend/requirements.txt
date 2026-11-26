@@ -1,8 +1,15 @@
 fastapi==0.135.1
+# FastAPI leaves these two open.
+starlette==1.10.0
+anyio==4.16.0
 uvicorn[standard]==0.41.0
 openai==2.26.0
 httpx==0.28.1
 requests==2.32.5
+# ROHub sign-in; cryptography comes with joserfc.
+Authlib==1.9.10
+joserfc==1.8.0
+cryptography==50.0.2
 jsonschema==4.26.0
 pydantic==2.12.5
 pydantic-settings==2.14.2

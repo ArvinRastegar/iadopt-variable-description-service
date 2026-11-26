@@ -7,9 +7,10 @@ credentials. It is a leaf below the service/router layers — nothing in ``app.a
 imports services or routers. The tables come from the migrations of ``app.storage``;
 roles, blocks and the owner belong to ``app.accounts``.
 
-Authentication is local username/password (NOT ORCID, NOT JWT). Sessions are random
-``secrets.token_urlsafe(32)`` tokens, HMAC-SHA256-signed with ``IADOPT_SESSION_SECRET``
-and stored SHA-256-hashed in SQLite; only the hash is persisted. See
+People sign in with a local username and password or with ROHub (``app.oidc``), as the
+sign-in mode allows. Sessions of both kinds are random ``secrets.token_urlsafe(32)``
+tokens, HMAC-SHA256-signed with ``IADOPT_SESSION_SECRET`` and stored SHA-256-hashed in
+SQLite, each kind in its own table and cookie; only the hash is persisted. See
 iadopt-variable-description-service-docs/CONTRACTS.md for the full contract.
 """
 
@@ -27,6 +28,7 @@ import sqlite3
 import threading
 import time
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,12 +36,40 @@ from fastapi import HTTPException, Request, Response, status
 
 from . import storage
 from .account_model import ACCOUNT_COLUMNS, account_from_row, add_history, find_account
+from .guards import client_ip, exact_cookie
+from .oidc import store as oidc_store
+from .oidc.settings import current as sign_in_settings
 from .schemas.common import canonical_orcid_uri
 
 logger = logging.getLogger(__name__)
 
 MAX_SAVED_ORCIDS = 20
 """How many ORCID iDs one account can keep for publishing and retracting."""
+
+PASSWORD = "password"
+ROHUB = "rohub"
+"""The two kinds of session, by what started them."""
+
+ROHUB_COOKIE = "iadopt_rohub_session"
+"""The cookie of a ROHub session; with ``Secure`` its name has the prefix ``__Host-``."""
+
+NOBODY: Dict[str, Any] = {}
+"""The acting user of an audit event that names nobody, whatever session its browser has."""
+
+
+@dataclass(frozen=True)
+class AppSession:
+    """A request's session.
+
+    Attributes:
+        kind: ``password`` or ``rohub``.
+        user: The account's user dict.
+        csrf_token: What an unsafe request with a ROHub session must carry; ``None`` for a password.
+    """
+
+    kind: str
+    user: Dict[str, Any]
+    csrf_token: Optional[str] = None
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -347,30 +377,130 @@ class AuthStore:
         response.delete_cookie(self.cookie_name, path="/")
 
     def delete_session(self, request: Request) -> None:
-        """Delete the request's session from the database (no-op if absent).
+        """Delete the request's sessions of both kinds from the database (no-op if absent).
 
         Args:
-            request: The request carrying the session cookie.
+            request: The request carrying the session cookies.
         """
+        with self._lock, self._connect() as conn:
+            self._delete_sessions(conn, request)
+
+    def _delete_sessions(self, conn: sqlite3.Connection, request: Request) -> None:
+        """Delete the sessions, of both kinds, that a request's browser has."""
         token = self._session_token_from_request(request)
-        if not token:
+        if token:
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (self._hash_session_token(token),))
+        self._delete_rohub_session(conn, request)
+
+    def _delete_rohub_session(self, conn: sqlite3.Connection, request: Request) -> None:
+        """Delete the ROHub session that a request's browser has."""
+        token = self._rohub_token(request)
+        if token:
+            oidc_store.delete_session(conn, self._hash_session_token(token))
+
+    def end_rohub_session(self, request: Request, response: Response) -> None:
+        """End the ROHub session a request's browser has and remove its cookie (no-op if absent).
+
+        Args:
+            request: The request.
+            response: The response to clear the cookie on.
+        """
+        if exact_cookie(request, self.rohub_cookie_name) is None:
             return
         with self._lock, self._connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (self._hash_session_token(token),))
+            self._delete_rohub_session(conn, request)
+        self.clear_rohub_cookie(request, response)
+
+    @property
+    def rohub_cookie_name(self) -> str:
+        """The name of a ROHub session's cookie on this deployment."""
+        return self.host_cookie_name(ROHUB_COOKIE)
+
+    def host_cookie_name(self, name: str) -> str:
+        """Return a cookie's name: with ``Secure`` it has the prefix that binds it to this host.
+
+        Args:
+            name: The name without the prefix.
+        """
+        return f"__Host-{name}" if self.cookie_secure else name
+
+    def create_rohub_session(
+        self, user_id: int, request: Request, *, issuer: str, subject: str, sid: Optional[str]
+    ) -> Optional[str]:
+        """Create a ROHub session and end the sessions, of either kind, that the same browser had.
+
+        Args:
+            user_id: The account that signed in.
+            request: The request that signed it in.
+            issuer: The provider's issuer.
+            subject: The subject the provider gives the person.
+            sid: The provider's session id, when it gave one.
+
+        Returns:
+            The signed cookie value, or ``None`` for a blocked account, whose browser keeps what it had.
+        """
+        token = secrets.token_urlsafe(32)
+        now = utc_now()
+        with self._lock, self._connect(immediate=True) as conn:
+            stored = oidc_store.add_session(
+                conn,
+                token_hash=self._hash_session_token(token),
+                user_id=user_id,
+                issuer=issuer,
+                subject=subject,
+                sid=sid,
+                created_at=utc_iso(now),
+                expires_at=utc_iso(now + self.session_ttl),
+                ip_address=self.client_ip(request),
+                user_agent=request.headers.get("user-agent", ""),
+            )
+            if not stored:
+                return None
+            self._delete_sessions(conn, request)
+        return f"{token}.{self._sign_session_token(token)}"
+
+    def set_rohub_cookie(self, response: Response, cookie_value: str) -> None:
+        """Set a ROHub session's cookie on a response.
+
+        Args:
+            response: The response to attach the cookie to.
+            cookie_value: The signed session cookie value.
+        """
+        response.set_cookie(
+            self.rohub_cookie_name,
+            cookie_value,
+            max_age=int(self.session_ttl.total_seconds()),
+            httponly=True,
+            secure=self.cookie_secure,
+            samesite="lax",
+            path="/",
+        )
+
+    def clear_rohub_cookie(self, request: Request, response: Response) -> None:
+        """Remove a ROHub session's cookie, with the attributes it was set with, from a browser that sent it.
+
+        Args:
+            request: The request.
+            response: The response to clear the cookie on.
+        """
+        if exact_cookie(request, self.rohub_cookie_name) is not None:
+            response.delete_cookie(
+                self.rohub_cookie_name, path="/", secure=self.cookie_secure, httponly=True, samesite="lax"
+            )
 
     def user_from_request(self, request: Request) -> Optional[Dict[str, Any]]:
-        """Resolve the user from the request's session cookie.
+        """Resolve the user from the request's session cookies.
 
         When auth is disabled, returns a synthetic development admin. Otherwise
-        validates the signed cookie against the sessions table and caches the
+        validates the signed cookies against the session tables and caches the
         result on ``request.state.current_user``.
 
         Args:
-            request: The request carrying the session cookie.
+            request: The request carrying the session cookies.
 
         Returns:
-            The user dict, or ``None`` if no valid session is present (and auth
-            is enabled). Expired sessions are deleted on access.
+            The user dict, or ``None`` if no session counts (and auth is enabled).
+            Expired sessions are deleted on access.
         """
         if not self.enabled:
             return {
@@ -389,6 +519,53 @@ class AuthStore:
         if cached:
             return cached
 
+        session = self._session_from_request(request)
+        if session is None:
+            return None
+        request.state.current_user = session.user
+        request.state.session = session
+        return session.user
+
+    def session_of(self, request: Request) -> Optional[AppSession]:
+        """Return the request's session; ``None`` without one, and for the development user.
+
+        Args:
+            request: The request carrying the session cookies.
+        """
+        if not self.enabled or not self.user_from_request(request):
+            return None
+        session: Optional[AppSession] = getattr(request.state, "session", None)
+        return session
+
+    def _session_from_request(self, request: Request) -> Optional[AppSession]:
+        """Return the session that counts in the sign-in mode: a ROHub one before a password one."""
+        settings = sign_in_settings()
+        if settings.rohub:
+            session = self._rohub_session(request, settings.issuer)
+            if session:
+                return session
+        if not settings.password:
+            return None
+        user = self._password_user(request)
+        return AppSession(PASSWORD, user) if user else None
+
+    def _rohub_session(self, request: Request, issuer: str) -> Optional[AppSession]:
+        """Return the browser's ROHub session of an issuer, deleting one that has ended."""
+        token = self._rohub_token(request)
+        if not token:
+            return None
+        token_hash, now = self._hash_session_token(token), utc_iso()
+        with self._lock, self._connect() as conn:
+            row = oidc_store.session_account(conn, token_hash=token_hash, issuer=issuer, now=now)
+        if row is None:
+            with self._lock, self._connect() as conn:
+                oidc_store.delete_ended_session(conn, token_hash=token_hash, now=now)
+            return None
+        # Bound to the session and known only to who may read its answers: not stored anywhere.
+        return AppSession(ROHUB, account_from_row(row), csrf_token=self._sign_session_token(f"csrf:{token}"))
+
+    def _password_user(self, request: Request) -> Optional[Dict[str, Any]]:
+        """Return the user of the browser's password session, deleting one that has ended."""
         token = self._session_token_from_request(request)
         if not token:
             return None
@@ -421,9 +598,7 @@ class AuthStore:
                 )
             return None
 
-        user = account_from_row(row)
-        request.state.current_user = user
-        return user
+        return account_from_row(row)
 
     def require_user(self, request: Request) -> Dict[str, Any]:
         """Return the authenticated user or raise 401.
@@ -637,8 +812,8 @@ class AuthStore:
         """Record an audit event, truncating large payloads.
 
         When ``user`` is omitted but ``request`` is provided, the user is resolved
-        from the request. Payloads/metadata are JSON-serialized and truncated to
-        ``audit_max_payload_bytes``. Failures are logged, never raised.
+        from the request; ``NOBODY`` names nobody. Payloads/metadata are JSON-serialized
+        and truncated to ``audit_max_payload_bytes``. Failures are logged, never raised.
 
         Args:
             action: The action name (e.g. ``"auth.login"``, ``"decompose"``).
@@ -791,10 +966,11 @@ class AuthStore:
         with self._lock, self._connect() as conn:
             conn.execute("DELETE FROM audit_events WHERE created_at < ?", (cutoff,))
             conn.execute("DELETE FROM sessions WHERE expires_at < ?", (utc_iso(),))
+            conn.execute("DELETE FROM oidc_sessions WHERE expires_at < ?", (utc_iso(),))
         self._last_cleanup = now
 
     def client_ip(self, request: Optional[Request]) -> str:
-        """Extract the client IP, preferring the first ``X-Forwarded-For`` value.
+        """Return the address a request comes from (``app.guards.client_ip``).
 
         Args:
             request: The request, or ``None``.
@@ -802,15 +978,10 @@ class AuthStore:
         Returns:
             The client IP string, or ``""`` when unavailable.
         """
-        if not request:
-            return ""
-        forwarded = request.headers.get("x-forwarded-for", "")
-        if forwarded:
-            return forwarded.split(",", 1)[0].strip()
-        return request.client.host if request.client else ""
+        return client_ip(request)
 
     def _session_token_from_request(self, request: Request) -> Optional[str]:
-        """Extract and signature-verify the session token from the request cookie.
+        """Extract and signature-verify a password session's token from the request cookie.
 
         Args:
             request: The request carrying the session cookie.
@@ -818,12 +989,20 @@ class AuthStore:
         Returns:
             The bare token if the signature is valid, else ``None``.
         """
-        value = request.cookies.get(self.cookie_name)
+        return self._signed_token(request.cookies.get(self.cookie_name))
+
+    def _rohub_token(self, request: Request) -> Optional[str]:
+        """Extract and signature-verify a ROHub session's token from the request cookie."""
+        return self._signed_token(exact_cookie(request, self.rohub_cookie_name))
+
+    def _signed_token(self, value: Optional[str]) -> Optional[str]:
+        """Return the session token of a cookie's value; ``None`` without a valid signature."""
         if not value or "." not in value:
             return None
         token, signature = value.rsplit(".", 1)
         expected = self._sign_session_token(token)
-        if not hmac.compare_digest(signature, expected):
+        # As bytes: a browser can send a signature that is no ASCII text.
+        if not hmac.compare_digest(signature.encode("utf-8", "replace"), expected.encode("ascii")):
             return None
         return token
 

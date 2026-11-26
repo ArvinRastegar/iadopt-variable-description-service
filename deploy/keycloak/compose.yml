@@ -1,0 +1,41 @@
+# A throwaway Keycloak with a mail catcher, for trying the sign-in and its sign-out without the hosted
+# provider (deploy/keycloak/README.md, "The local stack"). Only for a development machine: it listens on
+# 127.0.0.1 only, sends no mail, and forgets everything when it is stopped.
+#
+# It joins the network of the application's own stack, so that stack has to run first. The browser and the
+# backend container then reach Keycloak under the same address, http://keycloak.localhost:8180.
+name: iadopt-keycloak
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?name an administrator for this run}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?make up a password for this run}
+      KC_HOSTNAME: http://keycloak.localhost:8180
+      KC_HTTP_PORT: "8180"
+    ports:
+      - "127.0.0.1:8180:8180"
+    configs:
+      - source: realm
+        target: /opt/keycloak/data/import/realm.json
+    networks:
+      default:
+      application:
+        aliases:
+          - keycloak.localhost
+
+  mail:
+    image: axllent/mailpit:v1.34.0
+    ports:
+      - "127.0.0.1:8125:8025"
+
+configs:
+  realm:
+    file: ./realm.json
+
+networks:
+  application:
+    name: ${IADOPT_NETWORK:-iadopt-variable-description-service_default}
+    external: true

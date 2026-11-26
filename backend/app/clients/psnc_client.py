@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from ..core.config import settings
+from ..core.provider_keys import usable_key
 
 
 def build_psnc_chat_payload(
@@ -127,16 +128,11 @@ def psnc_chat_headers() -> Dict[str, str]:
     """Return the auth + content-type headers for PSNC requests.
 
     Returns:
-        The header dict with the bearer token.
-
-    Raises:
-        RuntimeError: If ``PSNC_API_KEY`` is not configured.
+        The header dict with the bearer token. A ``PSNC_API_KEY`` that is not configured, or that
+        cannot be sent, is refused instead (:func:`usable_key` raises).
     """
-    if not settings.psnc_api_key:
-        raise RuntimeError("PSNC_API_KEY is not set.")
-
     return {
-        "Authorization": f"Bearer {settings.psnc_api_key}",
+        "Authorization": f"Bearer {usable_key('PSNC_API_KEY', settings.psnc_api_key)}",
         "Content-Type": "application/json",
     }
 

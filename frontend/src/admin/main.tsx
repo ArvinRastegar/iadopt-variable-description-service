@@ -8,6 +8,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Callout, Pill, Toaster } from '@/components/ui/feedback';
 import { Input, Label } from '@/components/ui/fields';
 import { downloadBlob } from '@/lib/download';
+import { navigation } from '@/lib/leaving';
 import { cn } from '@/lib/utils';
 import {
   ADMIN_PAGE_CAPABILITIES, adminApi, allows, ApiError, AuthRequiredError, fetchSession, signOut,
@@ -16,7 +17,7 @@ import {
 import { Brand } from '@/shared/AppHeader';
 import { displayName } from '@/shared/auth';
 import { ThemeProvider, ThemeToggle, useTheme } from '@/shared/theme';
-import { AccountsTable, formatTime } from './accounts';
+import { AccountsTable, formatTime, waitingAccounts } from './accounts';
 import { NewPasswordFields } from './NewPasswordFields';
 
 /*
@@ -100,6 +101,7 @@ function AdminPage() {
 
   const seesActivity = allows(capabilities, 'view_activity');
   const managesAccounts = allows(capabilities, 'manage_users');
+  const waiting = managesAccounts && accounts ? waitingAccounts(accounts).length : 0;
   const denied = me !== null && !ADMIN_PAGE_CAPABILITIES.some((name) => allows(capabilities, name));
 
   async function downloadRecords() {
@@ -123,18 +125,21 @@ function AdminPage() {
         <Pill>Admin</Pill>
         <div className="flex-1" />
         <Button variant="ghost" asChild>
-          <a href="./index.html#/" className="no-underline"><ArrowLeftIcon aria-hidden="true" />Back to the app</a>
+          <a href="./index.html#/" className="no-underline"><ArrowLeftIcon aria-hidden="true" /><HeaderLabel>Back to the app</HeaderLabel></a>
         </Button>
         <ThemeToggle />
         {me && (
           <Button
             variant="outline"
             onClick={async () => {
-              await signOut().catch(() => {});
-              window.location.href = './login.html';
+              try {
+                navigation.leave((await signOut()) ?? './login.html');
+              } catch (error) {
+                setStatus({ text: error instanceof Error ? error.message : 'Could not sign out. Please try again.', error: true });
+              }
             }}
           >
-            <LogOutIcon aria-hidden="true" />Sign out
+            <LogOutIcon aria-hidden="true" /><HeaderLabel>Sign out</HeaderLabel>
           </Button>
         )}
       </header>
@@ -155,6 +160,12 @@ function AdminPage() {
         )}
 
         {denied && <Callout tone="warning" title="Admin access required">This account cannot open the admin dashboard.</Callout>}
+
+        {waiting > 0 && (
+          <Callout tone="warning" title={waiting === 1 ? '1 account waits for approval' : `${waiting} accounts wait for approval`}>
+            <a href="#waiting-for-approval">Go to {waiting === 1 ? 'it' : 'them'}</a>
+          </Callout>
+        )}
 
         {seesActivity && stats && (
           <>
@@ -209,7 +220,7 @@ function AdminPage() {
         {managesAccounts && accounts && (
           <Card
             title="Users"
-            subtitle="Roles, blocks and sign-in of every account"
+            subtitle="Roles, approvals, blocks and sign-in of every account"
             action={<Button size="sm" onClick={() => setCreating(true)}><PlusIcon aria-hidden="true" />Create user</Button>}
           >
             <AccountsTable
@@ -257,6 +268,11 @@ function AdminPage() {
       <Toaster theme={theme} />
     </div>
   );
+}
+
+/** The text of a button in the header; a phone shows only the icon. */
+function HeaderLabel({ children }: { children: React.ReactNode }) {
+  return <span className="sr-only sm:not-sr-only">{children}</span>;
 }
 
 function StatTile({ label, children }: { label: string; children: React.ReactNode }) {

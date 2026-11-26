@@ -28,6 +28,7 @@ from ..clients.psnc_client import (
     psnc_chat_headers,
 )
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
+from ..core.provider_keys import without_keys
 from .call_log import CallLog, mark_unusable, short_reason, start_call
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?", re.MULTILINE)
@@ -44,10 +45,11 @@ ONTO_KEYS = [
 
 
 def call_error(error: BaseException) -> str:
-    """Say why a model request failed, without repeating the provider's response body.
+    """Say why a model request failed, without repeating the provider's response body or a key.
 
     An HTTP error keeps only its status: a provider's error body can quote the request, such
-    as the part of a definition a moderation filter flagged (D-037, stage 2).
+    as the part of a definition a moderation filter flagged (D-037, stage 2). Any other message
+    can quote the request's header, so the keys are taken out of it.
 
     Args:
         error: The exception the request raised.
@@ -61,7 +63,7 @@ def call_error(error: BaseException) -> str:
     if isinstance(error, requests.HTTPError):
         status = getattr(error.response, "status_code", None)
         return f"HTTP {status}" if status else "HTTP error"
-    return short_reason(f"{type(error).__name__}: {error}") or type(error).__name__
+    return short_reason(f"{type(error).__name__}: {without_keys(error)}") or type(error).__name__
 
 
 def build_chat_completion_request_kwargs(
@@ -162,13 +164,13 @@ def call_model(
 
         except APIStatusError as e:
             pending.finish("error", error=call_error(e))
-            print(f"APIStatusError attempt {attempt}: {e}")
+            print(f"APIStatusError attempt {attempt}: {without_keys(e)}")
         except (OpenAIError, httpx.HTTPError) as e:
             pending.finish("error", error=call_error(e))
-            print(f"Transport error attempt {attempt}: {e}")
+            print(f"Transport error attempt {attempt}: {without_keys(e)}")
         except Exception as e:
             pending.finish("error", error=call_error(e))
-            print(f"Unexpected error attempt {attempt}: {e}")
+            print(f"Unexpected error attempt {attempt}: {without_keys(e)}")
 
     return ""
 
@@ -291,14 +293,14 @@ def call_psnc_model(
             return text
         except requests.HTTPError as e:
             pending.finish("error", error=call_error(e))
-            response_text = getattr(e.response, "text", "")
-            print(f"PSNC HTTP error attempt {attempt}: {e} {response_text[:500]}")
+            response_text = without_keys(getattr(e.response, "text", ""))
+            print(f"PSNC HTTP error attempt {attempt}: {without_keys(e)} {response_text[:500]}")
         except requests.RequestException as e:
             pending.finish("error", error=call_error(e))
-            print(f"PSNC transport error attempt {attempt}: {e}")
+            print(f"PSNC transport error attempt {attempt}: {without_keys(e)}")
         except Exception as e:
             pending.finish("error", error=call_error(e))
-            print(f"Unexpected PSNC error attempt {attempt}: {e}")
+            print(f"Unexpected PSNC error attempt {attempt}: {without_keys(e)}")
 
     return ""
 
@@ -534,8 +536,8 @@ def stream_psnc_model(
 
     Returns:
         An iterator of ``(reasoning_delta, content_delta)`` tuples per SSE event. The request
-        is sent when the iterator is first advanced; a missing ``PSNC_API_KEY`` fails here,
-        before anything is sent (:func:`psnc_chat_headers` raises).
+        is sent when the iterator is first advanced; a ``PSNC_API_KEY`` that is missing or that
+        cannot be sent fails here, before anything is sent (:func:`psnc_chat_headers` raises).
     """
     headers = psnc_chat_headers()
     payload = _psnc_payload(
@@ -644,8 +646,8 @@ def call_llm_loose(
             data = parse_llm_json(raw, definition)
             return raw, data
         except Exception as e:
-            mark_unusable(calls, "decomposition", f"Not valid JSON: {e}")
-            print(f"LLM parse attempt {attempt} failed: {e}")
+            mark_unusable(calls, "decomposition", f"Not valid JSON: {without_keys(e)}")
+            print(f"LLM parse attempt {attempt} failed: {without_keys(e)}")
 
     return last_raw, {}
 

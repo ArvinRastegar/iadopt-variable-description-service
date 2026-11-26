@@ -7,6 +7,7 @@ import { Segmented, SegmentedItem } from '@/components/ui/controls';
 import { Callout, Pill, Spinner } from '@/components/ui/feedback';
 import { Input } from '@/components/ui/fields';
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { registerWork } from '@/lib/leaving';
 import { type PublishedNanopub } from '@/lib/storage';
 import { AuthRequiredError, retractNanopub } from '@/shared/api';
 import { useAuth } from '@/shared/auth';
@@ -40,6 +41,16 @@ export function PublicationsPage() {
   const [reference, setReference] = React.useState('');
   const [target, setTarget] = React.useState<Target | null>(null);
   const [lastRetraction, setLastRetraction] = React.useState<{ label: string; url: string } | null>(null);
+
+  // "Sign out and clear this browser" leaves nothing of it here either.
+  React.useEffect(() => registerWork({
+    clear: () => {
+      setQuery('');
+      setReference('');
+      setTarget(null);
+      setLastRetraction(null);
+    },
+  }), []);
 
   const counts = {
     all: entries.length,

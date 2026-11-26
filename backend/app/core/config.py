@@ -221,6 +221,19 @@ class Settings(BaseSettings):
     state_dir_raw: Optional[str] = Field(default=None, validation_alias="IADOPT_STATE_DIR")
     db_path_raw: Optional[str] = Field(default=None, validation_alias="IADOPT_DB_PATH")
 
+    # --- Sign-in switch, ROHub sign-in, request guards and daily limit ------- #
+    # Text until ``app.oidc.settings``, ``app.guards`` and ``app.usage`` judge it at startup, so that a
+    # bad value fails neither the import of the application nor an operator command. Empty counts as unset.
+    environment_raw: str = Field(default="", validation_alias="IADOPT_ENVIRONMENT")
+    auth_mode_raw: str = Field(default="", validation_alias="IADOPT_AUTH_MODE")
+    oidc_issuer_raw: str = Field(default="", validation_alias="IADOPT_OIDC_ISSUER")
+    oidc_client_id_raw: str = Field(default="", validation_alias="IADOPT_OIDC_CLIENT_ID")
+    public_url_raw: str = Field(default="", validation_alias="IADOPT_PUBLIC_URL")
+    oidc_post_logout_raw: str = Field(default="", validation_alias="IADOPT_OIDC_POST_LOGOUT")
+    trusted_proxy_hops_raw: str = Field(default="", validation_alias="IADOPT_TRUSTED_PROXY_HOPS")
+    sign_in_limit_raw: str = Field(default="", validation_alias="IADOPT_SIGN_IN_LIMIT")
+    daily_decompositions_raw: str = Field(default="", validation_alias="IADOPT_DAILY_DECOMPOSITIONS")
+
     # --- Validators (preserve exact original coercion) ---------------------- #
     @field_validator("auth_enabled", "cookie_secure", "use_measured_configuration", mode="before")
     @classmethod

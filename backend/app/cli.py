@@ -2,7 +2,8 @@
 
 ``python -m app.cli db status|migrate|backup|reclaim`` (``components/app-storage.md``, section 7),
 ``owner bind|rebind`` and ``legacy show|link|fold|purge-passwords``
-(``components/accounts-roles.md``, sections 5 and 8). Each is safe beside a running backend. Exit
+(``components/accounts-roles.md``, sections 5 and 8), ``oidc check``
+(``components/keycloak-deployment.md``, section 5). Each is safe beside a running backend. Exit
 codes: 0 on success, 1 on a refusal or failure (with the error's name and message), 2 on a usage
 error.
 """
@@ -14,13 +15,15 @@ import json
 import sqlite3
 import sys
 from typing import Any, Callable, Dict, Optional, Sequence
+from urllib.parse import urlsplit
 
 from . import storage
 from .accounts import CommandRefused
 from .core.dependencies import account_store, auth_store
 from .core.logging import configure_logging
+from .oidc import check as oidc_check
 
-Command = Callable[[argparse.Namespace], None]
+Command = Callable[[argparse.Namespace], Optional[int]]
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -37,11 +40,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except SystemExit as e:  # argparse printed a usage error (2) or the help (0)
         return int(e.code or 0)
     try:
-        arguments.command(arguments)
+        code: Optional[int] = arguments.command(arguments)
     except (CommandRefused, storage.StorageError, sqlite3.Error, OSError) as e:
         print(f"{type(e).__name__}: {e}", file=sys.stderr)
         return 1
-    return 0
+    return code or 0
 
 
 # ------------------------------------------------------------------------------------------------
@@ -146,6 +149,16 @@ def _legacy_purge_passwords(arguments: argparse.Namespace) -> None:
 
 
 # ------------------------------------------------------------------------------------------------
+# oidc
+# ------------------------------------------------------------------------------------------------
+
+
+def _oidc_check(arguments: argparse.Namespace) -> int:
+    """Check the configured identity provider; it gets requests, nothing is written."""
+    return 0 if oidc_check.run(pkce=arguments.pkce, refused_callbacks=arguments.refused_callback) else 1
+
+
+# ------------------------------------------------------------------------------------------------
 # Parsing and printing
 # ------------------------------------------------------------------------------------------------
 
@@ -186,6 +199,18 @@ def _parser() -> argparse.ArgumentParser:
     _add_keep_admin(fold)
     purge = _command(legacy, "purge-passwords", _legacy_purge_passwords, "End password logins for good.")
     purge.add_argument("--confirm-cutover", action="store_true", help="without it nothing is changed")
+
+    oidc = _group(groups, "oidc", "The identity provider people sign in with (ROHub).")
+    check = _command(oidc, "check", _oidc_check, "Check the configured provider; sends requests to it, writes nothing.")
+    check.add_argument("--pkce", action="store_true", help="also see that the client requires PKCE S256")
+    check.add_argument(
+        "--refused-callback",
+        action="append",
+        default=[],
+        type=_address,
+        metavar="URL",
+        help="also see that this callback is refused; may be given several times",
+    )
     return parser
 
 
@@ -237,6 +262,23 @@ def _text(value: str) -> str:
     text = value.strip()
     if not text:
         raise argparse.ArgumentTypeError("must not be empty")
+    return text
+
+
+def _address(value: str) -> str:
+    """Return an absolute ``http`` or ``https`` address, trimmed; anything else is a mistake, not a refused callback.
+
+    Raises:
+        argparse.ArgumentTypeError: If it is not one.
+    """
+    text = _text(value)
+    try:
+        parts = urlsplit(text)
+        ok = parts.scheme in ("http", "https") and bool(parts.hostname) and parts.port != 0
+    except ValueError:
+        ok = False
+    if not ok:
+        raise argparse.ArgumentTypeError(f"not an absolute http or https address: {text}")
     return text
 
 

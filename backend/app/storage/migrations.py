@@ -14,7 +14,14 @@ from .backups import make_backup, quoted
 from .connections import busy_as_storage_busy, connect, database_path, look, transaction
 from .errors import MigrationChanged, MigrationFailed, SchemaMismatch, StorageBusy
 from .locks import only_one_process
-from .schema import ACCOUNTS_ROLES_SQL, BASELINE_SQL, INCREMENTAL_VACUUM_SQL
+from .schema import (
+    ACCOUNT_APPROVAL_SQL,
+    ACCOUNTS_ROLES_SQL,
+    BASELINE_SQL,
+    DAILY_DECOMPOSITIONS_SQL,
+    INCREMENTAL_VACUUM_SQL,
+    OIDC_IDENTITY_SQL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +59,9 @@ MIGRATIONS: List[Migration] = [
     Migration(BASELINE_ID, SQL, BASELINE_SQL),
     Migration(INCREMENTAL_VACUUM_ID, MAINTENANCE, INCREMENTAL_VACUUM_SQL),
     Migration("0003_accounts_roles", SQL, ACCOUNTS_ROLES_SQL),
+    Migration("0004_oidc_identity", SQL, OIDC_IDENTITY_SQL),
+    Migration("0005_daily_decompositions", SQL, DAILY_DECOMPOSITIONS_SQL),
+    Migration("0006_account_approval", SQL, ACCOUNT_APPROVAL_SQL),
 ]
 """The ordered migrations: app-storage's own two, then those of the modules that own the tables."""
 

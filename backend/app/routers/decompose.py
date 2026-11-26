@@ -4,33 +4,58 @@ For a signed-in account every run starts a decomposition record (D-036): the run
 request it sent to a model (D-037, stage 2), and its draft as version 0. The audit log keeps
 the model choice, timing and errors of a run, and no longer the definition or the result,
 which the record holds (D-024).
+
+A run of an account under the daily limit, which is switched off unless a setting is set, reserves a
+use before any model is called; how it ends decides whether the use is kept or given back (D-021).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime
-from typing import Any, Dict, Iterator, Optional, Sequence
+from typing import Any, Dict, Generator, Optional, Sequence
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from starlette.types import Receive, Scope, Send
 
+from ..access.admission import NOT_COUNTED, Use, admit
 from ..access.dependencies import require
 from ..access.policy import Capability
 from ..auth import utc_now
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from ..core.dependencies import API_PREFIX, auth_store, record_store, require_current_user
 from ..core.logging import get_logger
+from ..core.provider_keys import without_keys
 from ..pipeline import prompt_setup, run_pipeline, stream_pipeline_events
 from ..schemas import DecomposeResponse, ModelOptionsResponse
 from ..schemas.responses import ProviderConfig
 from ..schemas.requests import DecomposeRequest
 from ..services.call_log import CallLog, ModelCall
 from ..services.llm import resolve_model_name, resolve_model_provider, stream_event
+from ..usage import Outcome, daily_limit
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+NDJSON = "application/x-ndjson"
+
+_CLIENT_ERROR = re.compile(r"HTTP (4\d\d)")
+"""How the call log names a provider's answer with a client error (``services.llm.call_error``)."""
+
+_TRANSIENT = {"408", "409", "429"}
+"""The client errors that pass, which are worth another try (D-020)."""
+
+_NEVER_SENT = re.compile(
+    r"(MissingSchema|InvalidSchema|InvalidURL|InvalidHeader|UnicodeEncodeError|ValueError: Invalid header value)\b"
+)
+"""How the call log names a request that could not be built: for an address with a mistake in it, or for a key
+with one. Such a key is refused before there is a call (``core.provider_keys``); its texts stay here for one the
+HTTP libraries refuse nevertheless, and they start with these words also with the key taken out."""
 
 
 def _audit_metadata(req: DecomposeRequest, record_id: Optional[str]) -> Dict[str, Any]:
@@ -56,6 +81,86 @@ def _is_bad_request(req: DecomposeRequest) -> bool:
     except ValueError:
         return True
     return False
+
+
+def _reserve(user: Dict[str, Any], req: DecomposeRequest) -> Use:
+    """Reserve a use for a run of an account under the daily limit, or refuse it.
+
+    It comes before any model is called. A request the pipeline refuses anyway takes no use.
+
+    Returns:
+        What to finish when the run ends.
+    """
+    if daily_limit() is None or _is_bad_request(req):
+        return NOT_COUNTED
+    return admit(user["id"])
+
+
+def _failure(calls: Sequence[ModelCall]) -> Outcome:
+    """Say how a run ended that gave no result (D-021): it counts when a model may have worked on it.
+
+    Args:
+        calls: The requests the run sent to a model.
+    """
+    tries = [call for call in calls if call.purpose == "decomposition"]
+    if all(_was_never_sent(call) for call in tries):  # also when there is none
+        return Outcome.NOT_SENT
+    if all(_was_never_sent(call) or _was_refused(call) for call in tries):
+        return Outcome.REFUSED
+    return Outcome.FAILED
+
+
+def _was_never_sent(call: ModelCall) -> bool:
+    """Return whether a request could not be built, so that nothing reached the provider."""
+    return call.status == "error" and _NEVER_SENT.match(call.error or "") is not None
+
+
+def _was_refused(call: ModelCall) -> bool:
+    """Return whether the provider refused a request for good: its credentials, its configuration or its input."""
+    client_error = _CLIENT_ERROR.fullmatch(call.error or "") if call.status == "error" else None
+    return client_error is not None and client_error.group(1) not in _TRANSIENT
+
+
+class RunResponse(StreamingResponse):
+    """Send a run's events, and end the run and its use with the response.
+
+    Starlette does not close the events of a browser that left. Their end, which writes to the database,
+    would wait for garbage collection and then happen in whatever thread that is, also one that holds the
+    database's write lock; and until its use has ended, a restart would give it back.
+    """
+
+    def __init__(self, events: Generator[str, None, None], use: Use) -> None:
+        """Stream a run's NDJSON lines.
+
+        Args:
+            events: The lines.
+            use: What the run reserved.
+        """
+        super().__init__(events, media_type=NDJSON)
+        self._events = events
+        self._use = use
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Send the events, then end what a browser that left has broken off.
+
+        A server that stops cancels its responses. Such a run is interrupted, so its use is left for the
+        next start to give back.
+        """
+        stopped = False
+        try:
+            await super().__call__(scope, receive, send)
+        except anyio.get_cancelled_exc_class():
+            stopped = True
+            raise
+        finally:
+            if not stopped:
+                with anyio.CancelScope(shield=True):
+                    await run_in_threadpool(self._end)
+
+    def _end(self) -> None:
+        """End the use and the run, unless they have ended."""
+        self._use.finish(Outcome.CLIENT_LEFT)
+        self._events.close()
 
 
 def _record_run(
@@ -167,8 +272,9 @@ def decompose_stream(
     start = time.perf_counter()
     started_at = utc_now()
     bad_request = _is_bad_request(req)
+    use = _reserve(user, req)
 
-    def audited_events() -> Iterator[str]:
+    def audited_events() -> Generator[str, None, None]:
         """Yield pipeline NDJSON lines, then record and audit the stream outcome in a finally block."""
         final_payload: Optional[Dict[str, Any]] = None
         error_detail: Optional[str] = None
@@ -187,6 +293,7 @@ def decompose_stream(
                 try:
                     event = json.loads(line)
                     if event.get("type") == "final":
+                        use.finish(Outcome.SUCCESS)
                         final_payload = event.get("data")
                         record_id = _record_run(
                             user=user,
@@ -200,13 +307,16 @@ def decompose_stream(
                         if isinstance(final_payload, dict):
                             line = stream_event("final", data={**final_payload, "record_id": record_id})
                     elif event.get("type") == "error":
+                        use.finish(_failure(calls.calls()))
                         error_detail = event.get("detail") or "Streaming backend error."
                         status_code = 500
                 except Exception:
                     pass
                 yield line
+            use.finish(_failure(calls.calls()))
         except Exception as e:
-            error_detail = str(e)
+            use.finish(_failure(calls.calls()))
+            error_detail = without_keys(e)
             status_code = 500
             raise
         finally:
@@ -234,10 +344,9 @@ def decompose_stream(
                 error=error_detail,
             )
 
-    return StreamingResponse(
-        audited_events(),
-        media_type="application/x-ndjson",
-    )
+    if daily_limit() is None:
+        return StreamingResponse(audited_events(), media_type=NDJSON)
+    return RunResponse(audited_events(), use)
 
 
 @router.post(
@@ -267,6 +376,7 @@ def decompose(
     start = time.perf_counter()
     started_at = utc_now()
     calls = CallLog()
+    use = _reserve(user, req)
     try:
         result = run_pipeline(
             req.definition,
@@ -275,6 +385,7 @@ def decompose(
             model_name=req.model_name,
             calls=calls,
         )
+        use.finish(Outcome.SUCCESS)
         record_id = _record_run(
             user=user, request=request, req=req, started_at=started_at, result=result, error=None, calls=calls.calls()
         )
@@ -288,6 +399,8 @@ def decompose(
         )
         return DecomposeResponse(**result, record_id=record_id)
     except ValueError as e:
+        use.finish(_failure(calls.calls()))
+        detail = without_keys(e)
         auth_store.audit_event(
             action="decompose",
             user=user,
@@ -295,12 +408,14 @@ def decompose(
             status_code=400,
             latency_ms=round((time.perf_counter() - start) * 1000),
             metadata=_audit_metadata(req, None),
-            error=str(e),
+            error=detail,
         )
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail=detail) from e
     except RuntimeError as e:
+        use.finish(_failure(calls.calls()))
+        detail = without_keys(e)
         record_id = _record_run(
-            user=user, request=request, req=req, started_at=started_at, result=None, error=str(e), calls=calls.calls()
+            user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls()
         )
         auth_store.audit_event(
             action="decompose",
@@ -309,11 +424,12 @@ def decompose(
             status_code=500,
             latency_ms=round((time.perf_counter() - start) * 1000),
             metadata=_audit_metadata(req, record_id),
-            error=str(e),
+            error=detail,
         )
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=detail) from e
     except Exception as e:
-        detail = f"Unexpected backend error: {e}"
+        use.finish(_failure(calls.calls()))
+        detail = f"Unexpected backend error: {without_keys(e)}"
         record_id = _record_run(
             user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls()
         )

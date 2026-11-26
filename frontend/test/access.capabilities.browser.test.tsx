@@ -89,7 +89,7 @@ async function mount(me: unknown, routes: Record<string, () => Response> = {}) {
 
 async function adminLinkShown(): Promise<boolean> {
   await page.getByRole('button', { name: /Account menu for Carol Example/ }).click();
-  await expect.element(page.getByRole('menuitem', { name: 'Sign out' })).toBeVisible();
+  await expect.element(page.getByRole('menuitem', { name: 'Sign out', exact: true })).toBeVisible();
   const shown = page.getByRole('menuitem', { name: 'Admin' }).query() !== null;
   await userEvent.keyboard('{Escape}');
   return shown;

@@ -13,6 +13,7 @@ from starlette.types import Receive, Scope, Send
 from .. import storage
 from ..access.dependencies import AccessRefused, require
 from ..access.policy import Capability
+from ..account_model import approval_of
 from ..accounts import AccountRefused, UnknownAccount
 from ..auth import utc_now
 from ..core.dependencies import API_PREFIX, account_store, auth_store, public_user, require_current_user
@@ -63,6 +64,9 @@ def admin_view(account: Dict[str, Any]) -> Dict[str, Any]:
         "identities": account["identities"],
         "created_at": account["created_at"],
         "last_login_at": account["last_login_at"],
+        "approval": approval_of(account),
+        "approved_at": account["approved_at"],
+        "approved_by": account["approved_by"],
     }
 
 
@@ -258,7 +262,7 @@ def _change_account(
     request: Request,
     admin: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Run one role or block change and audit it; a refused or no-op change writes no audit event."""
+    """Run one role, block or approval change and audit it; a refused or no-op change writes no audit event."""
     reason = req.reason if req else None
     with account_errors():
         account, changed = change(actor=admin, user_id=user_id, reason=reason)
@@ -313,6 +317,52 @@ def admin_unblock_user(
     return _change_account(
         account_store.unblock,
         audit_action="admin.user_unblocked",
+        user_id=user_id,
+        req=req,
+        request=request,
+        admin=admin,
+    )
+
+
+@router.post(
+    f"{API_PREFIX}/admin/users/{{user_id}}/approve",
+    response_model=UserResponse,
+    dependencies=[Depends(require(Capability.REVIEW_APPLICATIONS))],
+    tags=["Admin"],
+)
+def admin_approve_user(
+    user_id: int,
+    request: Request,
+    req: Optional[AccountActionRequest] = None,
+    admin: Dict[str, Any] = Depends(require_current_user),
+) -> Dict[str, Any]:
+    """Approve an account that an identity provider signs in, with an optional note."""
+    return _change_account(
+        account_store.approve,
+        audit_action="admin.user_approved",
+        user_id=user_id,
+        req=req,
+        request=request,
+        admin=admin,
+    )
+
+
+@router.post(
+    f"{API_PREFIX}/admin/users/{{user_id}}/withdraw-approval",
+    response_model=UserResponse,
+    dependencies=[Depends(require(Capability.REVIEW_APPLICATIONS))],
+    tags=["Admin"],
+)
+def admin_withdraw_approval(
+    user_id: int,
+    request: Request,
+    req: Optional[AccountActionRequest] = None,
+    admin: Dict[str, Any] = Depends(require_current_user),
+) -> Dict[str, Any]:
+    """Withdraw an account's approval, with an optional note."""
+    return _change_account(
+        account_store.withdraw_approval,
+        audit_action="admin.approval_withdrawn",
         user_id=user_id,
         req=req,
         request=request,

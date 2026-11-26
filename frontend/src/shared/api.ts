@@ -6,7 +6,9 @@ import { bareOrcid } from '@/lib/orcid';
  * sent, with these additions: the saved ORCID iD routes (`/auth/me/orcids`, D-035), the
  * decomposition record of a signed-in account (D-037): the `/records` routes, `client` on
  * decompose and publish, and `record_id` on publish; and what the session may do
- * (`capabilities` of `/auth/me`) with the admin page's role, block and history routes.
+ * (`capabilities` of `/auth/me`) with the admin page's role, block and history routes. With a
+ * session ROHub started, every unsafe request carries the session's CSRF token, which stays in
+ * this module's memory.
  */
 
 export const API_BASE = '/api';
@@ -30,6 +32,9 @@ export interface AccountIdentity {
   last_login_at: string | null;
 }
 
+/** Where an account stands; local accounts, admins and the owner need no approval. */
+export type Approval = 'approved' | 'waiting' | 'not_needed';
+
 /** An account as the admin page gets it. */
 export interface Account extends User {
   id: number;
@@ -41,6 +46,10 @@ export interface Account extends User {
   identities: AccountIdentity[];
   created_at: string;
   last_login_at: string | null;
+  approval?: Approval;
+  approved_at?: string | null;
+  /** The username of who approved it. */
+  approved_by?: string | null;
 }
 
 /** One change in an account's history, newest first. */
@@ -84,6 +93,12 @@ export type Capabilities = Partial<Record<CapabilityName, CapabilityDecision>>;
 /** Whether the backend allows a capability; one it did not mention counts as refused. */
 export function allows(capabilities: Capabilities, name: CapabilityName): boolean {
   return capabilities[name]?.allowed === true;
+}
+
+/** Why the backend refuses a capability, or null when it does not say that it refuses it. */
+export function refusalMessage(capabilities: Capabilities, name: CapabilityName): string | null {
+  const decision = capabilities[name];
+  return decision && !decision.allowed ? decision.message || 'This account may not do this.' : null;
 }
 
 /** What the admin page shows and changes; any of them opens it. */
@@ -227,6 +242,46 @@ export class ApiError extends Error {
   }
 }
 
+/** What a person sees when the page's CSRF token was no longer the session's: nothing happened, and nothing is repeated. */
+export const OUTDATED_PAGE = 'Your session changed, so nothing was done. This page is up to date again: please repeat the action.';
+
+/* ------------------------------- CSRF protection -------------------------- */
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** The token of a session ROHub started; only ever in memory. */
+let csrfToken: string | null = null;
+/** How the page reads its session again, and how it does when a failure to read must change nothing. */
+let readSessionAgain: () => Promise<unknown> = () => fetchSession();
+let readSessionIfPossible: () => Promise<unknown> = () => fetchSession();
+
+/** Let a page say how it reads its session again after a request was refused as outdated, or for want of an approval. */
+export function onOutdatedSession(read: () => Promise<unknown>, readIfPossible: () => Promise<unknown> = read): () => void {
+  readSessionAgain = read;
+  readSessionIfPossible = readIfPossible;
+  return () => {
+    readSessionAgain = () => fetchSession();
+    readSessionIfPossible = () => fetchSession();
+  };
+}
+
+/** Every request to the API: an unsafe one carries the CSRF token when the session has one. */
+function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  if (!init) return fetch(`${API_BASE}${path}`);
+  const unsafe = !SAFE_METHODS.has(init.method ?? 'GET');
+  const headers = unsafe && csrfToken ? { ...(init.headers ?? {}), 'X-CSRF-Token': csrfToken } : init.headers;
+  return fetch(`${API_BASE}${path}`, headers ? { ...init, headers } : init);
+}
+
+/** The error of an unsuccessful answer; after `csrf_failed` or a missing approval the page has read its session again. */
+async function errorOf(response: Response, data: unknown, fallback: string): Promise<ApiError> {
+  const reason = response.status === 403 && data && typeof data === 'object' ? (data as { reason?: unknown }).reason : null;
+  // An approval may have been withdrawn since the page last asked.
+  const readAgain = reason === 'csrf_failed' ? readSessionAgain : reason === 'approval_required' ? readSessionIfPossible : null;
+  await readAgain?.().catch((error: unknown) => console.error(error));
+  return new ApiError(reason === 'csrf_failed' ? OUTDATED_PAGE : detailOf(data, fallback), response.status);
+}
+
 function detailOf(data: unknown, fallback: string): string {
   if (data && typeof data === 'object' && 'detail' in data) {
     const detail = (data as { detail: unknown }).detail;
@@ -248,7 +303,7 @@ async function readBody(response: Response): Promise<unknown> {
 
 /** POST/GET JSON and return the parsed body; 401 becomes AuthRequiredError. */
 async function requestJson<T>(path: string, init: RequestInit = {}, fallbackError = 'Request failed.'): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await apiFetch(path, {
     ...init,
     headers: {
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
@@ -257,11 +312,14 @@ async function requestJson<T>(path: string, init: RequestInit = {}, fallbackErro
   });
   if (response.status === 401) throw new AuthRequiredError();
   const data = await readBody(response);
-  if (!response.ok) throw new ApiError(detailOf(data, fallbackError), response.status);
+  if (!response.ok) throw await errorOf(response, data, fallbackError);
   return data as T;
 }
 
 /* ---------------------------------- Auth ---------------------------------- */
+
+/** How people sign in on this deployment. */
+export type SignInMethod = 'password' | 'rohub';
 
 export interface Session {
   user: User | null;
@@ -269,24 +327,45 @@ export interface Session {
   authEnabled: boolean | null;
   /** What the session may do; nothing for an anonymous visitor. */
   capabilities: Capabilities;
+  /** What a page may offer to sign in with. */
+  methods: SignInMethod[];
+}
+
+/** The sign-in methods an answer names; a backend that names none signs people in with a password. */
+export function signInMethods(response: Response): SignInMethod[] {
+  const named = (response.headers.get('X-IADOPT-Sign-In') ?? '').split(',').map((name) => name.trim());
+  const methods = (['password', 'rohub'] as const).filter((name) => named.includes(name));
+  return methods.length ? methods : ['password'];
+}
+
+/** Raised when the session could not be read, with the sign-in methods the answer named. */
+export class SessionError extends ApiError {
+  readonly methods: SignInMethod[];
+
+  constructor(message: string, status: number, methods: SignInMethod[]) {
+    super(message, status);
+    this.name = 'SessionError';
+    this.methods = methods;
+  }
 }
 
 /** The signed-in user, whether accounts are enforced and what the session may do; an anonymous visitor gets a null user. */
 export async function fetchSession(): Promise<Session> {
-  const response = await fetch(`${API_BASE}/auth/me`);
-  if (response.status === 401) return { user: null, authEnabled: true, capabilities: {} };
-  const data = (await readBody(response)) as { user?: User; auth_enabled?: unknown; capabilities?: Capabilities };
-  if (!response.ok) throw new ApiError(detailOf(data, 'Could not check your login.'), response.status);
+  const response = await apiFetch('/auth/me');
+  const methods = signInMethods(response);
+  if (response.status === 401) {
+    csrfToken = null;
+    return { user: null, authEnabled: true, capabilities: {}, methods };
+  }
+  const data = (await readBody(response)) as { user?: User; auth_enabled?: unknown; capabilities?: Capabilities; csrf_token?: unknown };
+  if (!response.ok) throw new SessionError(detailOf(data, 'Could not check your login.'), response.status, methods);
+  csrfToken = typeof data.csrf_token === 'string' && data.csrf_token ? data.csrf_token : null;
   return {
     user: data.user ?? null,
     authEnabled: typeof data.auth_enabled === 'boolean' ? data.auth_enabled : null,
     capabilities: data.capabilities ?? {},
+    methods,
   };
-}
-
-/** The signed-in user, or null for an anonymous visitor (401 is not an error here). */
-export async function fetchCurrentUser(): Promise<User | null> {
-  return (await fetchSession()).user;
 }
 
 /**
@@ -299,7 +378,7 @@ export function isRecordedAccount(user: User | null, authEnabled: boolean | null
 }
 
 export async function signIn(username: string, password: string): Promise<User> {
-  const response = await fetch(`${API_BASE}/auth/login`, {
+  const response = await apiFetch('/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -309,9 +388,21 @@ export async function signIn(username: string, password: string): Promise<User> 
   return data.user;
 }
 
-export async function signOut(): Promise<void> {
-  const response = await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
-  if (!response.ok && response.status !== 401) throw new ApiError('Could not sign out. Please try again.', response.status);
+/** End the session; returns the address that signs the person out at ROHub too, or null when there is none. */
+export async function signOut(): Promise<string | null> {
+  const failed = (status: number) => new ApiError('Could not sign out. Please try again.', status);
+  const response = await apiFetch('/auth/logout', { method: 'POST' }).catch((error: unknown) => {
+    console.error(error);
+    throw failed(0);
+  });
+  const data = await readBody(response);
+  if (!response.ok && response.status !== 401) {
+    const error = await errorOf(response, data, '');
+    throw error.message === OUTDATED_PAGE ? error : failed(response.status);
+  }
+  csrfToken = null;
+  const address = (data as { end_session_url?: unknown }).end_session_url;
+  return typeof address === 'string' && address ? address : null;
 }
 
 /** One ORCID iD saved to the signed-in account; `orcid` is the canonical https://orcid.org/ URI. */
@@ -395,7 +486,7 @@ export function normalizeModelOptions(data: unknown): ModelOptions {
 
 export async function fetchModelOptions(): Promise<ModelOptions> {
   try {
-    const response = await fetch(`${API_BASE}/model-options`);
+    const response = await apiFetch('/model-options');
     const data = await readBody(response);
     if (!response.ok) throw new Error(detailOf(data, 'Could not load model options.'));
     return normalizeModelOptions(data);
@@ -407,7 +498,7 @@ export async function fetchModelOptions(): Promise<ModelOptions> {
 }
 
 export async function fetchPreparationOptions(): Promise<PreparationOptions> {
-  const response = await fetch(`${API_BASE}/nanopub/preparation-options`);
+  const response = await apiFetch('/nanopub/preparation-options');
   const data = await readBody(response);
   if (!response.ok) throw new Error(detailOf(data, 'Could not load nanopublication preparation settings.'));
   return data as PreparationOptions;
@@ -430,16 +521,13 @@ export async function streamDecomposition(
   body: DecomposeRequest,
   handlers: { onStart?: () => void; onDelta: (delta: string) => void },
 ): Promise<DecomposeResult> {
-  const response = await fetch(`${API_BASE}/decompose/stream`, {
+  const response = await apiFetch('/decompose/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (response.status === 401) throw new AuthRequiredError();
-  if (!response.ok) {
-    const data = await readBody(response);
-    throw new ApiError(detailOf(data, 'Backend request failed.'), response.status);
-  }
+  if (!response.ok) throw await errorOf(response, await readBody(response), 'Backend request failed.');
   if (!response.body) throw new Error('The backend did not return a readable stream.');
   // Only now replace the previous result, so an expired session never wipes existing work.
   handlers.onStart?.();
@@ -513,12 +601,15 @@ export function retractNanopub(nanopubUri: string, creatorOrcidUri: string): Pro
 
 /* --------------------------------- Events --------------------------------- */
 
-export function postEvent(action: string, payload: Record<string, unknown> = {}, metadata: Record<string, unknown> = {}) {
-  return fetch(`${API_BASE}/events`, {
+export async function postEvent(action: string, payload: Record<string, unknown> = {}, metadata: Record<string, unknown> = {}): Promise<Response> {
+  const response = await apiFetch('/events', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, payload, metadata }),
   });
+  // Nobody asked for an event, so an outdated page only becomes up to date again.
+  if (response.status === 403) await errorOf(response, await readBody(response.clone()), '');
+  return response;
 }
 
 /* ---------------------------------- Admin --------------------------------- */
@@ -555,7 +646,7 @@ export interface AdminStats {
   readiness: { status: string; checks: Record<string, boolean> };
 }
 
-export type AccountChangeRoute = 'block' | 'unblock' | 'grant-admin' | 'revoke-admin';
+export type AccountChangeRoute = 'block' | 'unblock' | 'approve' | 'withdraw-approval' | 'grant-admin' | 'revoke-admin';
 
 export const adminApi = {
   stats: () => requestJson<AdminStats>('/admin/stats'),
@@ -567,15 +658,15 @@ export const adminApi = {
   /** Edit or reset a local account. Roles and blocks have their own routes. */
   updateUser: (id: number, updates: { username: string; display_name: string; email: string } | { password: string }) =>
     requestJson<{ user: Account }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
-  /** Change an account's role or block state; only a block needs the reason. */
+  /** Change an account's role, block state or approval; only a block needs the reason. */
   changeUser: (id: number, change: AccountChangeRoute, reason: string) =>
     requestJson<{ user: Account }>(`/admin/users/${id}/${change}`, { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
   userHistory: (id: number) => requestJson<{ history: AccountChange[] }>(`/admin/users/${id}/history`),
   /** Every decomposition record as a ZIP with summary.csv, edits.csv and records.jsonld (D-041), named as the server names it. */
   exportRecords: async (): Promise<{ blob: Blob; fileName: string }> => {
-    const response = await fetch(`${API_BASE}/admin/records/export`);
+    const response = await apiFetch('/admin/records/export');
     if (response.status === 401) throw new AuthRequiredError();
-    if (!response.ok) throw new ApiError(detailOf(await readBody(response), 'Could not export the records.'), response.status);
+    if (!response.ok) throw await errorOf(response, await readBody(response), 'Could not export the records.');
     const fileName = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1] ?? 'iadopt-records.zip';
     return { blob: await response.blob(), fileName };
   },

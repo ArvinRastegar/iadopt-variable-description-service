@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 from openai import OpenAI
 
 from ..core.config import settings
+from ..core.provider_keys import SENDABLE_BY_SDK, usable_key
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -24,21 +25,22 @@ def get_openai_client() -> OpenAI:
     """Return the cached OpenRouter client, creating it on first use.
 
     Returns:
-        The shared ``OpenAI`` client configured for the OpenRouter base URL.
-
-    Raises:
-        RuntimeError: If ``OPENROUTER_API_KEY`` is not configured.
+        The shared ``OpenAI`` client configured for the OpenRouter base URL. Without a key that
+        can be sent there is none (:func:`_openrouter_key` raises).
     """
     global _openai_client
 
     if _openai_client is None:
-        if not settings.openrouter_api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is not set.")
         _openai_client = OpenAI(
             base_url=OPENROUTER_BASE_URL,
-            api_key=settings.openrouter_api_key,
+            api_key=_openrouter_key(),
         )
     return _openai_client
+
+
+def _openrouter_key() -> str:
+    """Return OpenRouter's key; one that is missing or cannot be sent is refused (:func:`usable_key` raises)."""
+    return usable_key("OPENROUTER_API_KEY", settings.openrouter_api_key, SENDABLE_BY_SDK)
 
 
 def openrouter_chat_completions_url() -> str:
@@ -50,15 +52,11 @@ def openrouter_chat_headers() -> Dict[str, str]:
     """Return the auth and content-type headers for a raw OpenRouter request.
 
     Returns:
-        The header dict with the bearer token.
-
-    Raises:
-        RuntimeError: If ``OPENROUTER_API_KEY`` is not configured.
+        The header dict with the bearer token; without a key that can be sent there are none
+        (:func:`_openrouter_key` raises).
     """
-    if not settings.openrouter_api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not set.")
     return {
-        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Authorization": f"Bearer {_openrouter_key()}",
         "Content-Type": "application/json",
     }
 
