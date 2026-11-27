@@ -12,7 +12,7 @@ import { navigation } from '@/lib/leaving';
 import { cn } from '@/lib/utils';
 import {
   ADMIN_PAGE_CAPABILITIES, adminApi, allows, ApiError, AuthRequiredError, fetchSession, signOut,
-  type Account, type AdminStats, type AuditEvent, type Capabilities, type User,
+  type Account, type AdminStats, type AuditEvent, type Capabilities, type SignInMethod, type User,
 } from '@/shared/api';
 import { Brand } from '@/shared/AppHeader';
 import { displayName } from '@/shared/auth';
@@ -49,6 +49,7 @@ function AdminPage() {
   const { theme } = useTheme();
   const [me, setMe] = React.useState<User | null>(null);
   const [capabilities, setCapabilities] = React.useState<Capabilities>({});
+  const [methods, setMethods] = React.useState<SignInMethod[]>(['password']);
   const [stats, setStats] = React.useState<AdminStats | null>(null);
   const [accounts, setAccounts] = React.useState<Account[] | null>(null);
   const [events, setEvents] = React.useState<AuditEvent[]>([]);
@@ -73,6 +74,7 @@ function AdminPage() {
       }
       setMe(session.user);
       setCapabilities(session.capabilities);
+      setMethods(session.methods);
       const seesActivity = allows(session.capabilities, 'view_activity');
       const seesAccounts = allows(session.capabilities, 'manage_users');
       const [nextStats, nextAccounts, nextAudit] = await Promise.all([
@@ -225,7 +227,7 @@ function AdminPage() {
           >
             <AccountsTable
               accounts={accounts}
-              viewer={{ id: me?.id, role: me?.role, capabilities }}
+              viewer={{ id: me?.id, role: me?.role, capabilities, passwordSignIn: methods.includes('password') }}
               onChanged={load}
               onSignInNeeded={toLogin}
             />

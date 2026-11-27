@@ -302,26 +302,29 @@ class LocalStackTests(unittest.TestCase):
 
 
 class RunbookTests(AccountsTestCase):
-    def test_the_owner_keeps_its_account_by_the_steps_of_runbook_2(self):
-        """Covers: AC-keycloak-deployment-008 (runbook 2's steps for the owner do what they say)."""
+    def test_the_owners_rohub_account_stays_separate_by_the_steps_of_runbook_2(self):
+        """Covers: AC-keycloak-deployment-008 (runbook 2's steps for the owner, as owner-sign-in section 8 amends them:
+        the owner's ROHub account is a separate account the owner approves and makes an admin), AC-owner-sign-in-001."""
         self.bind_owner("--username", "admin")  # after the first release with roles
         self.store.save_orcid(self.admin["id"], "https://orcid.org/0000-0002-1825-0097")
         claims = {"email": "owner@example.org", "email_verified": True, "preferred_username": "owner-at-rohub"}
-        new, created = self.accounts.ensure_account(ISSUER, "subject-owner", claims)  # the first sign-in
-        self.assertTrue(created)
-        code, out = run_cli("legacy", "show", "--username", "owner-at-rohub")
-        self.assertEqual(code, 0, out)
-        shown = json.loads(out)
-        self.assertEqual((shown["account"], [(one["issuer"], one["subject"]) for one in shown["identities"]]), (new["id"], [(ISSUER, "subject-owner")]))
-        code, out = run_cli("legacy", "fold", "--from", str(shown["account"]), "--into", str(self.admin["id"]), "--reason", "The owner's ROHub sign-in")
-        self.assertEqual(code, 0, out)
-        again, created = self.accounts.ensure_account(ISSUER, "subject-owner", claims)  # the next sign-in
-        self.assertEqual((created, again["id"], again["role"]), (False, self.admin["id"], "owner"))
+        new, created = self.accounts.ensure_account(ISSUER, "subject-owner", claims)  # the owner's ROHub sign-in
+        self.assertEqual((created, new["role"]), (True, "user"))
+        owner = self.signed_in("admin", "admin-password")
+        for action in ("approve", "grant-admin"):
+            response = owner.post(f"/api/admin/users/{new['id']}/{action}", json={})
+            self.assertEqual(response.status_code, 200, response.text)
+        again, created = self.accounts.ensure_account(ISSUER, "subject-owner", claims)  # the next ROHub sign-in
+        self.assertEqual((created, again["id"], again["role"]), (False, new["id"], "admin"))
         code, out = run_cli("legacy", "show", "--account", str(self.admin["id"]))
-        self.assertEqual((code, json.loads(out)["saved_orcid_ids"]), (0, 1), out)
+        self.assertEqual((code, json.loads(out)["role"], json.loads(out)["saved_orcid_ids"]), (0, "owner", 1), out)
+        # The owner keeps signing in with the owner's password, through "Owner sign-in".
+        response = self.client().post("/api/auth/owner-login", json={"username": "admin", "password": "admin-password"})
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_binding_the_new_account_first_is_the_dead_end_runbook_2_warns_of(self):
-        """Covers: AC-keycloak-deployment-008 (why the runbook folds instead of binding)."""
+        """Covers: AC-accounts-roles-013 (an account bound as the owner is not folded into another). Runbook 2 no
+        longer folds the owner's ROHub account (owner-sign-in section 8); the dead end it warned of still holds."""
         self.bind_owner("--username", "admin")
         new, _ = self.accounts.ensure_account(ISSUER, "subject-owner", {"email": "owner@example.org", "email_verified": True})
         self.assertEqual(run_cli("owner", "rebind", "--issuer", ISSUER, "--subject", "subject-owner", "--reason", "x")[0], 0)

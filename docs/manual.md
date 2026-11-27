@@ -420,13 +420,29 @@ python -m app.cli owner bind --username NAME
 `owner rebind --username NAME --reason TEXT` moves the binding. The previous owner stays an admin
 until the new owner revokes it. Rebinding to the same account restores an owner account that was
 blocked or demoted outside these rules, for instance by the previous image after a rollback. Both
-commands also take `--account ID`, or `--issuer ISS --subject SUB` for an identity the account holds.
+commands also take `--account ID`, or `--issuer ISS --subject SUB` for an identity the account holds,
+and both end every session of the accounts they bind or unbind.
+
+**The owner's own sign-in.** The owner keeps a password sign-in of their own in every mode, also where
+only ROHub signs everybody else in: **Owner sign-in**, a small link under **Sign in with ROHub** on the
+sign-in page and in the sign-in dialog. Only the owner's account signs in there; every other name gets
+the answer of a wrong password. The owner's sign-in takes 10 tries per network address in 10 minutes,
+then one a minute. Set or change the owner's password in the backend's container:
+
+```bash
+python -m app.cli owner password
+```
+
+On a terminal it asks twice and shows nothing; otherwise it reads one line from standard input. It takes
+15 to 1,024 characters, never a password as an argument, and ends the owner's sessions. Where only ROHub
+signs people in, only this command changes the owner's password, and the purge keeps the owner's password.
 
 **Bootstrap admin.** `IADOPT_BOOTSTRAP_ADMIN_*` create the first admin on an empty database only.
 Once any account exists they change nothing, and the log says so at each start.
 
 **Local accounts.** Until the cutover to the identity provider, admins create local accounts with a
-password on the admin page, always as ordinary users, and edit them.
+password on the admin page, always as ordinary users, and edit them. Where only ROHub signs people in,
+the admin page resets no password, and a local account other than the owner's cannot sign in.
 
 **Approving ROHub accounts.** An account that ROHub signs in waits until an admin or the owner approves
 it on the admin page, which lists the waiting accounts first. Until then it can use the public tools and
@@ -446,12 +462,12 @@ need a bound owner, and the account's history keeps the change with the reason g
 | `legacy show --account ID` (or `--username NAME`) | Prints an account's role, block state, identities, data and history |
 | `legacy link --account ID --issuer ISS --subject SUB --reason TEXT [--keep-admin]` | Lets an identity-provider subject sign in to a local account, keeping its id, records and saved ORCID iDs. An admin stays one only with `--keep-admin` |
 | `legacy fold --from ID --into ID --reason TEXT [--keep-admin]` | Moves the identities of a new, empty identity-provider account into a local account, and blocks the emptied one |
-| `legacy purge-passwords --confirm-cutover` | Ends every password login, in this image and the previous one. Without the flag it only counts |
+| `legacy purge-passwords --confirm-cutover` | Ends every password login except the owner's, in this image and the previous one, and keeps the owner's password. Without the flag it only counts, the owner's not among them |
 
 Link and fold take an account with a password and no identity yet, so do both **before**
 `legacy purge-passwords`. Fold a new account **before** you approve it: an account that was ever approved
-has a history and counts as empty no more. After the purge nobody can sign in to a local account that was
-neither linked nor folded into. A session of an ordinary one that is still open may decompose, save, publish and
+has a history and counts as empty no more. After the purge nobody but the owner can sign in to a local account
+that was neither linked nor folded into. A session of an ordinary one that is still open may decompose, save, publish and
 retract nothing (`password_ended`), and no approval changes that; an admin or the owner keeps what the role gives.
 
 ## Signing in with ROHub
@@ -461,7 +477,7 @@ One switch, `IADOPT_AUTH_MODE`, decides how people sign in:
 | Mode | Password | ROHub |
 |---|---|---|
 | `local` (default) | yes | no; its routes answer 404 |
-| `oidc` | no | yes |
+| `oidc` | only the owner's, through **Owner sign-in** | yes |
 | `both`, only with `IADOPT_ENVIRONMENT=development` | yes | yes |
 
 With authentication enabled and no new setting, nothing changes. Disabled authentication now needs
@@ -484,7 +500,9 @@ A person who signs in with ROHub for the first time gets an ordinary account, fo
 subject, never by email. ROHub must report a verified email. The account waits until an admin approves
 it ([Accounts, admins and the owner](#accounts-admins-and-the-owner)), on a development machine as in
 production. Roles never come from ROHub: the operator binds the owner with `owner bind`, and the owner
-makes admins.
+makes admins. In `oidc` the owner still signs in with a password, through **Owner sign-in**
+([Accounts, admins and the owner](#accounts-admins-and-the-owner)); the switch ends every other password
+sign-in.
 
 "Sign out" ends the session here and then goes to ROHub's sign-out page. "Sign out and clear this
 browser" also deletes the draft, the remembered ORCID iD and the list of publications from it.

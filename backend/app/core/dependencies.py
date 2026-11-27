@@ -36,11 +36,15 @@ PASSWORD_OFF = {
 }
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 LOGIN_PATH = f"{API_PREFIX}/auth/login"
+OWNER_LOGIN_PATH = f"{API_PREFIX}/auth/owner-login"
 ME_PATH = f"{API_PREFIX}/auth/me"
 BACKCHANNEL_LOGOUT_PATH = f"{API_PREFIX}/auth/backchannel-logout"
 
-# Unsafe requests that use no session, so a ROHub session asks for nothing with them.
-SESSIONLESS_REQUESTS = {("POST", LOGIN_PATH), ("POST", BACKCHANNEL_LOGOUT_PATH)}
+# Unsafe requests that use no session, so a session asks for nothing with them.
+SESSIONLESS_REQUESTS = {("POST", LOGIN_PATH), ("POST", OWNER_LOGIN_PATH), ("POST", BACKCHANNEL_LOGOUT_PATH)}
+
+# Where a 401 refuses a name and password, not a request without a session: no sign-in header.
+PASSWORD_ROUTES = {LOGIN_PATH, OWNER_LOGIN_PATH}
 
 # The single process-wide auth store, configured from settings.
 auth_store = AuthStore(
@@ -60,6 +64,7 @@ account_store = AccountStore(auth_store)
 # API paths that bypass the authentication middleware.
 PUBLIC_API_PATHS = {
     LOGIN_PATH,
+    OWNER_LOGIN_PATH,
     f"{API_PREFIX}/auth/verify",
     f"{API_PREFIX}/livez",
     f"{API_PREFIX}/readyz",
@@ -124,9 +129,9 @@ async def authentication_middleware(
     """HTTP middleware enforcing authentication on protected ``/api`` paths.
 
     OPTIONS requests pass through. When auth is enabled, protected API paths
-    require a valid session (else 401), and with a ROHub session an unsafe request
-    needs its CSRF token and the application's origin (else 403); for any API path
-    a resolved user is cached on ``request.state.current_user``.
+    require a valid session (else 401), and with a session that carries a CSRF token
+    an unsafe request needs it and the application's origin (else 403); for any API
+    path a resolved user is cached on ``request.state.current_user``.
 
     Args:
         request: The incoming request.
@@ -142,7 +147,7 @@ async def authentication_middleware(
     response = refuse_request(request, path)
     if response is None:
         response = await call_next(request)
-    if path == ME_PATH or (response.status_code == 401 and path != LOGIN_PATH):
+    if path == ME_PATH or (response.status_code == 401 and path not in PASSWORD_ROUTES):
         response.headers[SIGN_IN_HEADER] = sign_in_settings().methods
     if path == ME_PATH:
         response.headers["Cache-Control"] = "no-store"
@@ -152,7 +157,8 @@ async def authentication_middleware(
 def refuse_request(request: Request, path: str) -> Response | None:
     """Refuse an API request without the session or the CSRF token it needs; otherwise cache its user.
 
-    A password is refused here where only ROHub signs people in, before anything looks at it.
+    A password is refused here where only ROHub signs people in, before anything looks at it; the
+    owner's own route takes it in every mode (owner-sign-in, section 3).
 
     Args:
         request: The incoming request.
@@ -173,8 +179,9 @@ def refuse_request(request: Request, path: str) -> Response | None:
 def passes_csrf(request: Request) -> bool:
     """Return whether an unsafe request comes from this application's own page.
 
-    With a ROHub session it needs that session's token and the public URL's origin; sessions a
-    password started need neither until the cutover (D-046).
+    With a session that carries a token it needs that token and the public URL's origin: a ROHub
+    session, and in ``oidc`` the owner's password session (owner-sign-in, section 4). Other sessions
+    a password started need neither (D-046).
 
     Args:
         request: The incoming request.

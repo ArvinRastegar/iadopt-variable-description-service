@@ -139,6 +139,8 @@ MAX_BUCKETS = 10_000
 SIGN_IN = "sign_in"
 SIGN_IN_RETURN = "sign_in_return"
 BACKCHANNEL_LOGOUT = "backchannel_logout"
+OWNER_SIGN_IN = "owner_sign_in"
+"""The owner's password route; counted after the body's validation, and no setting changes it (owner-sign-in, section 5)."""
 
 Key = Tuple[str, str]
 """What a bucket belongs to within its scope: a kind and a name, so that kinds never share one."""
@@ -152,7 +154,12 @@ class Limit:
     seconds: int
 
 
-_DEFAULT_LIMITS = {SIGN_IN: Limit(120, 300), SIGN_IN_RETURN: Limit(120, 300), BACKCHANNEL_LOGOUT: Limit(600, 300)}
+_DEFAULT_LIMITS = {
+    SIGN_IN: Limit(120, 300),
+    SIGN_IN_RETURN: Limit(120, 300),
+    BACKCHANNEL_LOGOUT: Limit(600, 300),
+    OWNER_SIGN_IN: Limit(10, 600),
+}
 _MAX_LIMIT = Limit(100_000, 86_400)
 _LIMIT_RULE = (
     "IADOPT_SIGN_IN_LIMIT must be <requests>/<seconds> with whole numbers from 1 to "
@@ -298,6 +305,29 @@ def is_limited(scope: str, request: Request) -> Optional[int]:
     return limiter.check(scope, address_key(client_ip(request)))
 
 
+def refuse_if_limited(scope: str, request: Request) -> None:
+    """Count a request against its address's limit and answer 429 beyond it.
+
+    A route calls it itself where the limit counts only requests that passed something first, such as
+    the validation of their body.
+
+    Args:
+        scope: What is limited.
+        request: The request.
+
+    Raises:
+        RequestRefused: 429 with ``Retry-After`` beyond the limit.
+    """
+    wait = is_limited(scope, request)
+    if wait is None:
+        return
+    if RequestRefused not in request.app.exception_handlers:
+        # The application registers the handler; any other app gets it here.
+        request.scope["starlette.exception_handlers"][0][RequestRefused] = request_refused_response
+    detail = f"Too many requests. Try again in {wait} seconds."
+    raise RequestRefused(429, {"detail": detail, "reason": "rate_limited"}, {"Retry-After": str(wait)})
+
+
 def limit(scope: str) -> Callable[[Request], None]:
     """Return the FastAPI dependency that answers 429 beyond an address's limit.
 
@@ -306,14 +336,7 @@ def limit(scope: str) -> Callable[[Request], None]:
     """
 
     def check(request: Request) -> None:
-        wait = is_limited(scope, request)
-        if wait is None:
-            return
-        if RequestRefused not in request.app.exception_handlers:
-            # The application registers the handler; any other app gets it here.
-            request.scope["starlette.exception_handlers"][0][RequestRefused] = request_refused_response
-        detail = f"Too many requests. Try again in {wait} seconds."
-        raise RequestRefused(429, {"detail": detail, "reason": "rate_limited"}, {"Retry-After": str(wait)})
+        refuse_if_limited(scope, request)
 
     return check
 

@@ -40,6 +40,10 @@ MAX_DISPLAY_NAME_CHARS = 200
 MAX_USERNAME_CHARS = 120
 """How much of an identity provider's claims an account keeps."""
 
+MIN_OWNER_PASSWORD_CHARS = 15
+MAX_OWNER_PASSWORD_CHARS = 1024
+"""The length of the owner's password that ``owner password`` sets (owner-sign-in, section 6; D-054)."""
+
 _REFUSALS: Dict[str, Tuple[int, str]] = {
     "blocked": (403, MESSAGES["blocked"]),
     "admin_required": (403, MESSAGES["admin_required"]),
@@ -503,8 +507,12 @@ class AccountStore:
         """Store an account's block state; a block ends its sessions of both kinds."""
         conn.execute("UPDATE users SET is_active = ?, updated_at = ? WHERE id = ?", (int(active), at, user_id))
         if not active:
-            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM oidc_sessions WHERE user_id = ?", (user_id,))
+            self._end_sessions(conn, user_id)
+
+    def _end_sessions(self, conn: sqlite3.Connection, user_id: int) -> None:
+        """End an account's sessions of both kinds: a password's and ROHub's."""
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM oidc_sessions WHERE user_id = ?", (user_id,))
 
     # ------------------------------------------------------------------ #
     # Local accounts, until the cutover (D-045)
@@ -714,7 +722,9 @@ class AccountStore:
         account_id: Optional[int] = None,
         identity: Optional[Tuple[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Bind the owner to an existing account, which becomes active and an admin.
+        """Bind the owner to an existing account, which becomes active and an admin; its sessions end.
+
+        A session opened before the binding never starts to count by it (owner-sign-in, section 4).
 
         Args:
             username: The account, by its username.
@@ -743,7 +753,8 @@ class AccountStore:
     ) -> Dict[str, Any]:
         """Move the owner binding; also restores an owner account blocked or demoted outside the rules.
 
-        The previous owner stays an admin until the new owner revokes it.
+        The previous owner stays an admin until the new owner revokes it. The sessions of both accounts
+        end (owner-sign-in, section 4).
 
         Args:
             reason: Why.
@@ -772,6 +783,8 @@ class AccountStore:
                     "subject": previous["subject"],
                 }
             }
+            if previous_id is not None:
+                self._end_sessions(conn, previous_id)
             return self._bind(conn, account, binding, action="owner_rebound", reason=reason, details=details)
 
     def _owner_target(
@@ -805,7 +818,7 @@ class AccountStore:
         reason: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Store the owner binding and make the account an active admin, with its history row."""
+        """Store the owner binding and make the account an active admin, with its history row; end its sessions."""
         now = utc_iso()
         conn.execute(
             """
@@ -816,6 +829,7 @@ class AccountStore:
         )
         self._write_roles(conn, account, admin=True, at=now)
         self._write_active(conn, account["id"], True, at=now)
+        self._end_sessions(conn, account["id"])
         add_history(
             conn,
             user_id=account["id"],
@@ -832,6 +846,40 @@ class AccountStore:
             at=now,
         )
         return self._account(conn, account["id"])
+
+    def owner_account(self) -> Dict[str, Any]:
+        """Return the account the owner binding resolves to; ``CommandRefused`` when no owner is bound."""
+        with self._transaction() as conn:
+            return self._account(conn, self._check_owner_bound(conn))
+
+    def set_owner_password(self, password: str) -> Dict[str, Any]:
+        """Set the password of the account the owner binding resolves to, whatever identities it holds.
+
+        Records ``owner_password_changed`` in its history and ends its sessions of both kinds
+        (owner-sign-in, section 6).
+
+        Args:
+            password: The new password, 15 to 1,024 characters.
+
+        Returns:
+            The owner's account.
+
+        Raises:
+            CommandRefused: If the password is too short or too long, or no owner is bound.
+        """
+        if not MIN_OWNER_PASSWORD_CHARS <= len(password) <= MAX_OWNER_PASSWORD_CHARS:
+            raise CommandRefused(
+                f"The password must have {MIN_OWNER_PASSWORD_CHARS} to {MAX_OWNER_PASSWORD_CHARS} characters. "
+                "Nothing was changed."
+            )
+        password_hash = self.auth.hash_password(password)  # outside the transaction: hashing takes a while
+        with self._transaction(immediate=True) as conn:
+            owner = self._check_owner_bound(conn)
+            now = utc_iso()
+            conn.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", (password_hash, now, owner))
+            add_history(conn, user_id=owner, action="owner_password_changed", actor_kind="offline", at=now)
+            self._end_sessions(conn, owner)
+            return self._account(conn, owner)
 
     # ------------------------------------------------------------------ #
     # Cutover commands (section 8): offline
@@ -966,23 +1014,28 @@ class AccountStore:
             return self._account(conn, into_id)
 
     def count_usable_passwords(self) -> int:
-        """Return how many accounts still have a usable password."""
+        """Return how many accounts the purge would change: a usable password, the owner's account not counted."""
         with self._transaction() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM users WHERE password_hash <> ?", (UNUSABLE_PASSWORD,)).fetchone()
+            row = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE password_hash <> ? AND id IS NOT ?", (UNUSABLE_PASSWORD, owner_id(conn))
+            ).fetchone()
         return int(row[0])
 
     def purge_passwords(self) -> List[Dict[str, Any]]:
-        """Replace every usable password hash, so that no password login succeeds any more (D-017).
+        """Replace every usable password hash but the owner's, so that no other password login succeeds (D-017).
 
-        ``CommandRefused`` when no owner is bound.
+        The owner keeps a password sign-in of their own (owner-sign-in, section 6). ``CommandRefused`` when
+        no owner is bound.
 
         Returns:
             The accounts whose password was purged.
         """
         with self._transaction(immediate=True) as conn:
-            self._check_owner_bound(conn)
+            owner = self._check_owner_bound(conn)
             now = utc_iso()
-            rows = conn.execute("SELECT id FROM users WHERE password_hash <> ? ORDER BY id", (UNUSABLE_PASSWORD,)).fetchall()
+            rows = conn.execute(
+                "SELECT id FROM users WHERE password_hash <> ? AND id <> ? ORDER BY id", (UNUSABLE_PASSWORD, owner)
+            ).fetchall()
             for row in rows:
                 conn.execute(
                     "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", (UNUSABLE_PASSWORD, now, row["id"])
@@ -990,16 +1043,21 @@ class AccountStore:
                 add_history(conn, user_id=row["id"], action="password_purged", actor_kind="offline", at=now)
             return [self._account(conn, row["id"]) for row in rows]
 
-    def _check_owner_bound(self, conn: sqlite3.Connection) -> None:
+    def _check_owner_bound(self, conn: sqlite3.Connection) -> int:
         """Refuse a cutover command that changes accounts before an owner is bound: they are the owner's.
 
         Without an owner nobody can revoke admin (section 4), so no command may remove it either.
 
+        Returns:
+            The id of the owner's account.
+
         Raises:
             CommandRefused: If no owner is bound.
         """
-        if owner_id(conn) is None:
+        owner = owner_id(conn)
+        if owner is None:
             raise CommandRefused("No owner is bound. Use owner bind first.")
+        return owner
 
     def _named_account(
         self, conn: sqlite3.Connection, *, username: Optional[str] = None, account_id: Optional[int] = None

@@ -1,6 +1,7 @@
-"""Authentication routes: login, verify, me, logout, and the account's saved ORCID iDs.
+"""Authentication routes: login, the owner's login, verify, me, logout, and the account's saved ORCID iDs.
 
-Local username/password authentication and, where it is switched on, the trip to ROHub and back
+Local username/password authentication, the owner's own password sign-in in every mode
+(``components/owner-sign-in.md``) and, where it is switched on, the trip to ROHub and back
 (``app.oidc.flow``), both with HMAC-signed session cookies backed by the ``auth_store`` singleton in
 ``core.dependencies``.
 """
@@ -8,7 +9,7 @@ Local username/password authentication and, where it is switched on, the trip to
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -17,10 +18,11 @@ from ..access.dependencies import require
 from ..access.policy import AccessState, Capability, Decision, decide
 from ..access.state import access_state
 from ..auth import PASSWORD, ROHUB
-from ..core.dependencies import API_PREFIX, auth_store, public_user, require_current_user
+from ..core.dependencies import API_PREFIX, OWNER_LOGIN_PATH, auth_store, public_user, require_current_user
+from ..guards import OWNER_SIGN_IN, refuse_if_limited
 from ..oidc import flow
 from ..schemas import AuthUserResponse, CurrentUserResponse, SavedOrcidsResponse, SignOutResponse
-from ..schemas.requests import LoginRequest, SaveOrcidRequest
+from ..schemas.requests import LoginRequest, OwnerLoginRequest, SaveOrcidRequest
 from ..services.orcid import cached_orcid_display_name, canonical_orcid_uri
 
 router = APIRouter()
@@ -41,21 +43,55 @@ async def request_body(request: Request) -> bytes:
 def login(req: LoginRequest, request: Request) -> JSONResponse:
     """Authenticate a user and set the session cookie; audit success/failure.
 
-    It also ends a ROHub session of the same browser. The authentication middleware refuses it where
-    only ROHub signs people in.
-
-    Raises:
-        HTTPException: 401 if the credentials are invalid.
+    It also ends a ROHub session of the same browser, and answers 401 for invalid credentials. The
+    authentication middleware refuses it where only ROHub signs people in.
     """
     start = time.perf_counter()
     user = auth_store.authenticate(req.username, req.password) if auth_store.enabled else auth_store.user_from_request(request)
+    return password_sign_in(request, req.username, user, start)
+
+
+@router.post(OWNER_LOGIN_PATH, response_model=AuthUserResponse, tags=["Auth"])
+def owner_login(req: OwnerLoginRequest, request: Request) -> JSONResponse:
+    """Sign the owner in with their password, in every sign-in mode (owner-sign-in, section 3).
+
+    Only the account the owner binding resolves to signs in here. Every other request with a valid body
+    gets the password route's refusal, 401, after the same work; the limit counts it after the body's
+    validation and answers 429 beyond it. With authentication disabled it answers as the password route
+    does.
+    """
+    start = time.perf_counter()
+    if not auth_store.enabled:
+        return password_sign_in(request, req.username, auth_store.user_from_request(request), start, route="owner")
+    refuse_if_limited(OWNER_SIGN_IN, request)
+    user = auth_store.authenticate_owner(req.username, req.password)
+    return password_sign_in(request, req.username, user, start, route="owner")
+
+
+def password_sign_in(
+    request: Request, username: str, user: Optional[Dict[str, Any]], start: float, *, route: Optional[str] = None
+) -> JSONResponse:
+    """Answer a password sign-in: start the session and end a ROHub one of the same browser, or refuse; audit either.
+
+    Args:
+        request: The request.
+        username: The name as given, for the audit.
+        user: The account that signed in, or ``None``.
+        start: When the request began, for its latency.
+        route: ``owner`` for the owner's route, recorded in the audit's metadata.
+
+    Raises:
+        HTTPException: 401 without an account.
+    """
+    metadata = {"route": route} if route else None
     if not user:
         auth_store.audit_event(
             action="auth.login_failed",
             request=request,
             status_code=401,
             latency_ms=round((time.perf_counter() - start) * 1000),
-            request_payload={"username": req.username},
+            request_payload={"username": username},
+            metadata=metadata,
             error="Invalid username or password.",
         )
         raise HTTPException(status_code=401, detail="Invalid username or password.")
@@ -70,8 +106,9 @@ def login(req: LoginRequest, request: Request) -> JSONResponse:
         request=request,
         status_code=200,
         latency_ms=round((time.perf_counter() - start) * 1000),
-        request_payload={"username": req.username},
+        request_payload={"username": username},
         response_payload={"user": public_user(user)},
+        metadata=metadata,
     )
     return response
 

@@ -17,12 +17,19 @@ from ..account_model import approval_of
 from ..accounts import AccountRefused, UnknownAccount
 from ..auth import utc_now
 from ..core.dependencies import API_PREFIX, account_store, auth_store, public_user, require_current_user
+from ..oidc.settings import current as sign_in_settings
 from ..record_export import export_file_name, iter_file, write_export
 from ..schemas import AccountHistoryResponse, AdminStatsResponse, AuditResponse, UserResponse, UsersResponse
 from ..schemas.requests import AccountActionRequest, AdminCreateUserRequest, AdminUpdateUserRequest
 from .system import readiness_checks
 
 router = APIRouter()
+
+PASSWORD_BY_COMMAND = {
+    "detail": "Passwords are changed with the owner password command.",
+    "reason": "password_by_command",
+}
+"""Where only ROHub signs people in, no route sets a password (owner-sign-in, section 6)."""
 
 
 class ExportResponse(StreamingResponse):
@@ -223,8 +230,14 @@ def admin_update_user(
 
     Audited with the password redacted. Roles and blocks have their own routes, so ``roles`` and
     ``is_active`` answer 400, as an invalid value does.
+
+    Raises:
+        AccessRefused: 400 ``password_by_command`` where only ROHub signs people in and the body names
+            ``password``, before the account is looked up (owner-sign-in, section 6).
     """
     updates = req.model_dump(exclude_unset=True)
+    if "password" in updates and not sign_in_settings().password:
+        raise AccessRefused(400, PASSWORD_BY_COMMAND)
     with account_errors():
         account = account_store.update_local(actor=admin, user_id=user_id, updates=updates)
     audit_payload = dict(updates)

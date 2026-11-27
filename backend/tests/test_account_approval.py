@@ -239,6 +239,7 @@ class Rules:
         ada, account_id = self.waiting("ada")
         code, out = run_cli("owner", "bind", "--username", "admin")
         self.assertEqual(code, 0, out)
+        self.login(self.admin, "admin", "admin-password")  # owner bind ended the session (owner-sign-in, section 4)
         self.act("grant-admin", account_id)
         self.assertEqual(self.decompose(ada).status_code, 200)
         self.assert_capabilities(self.capabilities(ada), [C.PUBLIC_TOOLS, C.SESSION, C.ACCOUNT_DATA, *OWN_USE, *ADMIN],
@@ -254,6 +255,7 @@ class Rules:
         self.assert_waits(ben)
         code, out = run_cli("owner", "rebind", "--account", str(ben_id), "--reason", "A test.")
         self.assertEqual(code, 0, out)
+        sign_in_as(ben, ben_id)  # owner rebind ended the session (owner-sign-in, section 4)
         self.assertEqual(self.decompose(ben).status_code, 200)
 
     def test_a_local_account_counts_as_approved_until_it_is_linked_and_is_then_approved_by_a_click(self):
@@ -263,6 +265,7 @@ class Rules:
         self.assertEqual(self.decompose(bob).status_code, 200)
         code, out = run_cli("owner", "bind", "--username", "admin")
         self.assertEqual(code, 0, out)
+        self.login(self.admin, "admin", "admin-password")  # owner bind ended the session (owner-sign-in, section 4)
         code, out = run_cli("legacy", "link", "--account", str(account["id"]), "--issuer", ISSUER, "--subject", "bob-subject", "--reason", "A test.")
         self.assertEqual(code, 0, out)
         self.assert_waits(bob)

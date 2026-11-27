@@ -63,6 +63,11 @@ export interface Viewer {
   id?: number;
   role?: Role;
   capabilities: Capabilities;
+  /**
+   * Whether this deployment signs people in with a password, so that an admin may reset one; where
+   * only ROHub signs people in, the owner's password is changed on the server (owner-sign-in).
+   */
+  passwordSignIn?: boolean;
 }
 
 /** The accounts that wait for an approval, the oldest first; a blocked one does not wait. */
@@ -92,7 +97,10 @@ function actionsFor(account: Account, viewer: Viewer): Action[] {
     else if (!account.blocked) actions.push('make-admin');
   }
   if (allows(viewer.capabilities, 'manage_users')) {
-    if (account.local && (byOwner || isSelf || ordinary)) actions.push('edit', 'reset');
+    if (account.local && (byOwner || isSelf || ordinary)) {
+      actions.push('edit');
+      if (viewer.passwordSignIn !== false) actions.push('reset');
+    }
     actions.push('history');
   }
   return actions;

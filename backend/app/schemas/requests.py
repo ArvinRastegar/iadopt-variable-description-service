@@ -202,6 +202,16 @@ class LoginRequest(BaseModel):
     password: NonEmptyStr
 
 
+class OwnerLoginRequest(BaseModel):
+    """Credentials for ``POST /api/auth/owner-login`` (owner-sign-in, section 3).
+
+    Bounded, so that the work of a refusal and the username its audit row keeps stay small.
+    """
+
+    username: str = Field(..., min_length=1, max_length=120)
+    password: str = Field(..., min_length=1, max_length=1024)
+
+
 class SaveOrcidRequest(BaseModel):
     """Input for ``POST /api/auth/me/orcids``.
 

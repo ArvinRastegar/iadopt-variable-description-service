@@ -2,7 +2,8 @@
 
 ``python -m app.cli db status|migrate|backup|reclaim`` (``components/app-storage.md``, section 7),
 ``owner bind|rebind`` and ``legacy show|link|fold|purge-passwords``
-(``components/accounts-roles.md``, sections 5 and 8), ``oidc check``
+(``components/accounts-roles.md``, sections 5 and 8), ``owner password``
+(``components/owner-sign-in.md``, section 6), ``oidc check``
 (``components/keycloak-deployment.md``, section 5). Each is safe beside a running backend. Exit
 codes: 0 on success, 1 on a refusal or failure (with the error's name and message), 2 on a usage
 error.
@@ -11,6 +12,7 @@ error.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sqlite3
 import sys
@@ -18,7 +20,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 from urllib.parse import urlsplit
 
 from . import storage
-from .accounts import CommandRefused
+from .accounts import MAX_OWNER_PASSWORD_CHARS, MIN_OWNER_PASSWORD_CHARS, CommandRefused
 from .core.dependencies import account_store, auth_store
 from .core.logging import configure_logging
 from .oidc import check as oidc_check
@@ -93,6 +95,51 @@ def _owner_rebind(arguments: argparse.Namespace) -> None:
     print(f"The owner is now {account['username']} (account {account['id']}).")
 
 
+def _owner_password(_: argparse.Namespace) -> None:
+    """Set the owner's password: asked twice on a terminal, else one line of standard input."""
+    account_store.owner_account()  # refuses before anything is asked when no owner is bound
+    account = account_store.set_owner_password(_new_password())
+    _audit("owner.password_changed", account_id=account["id"])
+    print(
+        f"The password of the owner's account {account['username']} (account {account['id']}) is changed "
+        "and its sessions ended."
+    )
+
+
+def _new_password() -> str:
+    """Read a new password, never from an argument.
+
+    On a terminal it is asked twice without echo; otherwise it is one line of standard input without its
+    line ending. ``CommandRefused`` when nothing was given, the two entries differ, or the length is
+    outside the bounds.
+    """
+    stdin = sys.stdin
+    if stdin is not None and stdin.isatty():
+        try:
+            password = getpass.getpass("New password of the owner: ")
+            again = getpass.getpass("The same password again: ")
+        except EOFError:
+            raise CommandRefused("No password was given. Nothing was changed.") from None
+        if password != again:
+            raise CommandRefused("The two entries differ. Nothing was changed.")
+    else:
+        password = _without_line_ending(stdin.readline() if stdin is not None else "")
+    if not MIN_OWNER_PASSWORD_CHARS <= len(password) <= MAX_OWNER_PASSWORD_CHARS:
+        raise CommandRefused(
+            f"The password must have {MIN_OWNER_PASSWORD_CHARS} to {MAX_OWNER_PASSWORD_CHARS} characters. "
+            "Nothing was changed."
+        )
+    return password
+
+
+def _without_line_ending(line: str) -> str:
+    """Return a line read from standard input without its line ending; nothing else is stripped."""
+    for ending in ("\r\n", "\n"):
+        if line.endswith(ending):
+            return line[: -len(ending)]
+    return line
+
+
 def _owner_target(arguments: argparse.Namespace) -> Dict[str, Any]:
     """The account an owner command names, as the account store takes it."""
     identity = (arguments.issuer, arguments.subject) if arguments.issuer else None
@@ -135,17 +182,20 @@ def _legacy_fold(arguments: argparse.Namespace) -> None:
 
 
 def _legacy_purge_passwords(arguments: argparse.Namespace) -> None:
-    """Replace every usable password hash, or say how many there are."""
+    """Replace every usable password hash but the owner's, or say how many there are."""
     if not arguments.confirm_cutover:
         print(
-            f"{account_store.count_usable_passwords()} accounts have a usable password. Nothing was changed; "
-            "pass --confirm-cutover once the owner confirmed the cutover."
+            f"{account_store.count_usable_passwords()} accounts besides the owner's have a usable password. "
+            "Nothing was changed; pass --confirm-cutover once the owner confirmed the cutover."
         )
         return
     purged = account_store.purge_passwords()
     for account in purged:
         _audit("legacy.password_purged", account_id=account["id"])
-    print(f"Purged the passwords of {len(purged)} accounts. No password login succeeds any more.")
+    print(
+        f"Purged the passwords of {len(purged)} accounts and kept the owner's password. "
+        "No other password login succeeds any more."
+    )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -180,6 +230,12 @@ def _parser() -> argparse.ArgumentParser:
     rebind = _command(owner, "rebind", _owner_rebind, "Move the binding, or restore the owner's account.")
     _add_owner_target(rebind)
     _add_reason(rebind)
+    _command(
+        owner,
+        "password",
+        _owner_password,
+        "Set the owner's password: asked twice on a terminal, else one line of standard input; ends their sessions.",
+    )
 
     legacy = _group(groups, "legacy", "Local password accounts at the cutover to the identity provider.")
     show = _command(legacy, "show", _legacy_show, "Print an account's role, identities, data and history.")
@@ -197,7 +253,7 @@ def _parser() -> argparse.ArgumentParser:
     fold.add_argument("--into", type=int, required=True, metavar="ID")
     _add_reason(fold)
     _add_keep_admin(fold)
-    purge = _command(legacy, "purge-passwords", _legacy_purge_passwords, "End password logins for good.")
+    purge = _command(legacy, "purge-passwords", _legacy_purge_passwords, "End every password login but the owner's.")
     purge.add_argument("--confirm-cutover", action="store_true", help="without it nothing is changed")
 
     oidc = _group(groups, "oidc", "The identity provider people sign in with (ROHub).")
