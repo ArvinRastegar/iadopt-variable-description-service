@@ -1,0 +1,676 @@
+{
+ "source": "iadopt-lab answer_form_check.py, arm named-first (the conventions test's plain prompt)",
+ "head": "Classify the scientific variable defined below with the I-ADOPT patterns.\nReturn one JSON object with these keys, in this order: \"object_of_interest\" (the entity whose property is measured, in a few words), \"matrix_entity\" (the entity that is the matrix, in a few words, or null when there is no matrix), \"restrictions\" (a list of the phrases of the definition that narrow the variable; [] when there are none), \"property\" (one property pattern number), \"matrix\" (one matrix pattern number, or null when there is no matrix), \"context\" (true or false: is a context object needed), \"modifier\" (true or false: is a statistical modifier involved) and \"constraints\" (a list of the constraint type names of the restrictions; [] when there are none). Return the JSON only.\n\nPROPERTY PATTERNS\n101 nominal: A nominal variable has values of equal importance that cannot be ranked in any particular order (non-ordinal), e.g., species of pests, colors. The values of these variables are usually indicated by words, ideally using controlled lists.\n102 ordinal: An ordinal variable has values corresponding to a list of concepts that can be put in a certain order but are not measured. They are generally qualitative, and the classes can therefore only be ordered in relation to each other. Dates are also ordinal values.\n103 boolean: A binary or boolean property allows exactly two values: true/false, good/bad. Quality flags are boolean.\n104 count: Assigns to an entity a non-negative integer equal to the number of distinct related entities satisfying a declared relation and scope.\n105 discrete: A unitless property with integer values (excluding counts) that are physically enforced. They can be constants or variable numbers.\n106 length: Length of a discrete object. Length is a fundamental property. Examples are width, depth, height, circumference.\n107 length ref: Length in relation to another object. Length is a fundamental property. Examples are width, depth, height, circumference.\n108 distance: Length between two objects.\n109 fundamental: Fundamental properties are physical quantities that are conventionally accepted as functionally independent of all others, excluding lengths. These are thermodynamic temperature, time, mass, amount of substance, luminous intensity, electric current.\n110 fraction: A fraction is a ratio comparing a part to the whole where the quantities (quantitative property) are of the same kind.\n111 property (cover): Cover expresses the fraction of a total reference area that is occupied by the Object of Interest.\n112 geometric ratio: A unitless ratio comparing two geometric properties of the same kind to describe the intrinsic, static shape of a single object (e.g., Aspect Ratio).\n113 dimensionless physical ratio: A quantity that describes physical relationships or the physical state of a system without an associated physical unit.\n114 ratioless derived: A derived property without ratio-transformation from fundamental quantities like volume or area.\n115 normalized: A relative quantity whose value is expressed relative to an explicit baseline, reference standard, or nominal state, rather than as an explicit physical ratio of two variable entities.\n116 angle: An angle measured against a local/arbitrary reference frame (e.g., the angle between two intersecting pipes, or the joint angle of a knee).\n117 direction: A spatial or angular measurement indicating the orientation, heading, or trajectory of an entity relative to a specified reference frame (vector).\n118 event rate: A temporal property measuring the number of discrete, countable events or occurrences that take place within a specified period of time.\n120 velocity: Vector property that measures the rate of change of an object's position with respect to time, combining both speed (magnitude) and direction.\n121 massic number density: Count of individual entities per mass of a medium.\n122 massic amount of substance: Mole per mass including molality (denominator is mass of the solvent component) and substance content (denominator is mass of the total mixture).\n123 lineic density: Quantity per length, example is linear mass density.\n124 normalized count: Count per entity.\n125 volumic number density: Count per volume.\n126 intrinsic: A property that is inherent to the substance's chemical composition and molecular structure, like plasticity, volumic density, absorbance.\n127 areal density: Quantity per area.\n128 concentration: Concentration describes how much of one substance (the solute) is present in another substance (the solvent) as a volume. Examples are mass and amount of substance concentration.\n129 flux simplified: A ratio rate with an energy flow represented in a simplified way.\n130 flux simple: A ratio rate with a material flow from a source to a target while the denominator is represented by an area.\n131 flux complex: A ratio rate with a material flow from a source to a target. Complex representation is needed when there needs to be a constraint on the denominator.\n132 index: An index acts as a proxy property that normalizes data against a specific base point or reference value to provide relative context rather than absolute measurement. While it sometimes aggregates multiple variables into a single score, its primary function is to make diverse data sets comparable over time or across different subjects.\n133 distance ref: Length between two objects, where one of the two is constraint.\n134 energy per mole: Energy per amount of substance (molar energy).\n135 massic activity: Radioactivity content of chemical substance per mass.\n136 statistical property: A statistical measure becomes a statistical property when it changes the dimension of the property of the measurement like variance and confidence interval.\n137 instant: A time-instant value, e.g. 2026-08-15T13:29:14+02:00\n138 interval: Properties resulting in quantitative numbers that represent ordered points along a continuous scale with equal, measurable distances between adjacent units, but without a true absolute zero point.\n139 probability: Probability is a numerical measure of how likely a specific event is to occur. It quantifies chance or uncertainty on a scale strictly bounded between 0 and 1 (or 0% and 100%).\n140 atomic derived property: A property that acts as an atomic (scalar) concept, derived from fundamental physical dimensions. Examples are acceleration and speed.\n142 areic amount of substance: Amount of substance per area.\n\nMATRIX PATTERNS\n40 embedding material: The matrix must be of a different material than the object of interest. If the material is the same, the description component has a context object role.\n41 natural container: A matrix is required when the object of interest is contained in a natural body.\n42 artificial container: A matrix is required when the object of interest is contained in an artificial vessel.\n43 natural process: A phenomenon in which the object is involved.\n44 reference area: Is an area that acts as reference like a study area.\n45 flow: Flow of material from one source to a target.\n\nCONSTRAINT TYPES\nA constraint is an explicit restriction in the definition that narrows the property, the object of interest, the matrix or the statistical modifier. The property, the object of interest and the matrix themselves are not constraints.\nage: restricts the human subject or population to a defined age interval, specific age value, or life stage.\nagent: an entity—either human, artificial, biological, or organizational—that senses its environment and acts upon it autonomously to achieve a specific goal or purpose.\ncause: indicates the cause that explains why the constrained component occurs or holds\nclassification: systematic arrangement in groups or categories according to established criteria\ncomposition: what the constrained component consists of: its constituents or the mixture it is\ncondition: a contextual circumstance or environmental feature that limits or qualifies the constrained component\ncriterion: A single principle, standard, or rule used to make a judgment or decision.\ndiameter: the length of a straight line through the center of an object or space\ndirection: specifies the spatial orientation, vector heading, or flow orientation (e.g., downward, northward, incoming, outward) of the observed phenomenon relative to a spatial coordinate system, physical boundary, or reference feature.\neducation: the systematic process of facilitating learning, acquiring knowledge, skills, values, beliefs, and habits through instruction, training, research, or discussion.\nevent: identifies a specific occurrence, process, or life-stage event (e.g., birth, flooding, surgical procedure) that bounds or triggers the observation, serving as a contextual anchor when explicit calendar time or duration is unknown or non-applicable.\nlocation: provides a location-specific information about the constrained component\nlocomotion state: refers to the distinct physiological, kinematic, or mechanical mode of self-propelled movement exhibited by an organism\nmaterial type: provides a material type information about the constrained component\nmin temperature: a minimum temperature that the constrained component must reach for it to count\nnormalization: specifies the reference quantity to which a measurement is rescaled.\norder: An order relation that formalizes the notion of sorting elements.\npart: specifies a structural, anatomical, or biological sub-component (e.g., leaf, liver, root, surface layer) of an entity.\nphysical form: refers to the visible, structural, or material state of an object or substance, describing its physical appearance, state of matter, or spatial shape\nprocess: refers to a process that occurs when measuring the property Or: a series of systematic, ordered actions or steps taken to achieve a specific end or result.\npurity: specifies the degree of quality or purity of a substance or generally of the component\npurpose: the purpose for which the constrained component is made, carried out or used\nquantity: specifies the quantity in which the entity occurs\nrange: provides the range of allowed values\nrating: an evaluation, assessment, or classification of something against a standardized scale or set of criteria.\nreference: provides a reference point or information for the constrained component\nregion: specifies an area of land or space that shares unifying characteristics, setting it apart from surrounding areas\nrelationship: a significant connection, association, or involvement between two or more people, groups, or entities, characterized by mutual interaction, influence, or relevance.\nreporting frequency: defines how often a final data point is reported\nresistivity: an intrinsic physical property of a material that measures how strongly it opposes or resists the flow of electric current.\nrole: indicates the role a person might have in the context of the variable\nsampling frequency: provides the sampling frequency that applies for the constrained component\nsource: specifies the source, provenance, or starting point of the constrained component\nspatial distribution: defines the domain or criteria over which a statistical measure is calculated\nspatial extent: indicates the spatial coverage within which the constrained component applies\nstate: indicates the physical, chemical or qualitative condition, including phases, of the constrained component\ntemporal extent: indicates the temporal coverage within which the constrained component applies\ntemporal reference: a linguistic mechanism, point of origin, or benchmark used to locate events, actions, or states in time relative to another point in time.\nthickness: the thickness of the layer or film of the constrained component on which the variable is measured\nthreshold: defines the value limit that triggers a quality flag, indicating whether the measurement satisfies the threshold criterion.\ntime: provides time-specific information about the constrained component\nvicinity: the surrounding area, neighborhood, or general proximity near a specific place or landmark.\nvolume: the volume of the sample or portion of the constrained component on which the value is measured\nwavelength: the distance in the line of advance of a wave from any one point to the next point of corresponding phase\n",
+ "examples": [
+  {
+   "id": "urn:iadopt-lab:variable:020b54e6471071c90d4962ba7bbbd76deb2a1e8a522b8cb09b74d40afa2547a9",
+   "definition": "Primary function of building",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"function\", \"hasObjectOfInterest\": \"building\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"order: primary\", \"on\": \"function\"}]}",
+   "patterns": "{\"object_of_interest\": \"building\", \"matrix_entity\": null, \"restrictions\": [\"primary\"], \"property\": 101, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"order\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:0a391d2792b061bfbff2612a5dddfa79eaa489a291395190800f951f47cbf723",
+   "definition": "level of highest education",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"degree\", \"hasObjectOfInterest\": \"education\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"criteria: highest\", \"on\": \"degree\"}]}",
+   "patterns": "{\"object_of_interest\": \"education\", \"matrix_entity\": \"person\", \"restrictions\": [\"highest\"], \"property\": 102, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"criterion\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:0f3e9954aef6497d1eaeeb026c643c23dc0e24127c4f4a26938827039cabe944",
+   "definition": "Number of nights in a 3-star hotel near the sea shore",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"night\", \"hasMatrix\": \"hotel\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"rating: three star\", \"on\": \"hotel\"}, {\"label\": \"vicinity: near the sea shore\", \"on\": \"hotel\"}]}",
+   "patterns": "{\"object_of_interest\": \"night\", \"matrix_entity\": \"hotel\", \"restrictions\": [\"three star\", \"near the sea shore\"], \"property\": 104, \"matrix\": 42, \"context\": false, \"modifier\": false, \"constraints\": [\"rating\", \"vicinity\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:115cb337bc5127dc70c162b03b94980fe37fccb8b939995636461081f58faf60",
+   "definition": "Mass flux of carbon into soil from vegetation due to senescence, measured in kg m-2 s-1. ",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass flux density\", \"hasObjectOfInterest\": \"carbon\", \"hasMatrix\": {\"AsymmetricSystem\": \"vegetation → soil\", \"hasSource\": \"vegetation\", \"hasTarget\": \"soil\"}, \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"process: senescence\", \"on\": \"vegetation\"}]}",
+   "patterns": "{\"object_of_interest\": \"carbon\", \"matrix_entity\": \"vegetation → soil\", \"restrictions\": [\"senescence\"], \"property\": 130, \"matrix\": 45, \"context\": false, \"modifier\": false, \"constraints\": [\"cause\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:1242d6077c15153ff51859811733dc782e572fd06a9f1584f727d5d39ecef9e4",
+   "definition": "The total area (in ha) of feral-free enclosures. See https://linked.data.gov.au/def/nrm/d936bfd5-d2f9-5107-bbf7-2bd18bbab42b",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"area\", \"hasObjectOfInterest\": \"enclosure\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: free of feral\", \"on\": \"enclosure\"}]}",
+   "patterns": "{\"object_of_interest\": \"enclosure\", \"matrix_entity\": null, \"restrictions\": [\"free of feral\"], \"property\": 140, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:12b00c359adcf48b4a1dbef25c0e123e0dd41230bc29efcdf160b201be399f0a",
+   "definition": "Average number of persons without high school diploma during the last three years residing in a statistical unit which is defined as a grouping of homogeneous neighboring building blocks",
+   "decomposition": "{\"hasStatisticalModifier\": \"arithmetic mean\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"person\", \"hasMatrix\": \"\", \"hasContextObject\": \"urban area\", \"hasConstraint\": [{\"label\": \"condition: registered as resident in the previous three years\", \"on\": \"person\"}, {\"label\": \"education: without high school diploma\", \"on\": \"person\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"person\", \"matrix_entity\": null, \"restrictions\": [\"registered as resident in the previous three years\", \"without high school diploma\", \"per statistical unit\"], \"property\": 104, \"matrix\": null, \"context\": true, \"modifier\": true, \"constraints\": [\"condition\", \"education\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:12d0bb86102fa82e6c55f1b3f178abd9fd14fb55a497ab442c94ed3ecd41e539",
+   "definition": "The measure of an ectotherm animal's baseline metabolic rate (i.e. non-active, non-stressed) measured by the milligrams of oxygen consumed in a period of time of one hour.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass\", \"hasObjectOfInterest\": \"oxygen\", \"hasMatrix\": \"ectotherm organism\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: per hour\", \"on\": \"mass\"}, {\"label\": \"process: metabolism\", \"on\": \"oxygen\"}, {\"label\": \"state: inactive\", \"on\": \"ectotherm organism\"}, {\"label\": \"state: unstressed\", \"on\": \"ectotherm organism\"}]}",
+   "patterns": "{\"object_of_interest\": \"oxygen\", \"matrix_entity\": \"ectotherm organism\", \"restrictions\": [\"per hour\", \"metabolism\", \"inactive\", \"unstressed\"], \"property\": 115, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"normalization\", \"process\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:139c80cce9c15999097bed86c8562e543eed77f8528d532f01a00f90778c0043",
+   "definition": "Type of blood in a blood sample",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"phenotype\", \"hasObjectOfInterest\": \"blood\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"blood\", \"matrix_entity\": \"person\", \"restrictions\": [], \"property\": 101, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:17b44234089af8f003abef095347985e0d50b8cc418721ed2058c26b2dff1556",
+   "definition": "The compass direction in degrees positive clockwise from TrueNorth of the component of water velocity in a water body along radial lines centered at the HFR antenna.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"plane angle\", \"hasObjectOfInterest\": \"radial velocity of sea water\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"reference: True North\", \"on\": \"plane angle\"}]}",
+   "patterns": "{\"object_of_interest\": \"radial velocity of sea water\", \"matrix_entity\": null, \"restrictions\": [\"True North\"], \"property\": 117, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:1a039be29796c65ca05176b0d2752323eeae0711597ee9b9fb034a72e08f56e5",
+   "definition": "solubility (g/L) of 99.82 (w/w) pure benzene in deionized water at phase equilibrium and 298.15 K",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"benzene / water\", \"hasNumerator\": \"benzene\", \"hasDenominator\": \"water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at 298.15 K  thermodynamic temperature\", \"on\": \"mass concentration\"}, {\"label\": \"purity: 99.82 (w/w)\", \"on\": \"benzene\"}, {\"label\": \"resistivity: > 1 MOhm cm\", \"on\": \"water\"}, {\"label\": \"state: dissolved\", \"on\": \"benzene\"}]}",
+   "patterns": "{\"object_of_interest\": \"benzene / water\", \"matrix_entity\": null, \"restrictions\": [\"at 298.15 K  thermodynamic temperature\", \"99.82 (w/w)\", \"> 1 MOhm cm\", \"dissolved\"], \"property\": 128, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"purity\", \"resistivity\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:1e8966f5353f9625d602da4a30952ce6b4e93d27cd2b697cbc207f5e2412edd3",
+   "definition": "Fraction of flooded area above 30 cm water level within a 5 m buffer around an affected building in an urban area",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"area fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"flooded area / total area\", \"hasNumerator\": \"flooded area\", \"hasDenominator\": \"total area\"}, \"hasMatrix\": \"urban area\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: flooded > 30 cm above ground\", \"on\": \"flooded area\"}, {\"label\": \"spatial extent: 5 m buffer around buildings\", \"on\": \"flooded area / total area\"}]}",
+   "patterns": "{\"object_of_interest\": \"flooded area / total area\", \"matrix_entity\": \"urban area\", \"restrictions\": [\"flooded > 30 cm above ground\", \"5 m buffer around buildings\"], \"property\": 111, \"matrix\": 44, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"spatial extent\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:1fb91561bbe2053641717975757bd26625f7ed3783ecec84fb9bf961c20d8c5c",
+   "definition": "Size of planktic foraminifers in surface sediments, see https://doi.pangaea.de/10.1594/PANGAEA.126730",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"size\", \"hasObjectOfInterest\": \"planctonic foraminifera\", \"hasMatrix\": \"sediment\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: surface\", \"on\": \"sediment\"}]}",
+   "patterns": "{\"object_of_interest\": \"planctonic foraminifera\", \"matrix_entity\": \"sediment\", \"restrictions\": [\"surface\"], \"property\": 101, \"matrix\": 40, \"context\": false, \"modifier\": false, \"constraints\": [\"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:21171d68ac4530e2bd43a74c04c52ee72c7a7ba44ffd0f826b0cc7d47361c4c5",
+   "definition": "The amount of docosahexaenoic acid relative to dry weight in an organism.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"amount of substance per mass\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"docosahexaenoic acid / organism\", \"hasNumerator\": \"docosahexaenoic acid\", \"hasDenominator\": \"organism\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"state: dry\", \"on\": \"organism\"}]}",
+   "patterns": "{\"object_of_interest\": \"docosahexaenoic acid / organism\", \"matrix_entity\": null, \"restrictions\": [\"dry\"], \"property\": 122, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:2565d5b011b0e824979513379a0b892aa101b0af9f5b1ccf5b584bb06decd20a",
+   "definition": "energy released upon combustion of 99.98(w/w) pure hexanol in air at atmospheric pressure and atmospheric oxygen level.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"molar energy\", \"hasObjectOfInterest\": \"hexanol (C6H14O)\", \"hasMatrix\": \"combustion reaction\", \"hasContextObject\": \"air\", \"hasConstraint\": [{\"label\": \"condition: at 1 atm pressure\", \"on\": \"combustion reaction\"}, {\"label\": \"condition: at atmospheric oxygen level\", \"on\": \"combustion reaction\"}, {\"label\": \"purity: 99.98(w/w)\", \"on\": \"hexanol (C6H14O)\"}]}",
+   "patterns": "{\"object_of_interest\": \"hexanol (C6H14O)\", \"matrix_entity\": \"combustion reaction\", \"restrictions\": [\"at 1 atm pressure\", \"at atmospheric oxygen level\", \"99.98(w/w)\"], \"property\": 134, \"matrix\": 43, \"context\": true, \"modifier\": false, \"constraints\": [\"condition\", \"purity\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:269247ba0afcd49573d5f3890800dbe57cbab4de0abe23e35363dd4c408eeab7",
+   "definition": "mean heart rate, beats per minute (ECG-derived)",
+   "decomposition": "{\"hasStatisticalModifier\": \"mean\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"heart beat\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: per minute\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"heart beat\", \"matrix_entity\": \"person\", \"restrictions\": [\"per minute\"], \"property\": 124, \"matrix\": 41, \"context\": false, \"modifier\": true, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:2cb06286f2a57367046baecdc253e1cc9d0b87e3ff744ece77467dbc2b209cd3",
+   "definition": "Daily maximum hourly precipitation rate, measured in kg m⁻² s⁻¹",
+   "decomposition": "{\"hasStatisticalModifier\": \"maximum\", \"hasProperty\": \"mass flux density\", \"hasObjectOfInterest\": \"water\", \"hasMatrix\": {\"AsymmetricSystem\": \"atmosphere → ground\", \"hasSource\": \"atmosphere\", \"hasTarget\": \"ground\"}, \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"process: precipitation\", \"on\": \"water\"}, {\"label\": \"reporting frequency: daily\", \"on\": \"maximum\"}, {\"label\": \"reporting frequency: hourly\", \"on\": \"maximum\"}]}",
+   "patterns": "{\"object_of_interest\": \"water\", \"matrix_entity\": \"atmosphere → ground\", \"restrictions\": [\"precipitation\", \"daily\", \"hourly\"], \"property\": 130, \"matrix\": 45, \"context\": false, \"modifier\": true, \"constraints\": [\"process\", \"reporting frequency\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:2d841267b59eb532e8db494d719e9d128904ae20ebb2abeb25c504a9a0b14e49",
+   "definition": "Water sampling depth in cm (the distance from the top/surface to the bottom) from which the water was sampled",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"depth\", \"hasObjectOfInterest\": \"water sampling\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"reference: from the surface to the bottom\", \"on\": \"depth\"}]}",
+   "patterns": "{\"object_of_interest\": \"water sampling\", \"matrix_entity\": null, \"restrictions\": [\"from the surface to the bottom\"], \"property\": 107, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:2dd616ab1ece243177b4aa960182191480db4df69fb2be2c9896e7207224dc29",
+   "definition": "Mass concentration of isobutylene in chloroform, measured in g/l.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"isobutylene / chloroform\", \"hasNumerator\": \"isobutylene\", \"hasDenominator\": \"chloroform\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"isobutylene / chloroform\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 128, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:3156d2522edc6464b49d91de55ab1f0db472eebe63229283ad583824e8381844",
+   "definition": "Social Vulnerability to pluvial floods of the residents",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"index\", \"hasObjectOfInterest\": \"social vulnerability\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"cause: pluvial flood\", \"on\": \"social vulnerability\"}, {\"label\": \"role: resident\", \"on\": \"person\"}]}",
+   "patterns": "{\"object_of_interest\": \"social vulnerability\", \"matrix_entity\": \"person\", \"restrictions\": [\"pluvial flood\", \"resident\"], \"property\": 132, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"cause\", \"role\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:33c4eb606b35dd5cbba886825fab3368a2ccec7e8648f0ea739ffdaa8e7ac381",
+   "definition": "Mass concentration of dissolved organic carbon in water",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"organic carbon / water\", \"hasNumerator\": \"organic carbon\", \"hasDenominator\": \"water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"state: dissolved\", \"on\": \"organic carbon\"}]}",
+   "patterns": "{\"object_of_interest\": \"organic carbon / water\", \"matrix_entity\": null, \"restrictions\": [\"dissolved\"], \"property\": 128, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:3463a1ebf16c0dcd563cc90b3740697c0490c2761a31eb2f09bf3d164c327dd8",
+   "definition": "Component of the sea surface current velocity that is directed toward (negative values) or away from (positive values) the High Frequency Radar (HFR) antenna, measured along the lines of sights of the antenna, i.e. along radial lines centered at the HFR antenna.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"radial velocity\", \"hasObjectOfInterest\": \"sea water \", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: surface level\", \"on\": \"sea water \"}, {\"label\": \"reference: relative to instrument\", \"on\": \"radial velocity\"}]}",
+   "patterns": "{\"object_of_interest\": \"sea water\", \"matrix_entity\": null, \"restrictions\": [\"surface level\", \"relative to instrument\"], \"property\": 120, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"part\", \"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:3a580edca2d246b8cacb94c1a25f05c414f9bf30ebb89ad44d7d3243ddefd5ab",
+   "definition": "Blood lactate concentration at lactate tolerance threshold measured in mmol/l",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"amount of substance concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"lactate / blood\", \"hasNumerator\": \"lactate\", \"hasDenominator\": \"blood\"}, \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"criterium: lactate tolerance threshold \", \"on\": \"person\"}]}",
+   "patterns": "{\"object_of_interest\": \"lactate / blood\", \"matrix_entity\": \"person\", \"restrictions\": [\"lactate tolerance threshold\"], \"property\": 128, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"criterion\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:3f70359c18e6b25d95bd9792608b167905fb117d9dfe9119e2a8e82e96298cd8",
+   "definition": "thermodynamic temperature for the boiling point (at the liquid to gas phase transition) of a known purity 99.07 (w/w) liquid sample of benzene at atmospheric pressure",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"thermodynamic temperature\", \"hasObjectOfInterest\": \"benzene\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at 1 atm pressure\", \"on\": \"thermodynamic temperature\"}, {\"label\": \"process: liquid to gas phase transition\", \"on\": \"thermodynamic temperature\"}, {\"label\": \"purity: 99.07 (w/w)\", \"on\": \"benzene\"}]}",
+   "patterns": "{\"object_of_interest\": \"benzene\", \"matrix_entity\": null, \"restrictions\": [\"at 1 atm pressure\", \"liquid to gas phase transition\", \"99.07 (w/w)\"], \"property\": 109, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"process\", \"purity\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:417e2fc4ad6d614f1aa6fbffac30a659c313db707818b36fe36e1636ceda31b0",
+   "definition": "Uncertainty expressed using confidence interval of the component of the sea surface current velocity that is directed northward.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"confidence interval\", \"hasObjectOfInterest\": \"northward linear velocity of water\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"northward linear velocity of water\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 136, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:4468d192503a3df852da9a2e6b2232d2cf888db8e57a183bb36b150f90a4dfb3",
+   "definition": "The proportion (percentage) of the ground area covered by foliage (or photosynthetic tissue) in the lower canopy strata.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"area fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"foliage / ground\", \"hasNumerator\": \"foliage\", \"hasDenominator\": \"ground\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: lower canopy strata\", \"on\": \"foliage\"}]}",
+   "patterns": "{\"object_of_interest\": \"foliage / ground\", \"matrix_entity\": null, \"restrictions\": [\"lower canopy strata\"], \"property\": 111, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:4b1ffc374bdc9207ab2fc2962eb67279e1e797192acbeee027a80ef115f510dd",
+   "definition": "Dynamic shear viscosity of polystyrene PS042 under the testing conditions of DIN 51810-1.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"dynamic viscosity\", \"hasObjectOfInterest\": \"polystyrene PS042\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: under testing conditions of DIN 5810-1\", \"on\": \"dynamic viscosity\"}]}",
+   "patterns": "{\"object_of_interest\": \"polystyrene PS042\", \"matrix_entity\": null, \"restrictions\": [\"under testing conditions of DIN 5810-1\"], \"property\": 126, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:4edf88dc05da570ff0a74d75b6ff939c6b1e117977a4ba2ffba0c74089389e3b",
+   "definition": "Water turbidity of stagnant surface water",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"degree\", \"hasObjectOfInterest\": \"turbidity\", \"hasMatrix\": \"water\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: surface\", \"on\": \"water\"}, {\"label\": \"state: stagnant\", \"on\": \"water\"}]}",
+   "patterns": "{\"object_of_interest\": \"turbidity\", \"matrix_entity\": \"water\", \"restrictions\": [\"surface\", \"stagnant\"], \"property\": 102, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"part\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:5195f6d2757865fa53c1a58080743c04f77f21da30e35252076d7011836494cc",
+   "definition": "Count of nanomaterial particles internalised into the cell over the duration of the experiment, entity per cell",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"nanomaterial particle\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: per cell\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"nanomaterial particle\", \"matrix_entity\": null, \"restrictions\": [\"per cell\"], \"property\": 124, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:5317b68c9c25dcbcb480f80a5c6386eb1465f1ed03f95eb6593f4f08e06c1f0a",
+   "definition": "Potential evaporation l m⁻² s⁻¹",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"volumetric flux\", \"hasObjectOfInterest\": \"water vapour\", \"hasMatrix\": {\"AsymmetricSystem\": \"soil → atmosphere\", \"hasSource\": \"soil\", \"hasTarget\": \"atmosphere\"}, \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at non-limiting water supply\", \"on\": \"water vapour\"}]}",
+   "patterns": "{\"object_of_interest\": \"water vapour\", \"matrix_entity\": \"soil → atmosphere\", \"restrictions\": [\"at non-limiting water supply\"], \"property\": 130, \"matrix\": 45, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:5382e8c971d5accb754b9b3c8c5052ac2a94ddc4c18bf7c14b05a8986546d509",
+   "definition": "total number of people living within a statistical unit which is defined as a grouping of homogeneous neighboring building blocks in an urban area",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"person\", \"hasMatrix\": \"\", \"hasContextObject\": \"urban area\", \"hasConstraint\": [{\"label\": \"condition: registered as resident\", \"on\": \"person\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"person\", \"matrix_entity\": null, \"restrictions\": [\"registered as resident\", \"per statistical unit\"], \"property\": 104, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"condition\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:587d6311a5003ffcbe1e5bb00b55fb2dd32f30f2245f9b0a275f7f11d3fef6b3",
+   "definition": "thermodynamic temperature for the melting point (at the solid to liquid phase transition) of a known purity (99.12 (w/w) sample of naphthalene at atmospheric pressure",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"thermodynamic temperature\", \"hasObjectOfInterest\": \"naphthalene (C10H8)\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at 1 atm pressure\", \"on\": \"thermodynamic temperature\"}, {\"label\": \"process: solid to liquid phase transition\", \"on\": \"thermodynamic temperature\"}, {\"label\": \"purity: of 99.12 (w/w)\", \"on\": \"naphthalene (C10H8)\"}]}",
+   "patterns": "{\"object_of_interest\": \"naphthalene (C10H8)\", \"matrix_entity\": null, \"restrictions\": [\"at 1 atm pressure\", \"solid to liquid phase transition\", \"of 99.12 (w/w)\"], \"property\": 109, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"process\", \"purity\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:5aa2c10675a4b91f044861bac4875458821f234a139c770757ad4a880072dfdc",
+   "definition": "Daily Maximum Near-Surface Wind Speed of Gust, measured in m s⁻¹",
+   "decomposition": "{\"hasStatisticalModifier\": \"maximum\", \"hasProperty\": \"speed\", \"hasObjectOfInterest\": \"wind\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"event: gust\", \"on\": \"wind\"}, {\"label\": \"part: near surface\", \"on\": \"wind\"}, {\"label\": \"reporting frequency: daily\", \"on\": \"maximum\"}]}",
+   "patterns": "{\"object_of_interest\": \"wind\", \"matrix_entity\": null, \"restrictions\": [\"gust\", \"near surface\", \"daily\"], \"property\": 140, \"matrix\": null, \"context\": false, \"modifier\": true, \"constraints\": [\"event\", \"part\", \"reporting frequency\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:608502045635ff2f6185e327ed3dabb4915ae7fcf480bf5aaeea346544d85dfb",
+   "definition": "Number of I129 atoms per mass  of sea water in the artic from discharges  of the nuclear fuel reprocessing plant at Ringhals of Sweden (I129se40) in atoms kg-1",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"number density per unit mass\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"Iodine-129 / sea water\", \"hasNumerator\": \"Iodine-129\", \"hasDenominator\": \"sea water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"source: nuclear fuel reprocessing plant at Ringhals, Sweden\", \"on\": \"Iodine-129\"}]}",
+   "patterns": "{\"object_of_interest\": \"Iodine-129 / sea water\", \"matrix_entity\": null, \"restrictions\": [\"nuclear fuel reprocessing plant at Ringhals, Sweden\"], \"property\": 121, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"source\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:60c22a22493fe14d9b49056deb34f93814298c43443f3d47bd63346ea2042820",
+   "definition": "date of birth of mother",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"calendar date\", \"hasObjectOfInterest\": \"birth\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"relationship: mother\", \"on\": \"person\"}]}",
+   "patterns": "{\"object_of_interest\": \"birth\", \"matrix_entity\": \"person\", \"restrictions\": [\"mother\"], \"property\": 137, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"relationship\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:661c259486249b392894bc315cc14457401c22ed1abb25e42110c733dc2a6128",
+   "definition": "mass density of a 10.00 mL sample of ACS reagent grade (99.0 (v/v)) benzene at a room temperature",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass density\", \"hasObjectOfInterest\": \"benzene (C6H6)\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at room temperature\", \"on\": \"mass density\"}, {\"label\": \"quality: ACS reagent grade (99.0 (v/v))\", \"on\": \"benzene (C6H6)\"}, {\"label\": \"volume: 10.00 mL\", \"on\": \"benzene (C6H6)\"}]}",
+   "patterns": "{\"object_of_interest\": \"benzene (C6H6)\", \"matrix_entity\": null, \"restrictions\": [\"at room temperature\", \"ACS reagent grade (99.0 (v/v))\", \"10.00 mL\"], \"property\": 126, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"purity\", \"volume\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:66573786130211b53d89b40adb2dd34e4d2a9ac5d10afb19efe67f5f67d848d5",
+   "definition": "the mass of nanomaterial internalised into the cell over the duration of the experiment, mass per cell",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass\", \"hasObjectOfInterest\": \"nanomaterial\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: per cell\", \"on\": \"mass\"}]}",
+   "patterns": "{\"object_of_interest\": \"nanomaterial\", \"matrix_entity\": null, \"restrictions\": [\"per cell\"], \"property\": 115, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:6acb9aa06141dd9fcd79f02b1d5392f8c23964bc78dd9d5c9f527112df22a2cc",
+   "definition": "Resting systolic blood pressure in millimeters of mercury (mmHg)",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"pressure\", \"hasObjectOfInterest\": \"blood\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"locomotion state: resting\", \"on\": \"person\"}, {\"label\": \"process: systole\", \"on\": \"pressure\"}]}",
+   "patterns": "{\"object_of_interest\": \"blood\", \"matrix_entity\": \"person\", \"restrictions\": [\"resting\", \"systole\"], \"property\": 140, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"locomotion state\", \"process\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:6ec5ae0362bf74208b82522e05fc9a04eb209e0f4151ab66664a85f91a284b26",
+   "definition": "Radioactivity content of Technetium-99 in sea water from discharges of the nuclear fuel reprocessing plant at Sellafield, UK. Technetium-99 is a radioactive isotope of element Technetium, with a half-life of about 211k years. Units: Becquerel per kilogram (Bq kg-1).",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"Massic Activity\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"Technetium-99 / sea water\", \"hasNumerator\": \"Technetium-99\", \"hasDenominator\": \"sea water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"Technetium-99 / sea water\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 135, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"source\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:717337f051d717841411f05ae41c2b0a0a324cac1368e3345c586113deed2efb",
+   "definition": "Circulation mode (gravity, forced, ...) of water in canalisation pipe",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"type\", \"hasObjectOfInterest\": \"water circulation\", \"hasMatrix\": \"sewer line\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"water circulation\", \"matrix_entity\": \"sewer line\", \"restrictions\": [], \"property\": 101, \"matrix\": 42, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:7a725c87db996829ebc171a000be0a2d49f868ec0778ab96908b28a38ba03be0",
+   "definition": "Count of tropic nights, with min temperature > 20 ° Celsius in urban areas",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"night\", \"hasMatrix\": \"urban area\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"min temperature: > 20 ° C\", \"on\": \"night\"}]}",
+   "patterns": "{\"object_of_interest\": \"night\", \"matrix_entity\": \"urban area\", \"restrictions\": [\"> 20 ° C\"], \"property\": 104, \"matrix\": 44, \"context\": false, \"modifier\": false, \"constraints\": [\"min temperature\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:7d6c1caebd3c452280950447af4540609b014535c0e213c6c3debec1974dda6e",
+   "definition": "number of children under the age of 10 years in a statistical unit which is defined as a grouping of homogeneous neighboring building blocks in an urban area",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"person\", \"hasMatrix\": \"\", \"hasContextObject\": \"urban area\", \"hasConstraint\": [{\"label\": \"age: < 10 years\", \"on\": \"person\"}, {\"label\": \"condition: registered as resident\", \"on\": \"person\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"person\", \"matrix_entity\": null, \"restrictions\": [\"< 10 years\", \"registered as resident\", \"per statistical unit\"], \"property\": 104, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"age\", \"condition\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:81090208701502225e3d267c474d06634e0f1263e2d67acdfbd4e7261a1a8bb9",
+   "definition": "current weight in kilogram without clothes; in case of pregnancy: last weight before pregnancy",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass\", \"hasObjectOfInterest\": \"person\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"event: latest\", \"on\": \"mass\"}, {\"label\": \"state: naked\", \"on\": \"person\"}, {\"label\": \"state: not pregnant\", \"on\": \"person\"}]}",
+   "patterns": "{\"object_of_interest\": \"person\", \"matrix_entity\": null, \"restrictions\": [\"latest\", \"naked\", \"not pregnant\"], \"property\": 109, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"event\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:813fb954c1d636e93647a6d410a659f6fba1f8115f92ba98d7d7e19bbb755dd7",
+   "definition": "country of birth of mother",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"country\", \"hasObjectOfInterest\": \"birth\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"relationship: mother\", \"on\": \"person\"}]}",
+   "patterns": "{\"object_of_interest\": \"birth\", \"matrix_entity\": \"person\", \"restrictions\": [\"mother\"], \"property\": 101, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"relationship\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:878175094008ac6deec037a29c435ac9fed4dbdc682b10e6a0c77d2c1ece6cbf",
+   "definition": "Percentage of number of children under 10 years versus total number of people dwelling in the buildings within a statistical unit which is defined as a grouping of homogeneous neighboring building blocks",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"ratio\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"person / population\", \"hasNumerator\": \"person\", \"hasDenominator\": \"population\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"age: < 10 years\", \"on\": \"person\"}, {\"label\": \"condition: registered as resident\", \"on\": \"person / population\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"ratio\"}]}",
+   "patterns": "{\"object_of_interest\": \"person / population\", \"matrix_entity\": null, \"restrictions\": [\"< 10 years\", \"registered as resident\", \"per statistical unit\"], \"property\": 110, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"age\", \"condition\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:878908f20228224335acf3157a9fc32acc26f6f85629e31c18e1cc006e1005a7",
+   "definition": "Geographic azimuth (relative to true north) at a point observation location, of a horizontal line contained in a sedimentary rock bedding surface. The bedding surface must not be horizontal; the azimuth is reported such that the dip direction of the inclined bedding is to the right when facing in the azimuth direction.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"plane angle\", \"hasObjectOfInterest\": {\"SymmetricSystem\": \"bedding surface line + True North\", \"hasPart\": [\"bedding surface line\", \"True North\"]}, \"hasMatrix\": \"sedimentary rock\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"bedding surface line + True North\", \"matrix_entity\": \"sedimentary rock\", \"restrictions\": [], \"property\": 116, \"matrix\": 40, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:8a816547d513e441cc011c55b73bc5051ee086c3a1b888e4a7c8d41c7b4f3531",
+   "definition": "Surface runoff measured in kg m⁻² s⁻¹",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass flux density\", \"hasObjectOfInterest\": \"water\", \"hasMatrix\": {\"AsymmetricSystem\": \"ground → water body\", \"hasSource\": \"ground\", \"hasTarget\": \"water body\"}, \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: not soaking into the ground\", \"on\": \"water\"}, {\"label\": \"part: surface\", \"on\": \"ground\"}]}",
+   "patterns": "{\"object_of_interest\": \"water\", \"matrix_entity\": \"ground → water body\", \"restrictions\": [\"not soaking into the ground\", \"surface\"], \"property\": 130, \"matrix\": 45, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:8b4f1caa8c7add1f5a3d21c7cc9dc6ca911b9abe84e3a583725215f55d662aed",
+   "definition": "solubility of molecular oxygen from air in water with MilliQ (10.2MOhm) purity at local air conditions",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"amount of substance per mass\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"molecular oxygen / water\", \"hasNumerator\": \"molecular oxygen\", \"hasDenominator\": \"water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at local atmospheric pressure\", \"on\": \"amount of substance per mass\"}, {\"label\": \"condition: at local temperature\", \"on\": \"amount of substance per mass\"}, {\"label\": \"resistivity: 10.2 MΩ cm\", \"on\": \"water\"}, {\"label\": \"source: air\", \"on\": \"molecular oxygen\"}]}",
+   "patterns": "{\"object_of_interest\": \"molecular oxygen / water\", \"matrix_entity\": null, \"restrictions\": [\"at local atmospheric pressure\", \"at local temperature\", \"10.2 MΩ cm\", \"air\"], \"property\": 122, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"resistivity\", \"source\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:8d27743a45d71ccb81557972728e6d7ea00c992a3b0d2418017c1cc8164bc9aa",
+   "definition": "Mass concentration of endosulfane sulfate in wet flesh of ostrea edulis, measured in μg/kg.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"endosulfane sulfate / flesh\", \"hasNumerator\": \"endosulfane sulfate\", \"hasDenominator\": \"flesh\"}, \"hasMatrix\": \"ostrea edulis\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"state:wet\", \"on\": \"flesh\"}]}",
+   "patterns": "{\"object_of_interest\": \"endosulfane sulfate / flesh\", \"matrix_entity\": \"ostrea edulis\", \"restrictions\": [\"wet\"], \"property\": 110, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:92a52afc878553041b4682672dc8abfc92c0896f95c73336360d8a796744527f",
+   "definition": "Maximum trunk char height due to fire, measured above ground.",
+   "decomposition": "{\"hasStatisticalModifier\": \"maximum\", \"hasProperty\": \"height\", \"hasObjectOfInterest\": \"char\", \"hasMatrix\": \"tree trunk\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"cause: fire\", \"on\": \"char\"}, {\"label\": \"reference: above ground\", \"on\": \"height\"}]}",
+   "patterns": "{\"object_of_interest\": \"char\", \"matrix_entity\": \"tree trunk\", \"restrictions\": [\"fire\", \"above ground\"], \"property\": 107, \"matrix\": 41, \"context\": false, \"modifier\": true, \"constraints\": [\"cause\", \"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:94719dbcd8c79fb7f55cdb872573b52ee8398796ac52a589951e8472aced0d60",
+   "definition": "In the past 30 days, how often did you feel nervous?",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"nevous feeling\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: during last 30 days\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"nevous feeling\", \"matrix_entity\": \"person\", \"restrictions\": [\"during last 30 days\"], \"property\": 104, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:94c8b7bd1fa12f07063e6a58e2010aec82166c544f047ec3bb4c77ad8dff0d6c",
+   "definition": "Weight specific-ingestion Carbon rate at 15 °C. The amount of carbon consumed by an organism at non-limiting concentration of food relative to the individual dry weight measured at 15°C. It is expressed as μg C mg DW−1 h−1",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass fraction rate\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"Carbon / body\", \"hasNumerator\": \"Carbon\", \"hasDenominator\": \"body\"}, \"hasMatrix\": {\"AsymmetricSystem\": \"food → organism\", \"hasSource\": \"food\", \"hasTarget\": \"organism\"}, \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at 15°C temperature\", \"on\": \"mass fraction rate\"}, {\"label\": \"condition: at non-limiting conditions\", \"on\": \"food\"}, {\"label\": \"process: ingestion\", \"on\": \"Carbon\"}, {\"label\": \"state: dry\", \"on\": \"body\"}]}",
+   "patterns": "{\"object_of_interest\": \"Carbon / body\", \"matrix_entity\": \"food → organism\", \"restrictions\": [\"at 15°C temperature\", \"at non-limiting conditions\", \"ingestion\", \"dry\"], \"property\": 131, \"matrix\": 45, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"process\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:952fc81981fc7d4547db0c91e48ffda4f7d0aff25e904a1f9990925e51c71aeb",
+   "definition": "Coarse woody debris (CWD) abundance per hectare measured from all the plots scaled to a hectare (m2/hectare).",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"area fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"coarse woody debris / ground\", \"hasNumerator\": \"coarse woody debris\", \"hasDenominator\": \"ground\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: per hectare\", \"on\": \"ground\"}]}",
+   "patterns": "{\"object_of_interest\": \"coarse woody debris / ground\", \"matrix_entity\": null, \"restrictions\": [\"per hectare\"], \"property\": 111, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:953999c61f77ad952f55fb1703c27b2a55552faa8fc64ea31c371a5f6030a1dc",
+   "definition": "solubility measurement of napathalene in deionized water at room temperature by monitoring absorption at 279 nm, measured in mg/L",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"naphthalene (C10H8) / water\", \"hasNumerator\": \"naphthalene (C10H8)\", \"hasDenominator\": \"water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: at room temperature\", \"on\": \"mass concentration\"}, {\"label\": \"resistivity: > 1 MOhm cm\", \"on\": \"water\"}, {\"label\": \"state: dissolved\", \"on\": \"naphthalene (C10H8)\"}]}",
+   "patterns": "{\"object_of_interest\": \"naphthalene (C10H8) / water\", \"matrix_entity\": null, \"restrictions\": [\"at room temperature\", \"> 1 MOhm cm\", \"dissolved\"], \"property\": 128, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\", \"resistivity\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:97c0d174694730417df0203456a0f37230e2c0ce5f274b935f6d98b43fdbe3e6",
+   "definition": "Partial Solar Obscuration in percentage",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"area fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"obscured area / total area\", \"hasNumerator\": \"obscured area\", \"hasDenominator\": \"total area\"}, \"hasMatrix\": \"sun\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"process: eclipse\", \"on\": \"sun\"}]}",
+   "patterns": "{\"object_of_interest\": \"obscured area / total area\", \"matrix_entity\": \"sun\", \"restrictions\": [\"eclipse\"], \"property\": 111, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"process\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:987bba365ef3af30223b59be3a4645f4b3eeebdb44d220a57297989b05b9d1b4",
+   "definition": "Quality Control flags resulting from setting a threshold on Geometric dilution of precision (GDOP). Setting a threshold on GDOP for total combination avoids the combination of radials with an intersection angle below a certain value.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"quality flag\", \"hasObjectOfInterest\": \"geometric dilution of precision\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"criterium: threshold value\", \"on\": \"quality flag\"}]}",
+   "patterns": "{\"object_of_interest\": \"geometric dilution of precision\", \"matrix_entity\": null, \"restrictions\": [\"threshold value\"], \"property\": 103, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"criterion\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:9a1bcaa3713875100d9cbe9674f0052b9ac3d630077e18f5a38af890d951e1b8",
+   "definition": "Density (particle per cm3) of electrons measured in the Solar Wind.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"number density\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"electron / solar wind\", \"hasNumerator\": \"electron\", \"hasDenominator\": \"solar wind\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"electron / solar wind\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 125, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:a4a56a127a33fbe72d44d3ede195283abc9ebd3cc91f6fc1d1edcdb19c059b3c",
+   "definition": "Rhesusform in a blood sample",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"phenotype\", \"hasObjectOfInterest\": \"RhD Antigen\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"RhD Antigen\", \"matrix_entity\": \"person\", \"restrictions\": [], \"property\": 101, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:a9e223c0f78dc8a8414c9b9d360d5e1db2d366c2aa648ff2b5ff16a831257abd",
+   "definition": "number of elderly people (above 65 years) living alone in a statistical unit which is defined as a grouping of homogeneous neighboring building blocks",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"person\", \"hasMatrix\": \"\", \"hasContextObject\": \"urban area\", \"hasConstraint\": [{\"label\": \"age: > 65 years\", \"on\": \"person\"}, {\"label\": \"condition: living alone\", \"on\": \"person\"}, {\"label\": \"condition: registered as resident\", \"on\": \"person\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"person\", \"matrix_entity\": null, \"restrictions\": [\"> 65 years\", \"living alone\", \"registered as resident\", \"per statistical unit\"], \"property\": 104, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"age\", \"condition\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:ada58f9fe9584da4aaa4150be9b06059f78b486ffc2ac1d4b39577b9a470cfb0",
+   "definition": "Concentration of DDT in a given year at a site impacted by industry, measured in ng/g.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"DDT / soil\", \"hasNumerator\": \"DDT\", \"hasDenominator\": \"soil\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"source: industry\", \"on\": \"DDT\"}]}",
+   "patterns": "{\"object_of_interest\": \"DDT / soil\", \"matrix_entity\": null, \"restrictions\": [\"industry\"], \"property\": 110, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"source\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:ae25b03bee8478d390a375f70a0531261a54eccc7446157ca2ae321affd7151f",
+   "definition": "Number fraction of aerosol particles from 0.1 µm to 1 µm that are identified as suflate-organic-nitrate internal mixtures.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"particle number fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"particle / particle mixture\", \"hasNumerator\": \"particle\", \"hasDenominator\": \"particle mixture\"}, \"hasMatrix\": \"aerosol\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"composition: mixture of sulfate-organic-nitrate \", \"on\": \"particle\"}, {\"label\": \"diameter: 0.1 - 1 µm\", \"on\": \"particle\"}, {\"label\": \"reference: total\", \"on\": \"particle mixture\"}]}",
+   "patterns": "{\"object_of_interest\": \"particle / particle mixture\", \"matrix_entity\": \"aerosol\", \"restrictions\": [\"mixture of sulfate-organic-nitrate\", \"0.1 - 1 µm\", \"total\"], \"property\": 110, \"matrix\": 40, \"context\": false, \"modifier\": false, \"constraints\": [\"composition\", \"diameter\", \"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:aebc981b8a7c3b11c86873342ff8f898f1f176f006b22ce44d5e8d94e3045d30",
+   "definition": "Category: Clinical, Unit: descriptional/grade of a scale",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"degree\", \"hasObjectOfInterest\": \"pain\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"temporal extent: chronic\", \"on\": \"pain\"}]}",
+   "patterns": "{\"object_of_interest\": \"pain\", \"matrix_entity\": \"person\", \"restrictions\": [\"chronic\"], \"property\": 102, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"temporal extent\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:b0f873292fd5c5cb027c9cd579cb8e3ee0caa43c8484a7ec13fcef359b9a4dc3",
+   "definition": "Moisture in upper soil portion measured in kg m-2",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass per area\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"water / soil\", \"hasNumerator\": \"water\", \"hasDenominator\": \"soil\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: upper soil\", \"on\": \"soil\"}]}",
+   "patterns": "{\"object_of_interest\": \"water / soil\", \"matrix_entity\": null, \"restrictions\": [\"upper soil\"], \"property\": 127, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:b20c2d3335ce8d0dce00c52eebc46ef46751d5dd096401ffcbdb63417ee66ddf",
+   "definition": "Mass ratio of dehp in nail, measured for a person.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"diethylhexyl phthalate  / nail\", \"hasNumerator\": \"diethylhexyl phthalate \", \"hasDenominator\": \"nail\"}, \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"diethylhexyl phthalate  / nail\", \"matrix_entity\": \"person\", \"restrictions\": [], \"property\": 110, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:b90c883f92cfcdecaa3d8b1fd8919c8b30d6a418911ee830f2355ebc534539eb",
+   "definition": "Surface long-wave (thermal radiation downwards measured in Wm-2",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"irradiance\", \"hasObjectOfInterest\": \"long wave radiation\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"direction: downwards\", \"on\": \"long wave radiation\"}]}",
+   "patterns": "{\"object_of_interest\": \"long wave radiation\", \"matrix_entity\": null, \"restrictions\": [\"downwards\"], \"property\": 129, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"direction\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:bcf8da54d7d4702b8504d46846b99ee56311cc7c02cc4eb05583985cdaba1035",
+   "definition": "date of last COVID-19 PCR test performed by a certified laboratory",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"calendar date\", \"hasObjectOfInterest\": \"PCR-test\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"agent: certified laboratory\", \"on\": \"PCR-test\"}, {\"label\": \"event: latest\", \"on\": \"PCR-test\"}, {\"label\": \"purpose: SARS-CoV2\", \"on\": \"PCR-test\"}]}",
+   "patterns": "{\"object_of_interest\": \"PCR-test\", \"matrix_entity\": \"person\", \"restrictions\": [\"certified laboratory\", \"latest\", \"SARS-CoV2\"], \"property\": 137, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"agent\", \"event\", \"purpose\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:be13d0c77988f1372cbf74852cb579075674ae54fa55544a738663a2e7c80a8b",
+   "definition": "Number of Hours of family activity per week",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"time\", \"hasObjectOfInterest\": \"family activity\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"normalization: week\", \"on\": \"time\"}]}",
+   "patterns": "{\"object_of_interest\": \"family activity\", \"matrix_entity\": \"person\", \"restrictions\": [\"week\"], \"property\": 109, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:be409fd08196b9beb4ca9dd34a086364956a118732d70f7e32470db1eabf09b1",
+   "definition": "HRV- Heart rate variability, standard deviation of time gaps between consecutive heartbeats (Normal-to-Normal intervals). Unit: milliseconds (ms)",
+   "decomposition": "{\"hasStatisticalModifier\": \"standard deviation\", \"hasProperty\": \"time\", \"hasObjectOfInterest\": \"cardiac interbeat interval\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: normal-to-normal\", \"on\": \"cardiac interbeat interval\"}]}",
+   "patterns": "{\"object_of_interest\": \"cardiac interbeat interval\", \"matrix_entity\": \"person\", \"restrictions\": [\"normal-to-normal\"], \"property\": 109, \"matrix\": 41, \"context\": false, \"modifier\": true, \"constraints\": [\"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:c0790d823a647be47f348636e8da4a75ffd8f2dcad8a48b1d2e2d03021dc9c9c",
+   "definition": "Mass concentration of tbph in breast milk",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"bis(2-ethylhexyl) tetrabromophthalate  / breast milk\", \"hasNumerator\": \"bis(2-ethylhexyl) tetrabromophthalate \", \"hasDenominator\": \"breast milk\"}, \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"bis(2-ethylhexyl) tetrabromophthalate  / breast milk\", \"matrix_entity\": \"person\", \"restrictions\": [], \"property\": 128, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:c0869f1a2e2b556709d84a82f1019f35009cfea1b5d9136eb8bd37e818c14acd",
+   "definition": "The amount of sky estimated to be covered by all cloud types.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"area fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"cloud / sky\", \"hasNumerator\": \"cloud\", \"hasDenominator\": \"sky\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"cloud / sky\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 111, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:c3b92d4d53c7e4fcd4f7828c49c2ea92eb4b9c4c418c4be5d45236c41962df41",
+   "definition": "Snow Water Equivalent or Surface Snow Amount is the mass of water per unit area (kg/m²)",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"surface density\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"water / area\", \"hasNumerator\": \"water\", \"hasDenominator\": \"area\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"physical form: snow\", \"on\": \"water\"}, {\"label\": \"state: solid\", \"on\": \"water\"}]}",
+   "patterns": "{\"object_of_interest\": \"water / area\", \"matrix_entity\": null, \"restrictions\": [\"snow\", \"solid\"], \"property\": 127, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"physical form\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:c46691dd03f6017faa351ae588d1175ae66635850e4cbf1d6f1bb675d7b9ea72",
+   "definition": "Solar energy production of building in kWh",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"energy\", \"hasObjectOfInterest\": \"solar panel\", \"hasMatrix\": \"\", \"hasContextObject\": \"building\", \"hasConstraint\": [{\"label\": \"normalization: month\", \"on\": \"energy\"}]}",
+   "patterns": "{\"object_of_interest\": \"solar panel\", \"matrix_entity\": null, \"restrictions\": [\"month\"], \"property\": 140, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:c51a8273fd7c9585fb0b04292e4caa3359f0aebbfca17a01c475087959f898bd",
+   "definition": "Thermodynamic temperature of the air in a height of 1.7 meter aboveground, daily maximum in Celsium degrees.",
+   "decomposition": "{\"hasStatisticalModifier\": \"maximum\", \"hasProperty\": \"thermodynamic temperature\", \"hasObjectOfInterest\": \"air\", \"hasMatrix\": \"atmosphere\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"reference: 1.7 m  above ground\", \"on\": \"air\"}, {\"label\": \"reporting frequency: daily\", \"on\": \"maximum\"}]}",
+   "patterns": "{\"object_of_interest\": \"air\", \"matrix_entity\": \"atmosphere\", \"restrictions\": [\"1.7 m  above ground\", \"daily\"], \"property\": 109, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"reference\", \"reporting frequency\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:caab50139f9d111922ea593b8244419b2e6115a573396edc1eb9d6aed23afcbb",
+   "definition": "Pluvial flood expressed as water depth due to 100 year event in a statistical unit, defined by a grouping of homogeneous neighboring building blocks",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"depth\", \"hasObjectOfInterest\": \"water\", \"hasMatrix\": \"\", \"hasContextObject\": \"urban area\", \"hasConstraint\": [{\"label\": \"event: 100 year rain\", \"on\": \"water\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"depth\"}]}",
+   "patterns": "{\"object_of_interest\": \"water\", \"matrix_entity\": null, \"restrictions\": [\"100 year rain\", \"per statistical unit\"], \"property\": 107, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"event\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:cff656b05040363687eb6536a0bcfe96d6c1de14b290074e555d3c79c2337235",
+   "definition": "State (faulty, cracked, ... ) of pipe connection in plastic with a diametre of 30 cm.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"state\", \"hasObjectOfInterest\": \"pipe connection\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"material type: plastic\", \"on\": \"pipe connection\"}, {\"label\": \"size:diameter of 30 cm\", \"on\": \"pipe connection\"}]}",
+   "patterns": "{\"object_of_interest\": \"pipe connection\", \"matrix_entity\": null, \"restrictions\": [\"plastic\", \"diameter of 30 cm\"], \"property\": 101, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"diameter\", \"material type\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:d0bdb658e4dd94099f168ce241e60f31580a3d7828c32150d3cb70497f2d0883",
+   "definition": "Variance of the component of water velocity in a water body along radial lines centered at the HFR antenna, evaluated over the coverage period",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"variance\", \"hasObjectOfInterest\": \"radial velocity of water current \", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"temporal extent: over the coverage period\", \"on\": \"variance\"}]}",
+   "patterns": "{\"object_of_interest\": \"radial velocity of water current\", \"matrix_entity\": null, \"restrictions\": [\"over the coverage period\"], \"property\": 136, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"temporal extent\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:d180f3a34543a369866a04e5979fbca47d9a6a0ee2fba3aaa714e3dee8d64467",
+   "definition": "Smoking status current of a patient",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"status\", \"hasObjectOfInterest\": \"smoking\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"role: patient\", \"on\": \"person\"}, {\"label\": \"time: current\", \"on\": \"status\"}]}",
+   "patterns": "{\"object_of_interest\": \"smoking\", \"matrix_entity\": \"person\", \"restrictions\": [\"patient\", \"current\"], \"property\": 101, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"role\", \"time\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:d462a876c62066943e00b9eb2f84590d2b5bfd4c2081010038cd08ce6ca318d9",
+   "definition": "Body mass index calculated by dividing body mass by height squared",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"index\", \"hasObjectOfInterest\": \"body mass\", \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"body mass\", \"matrix_entity\": \"person\", \"restrictions\": [], \"property\": 132, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:d669d5b3b0e87ea025a415a71bc8fb405e5c55d5a8f00b2dd6d1ea4b886e2816",
+   "definition": "Number of floors above ground of building",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"storey\", \"hasMatrix\": \"building\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"reference: above ground\", \"on\": \"storey\"}]}",
+   "patterns": "{\"object_of_interest\": \"storey\", \"matrix_entity\": \"building\", \"restrictions\": [\"above ground\"], \"property\": 104, \"matrix\": 42, \"context\": false, \"modifier\": false, \"constraints\": [\"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:d7acd37edc79c8ab54b7e6e786539acafea9d6b0ae22e042f6580bc7e058f808",
+   "definition": "Biological sex [female | male | intersex | unknown]",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"sex\", \"hasObjectOfInterest\": \"organism\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"organism\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 101, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:d8164cf2a4d4be23ca63fc588e2850efbb8041ad653843e104594e7295140d5d",
+   "definition": "number of persons receiving welfare in a statistical unit which is defined as a grouping of homogeneous neighboring building blocks in an urban area",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"count\", \"hasObjectOfInterest\": \"person\", \"hasMatrix\": \"\", \"hasContextObject\": \"urban area\", \"hasConstraint\": [{\"label\": \"condition: receiving welfare\", \"on\": \"person\"}, {\"label\": \"condition: registered as resident\", \"on\": \"person\"}, {\"label\": \"normalization: per statistical unit\", \"on\": \"count\"}]}",
+   "patterns": "{\"object_of_interest\": \"person\", \"matrix_entity\": null, \"restrictions\": [\"receiving welfare\", \"registered as resident\", \"per statistical unit\"], \"property\": 104, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"condition\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:dba56f70c849f8cfa4504a0809eb2b26c5a98977be127d1751d7fe5299e51738",
+   "definition": "Heat stress index per district",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"index\", \"hasObjectOfInterest\": \"stress\", \"hasMatrix\": \"urban area\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"cause: heat\", \"on\": \"stress\"}, {\"label\": \"normalization: district\", \"on\": \"index\"}]}",
+   "patterns": "{\"object_of_interest\": \"stress\", \"matrix_entity\": \"urban area\", \"restrictions\": [\"heat\", \"district\"], \"property\": 132, \"matrix\": 44, \"context\": false, \"modifier\": false, \"constraints\": [\"cause\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:dd48a859a45f080afb4ad91bae5ffe6faca6e7977293938cfdebcfc817617c10",
+   "definition": "pH of a sample of apple juice using a solid-state pH electrode",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"index\", \"hasObjectOfInterest\": \"pH\", \"hasMatrix\": \"apple juice\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"pH\", \"matrix_entity\": \"apple juice\", \"restrictions\": [], \"property\": 132, \"matrix\": 40, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:dd8a2e64f426a03fd3fd01019b26230b02d3e9bdcf58f5abd5cfd2691857e68d",
+   "definition": "Fire risk in urban areas per district.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"index\", \"hasObjectOfInterest\": \"risk\", \"hasMatrix\": \"urban area\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"cause: fire\", \"on\": \"risk\"}, {\"label\": \"normalization: district\", \"on\": \"index\"}]}",
+   "patterns": "{\"object_of_interest\": \"risk\", \"matrix_entity\": \"urban area\", \"restrictions\": [\"fire\", \"district\"], \"property\": 132, \"matrix\": 44, \"context\": false, \"modifier\": false, \"constraints\": [\"cause\", \"normalization\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:df36cf7940a82ca381cddb35720d6f50d4bf8dc22cc4d0432c366692e66edff9",
+   "definition": "Global fallout of U‑236 (U236GF) in atoms kg-1 in the artic sea",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"number density per unit mass\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"Uranium‑236 / sea water\", \"hasNumerator\": \"Uranium‑236\", \"hasDenominator\": \"sea water\"}, \"hasMatrix\": \"arctic ocean\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"process: fallout\", \"on\": \"Uranium‑236\"}, {\"label\": \"source: global\", \"on\": \"Uranium‑236\"}]}",
+   "patterns": "{\"object_of_interest\": \"Uranium‑236 / sea water\", \"matrix_entity\": \"arctic ocean\", \"restrictions\": [\"fallout\", \"global\"], \"property\": 121, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"process\", \"source\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e0317a54033f0807fc0f47b3ffeb83ee2bff7d26ecb11b9c99151d45c9b56b79",
+   "definition": "Component of the sea surface current velocity that is directed eastward (positive values) or westward (negative values)",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"linear velocity\", \"hasObjectOfInterest\": \"sea water\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"direction: eastward\", \"on\": \"linear velocity\"}, {\"label\": \"part: surface level\", \"on\": \"sea water\"}]}",
+   "patterns": "{\"object_of_interest\": \"sea water\", \"matrix_entity\": null, \"restrictions\": [\"eastward\", \"surface level\"], \"property\": 120, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"direction\", \"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e083e69a7197e4552a2c1926b148f8f33f3221128338977308be3037895b75d0",
+   "definition": "Upwelling component of actinic flux in wavelength range of 297-640 nm measured in photons/s/cm2/nm",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"actinic flux\", \"hasObjectOfInterest\": \"radiation\", \"hasMatrix\": \"\", \"hasContextObject\": \"atmosphere\", \"hasConstraint\": [{\"label\": \"direction: upwelling\", \"on\": \"actinic flux\"}, {\"label\": \"wavelength: 297-640 nm\", \"on\": \"radiation\"}]}",
+   "patterns": "{\"object_of_interest\": \"radiation\", \"matrix_entity\": null, \"restrictions\": [\"upwelling\", \"297-640 nm\"], \"property\": 129, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"direction\", \"wavelength\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e189d709bb080629b6f2950a197aa73858c4ccf00852cf9c0f7bdb006b71b264",
+   "definition": "Determination of iron concentration in a soil sample by colorimetric analysis using ortho-phenanthroline as mass fraction",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"iron / soil\", \"hasNumerator\": \"iron\", \"hasDenominator\": \"soil\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"iron / soil\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 110, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e33e70cb59c148b02b366352b4e69075ce1dce0a9a657fbb991c598fc4f79d5a",
+   "definition": "Number of Uranium-236 atoms per unit mass in sea water from discharges of the nuclear fuel reprocessing plant at La Hage, France. Uranium-236 is a radioactive isotope of element Iodine, with a half-life of about 23.4 million years.\n        Units: atoms kg-1",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"number density per unit mass\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"Uranium-236 / sea water\", \"hasNumerator\": \"Uranium-236\", \"hasDenominator\": \"sea water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"source: nuclear fuel reprocessing plant La Hague, France\", \"on\": \"Uranium-236\"}]}",
+   "patterns": "{\"object_of_interest\": \"Uranium-236 / sea water\", \"matrix_entity\": null, \"restrictions\": [\"nuclear fuel reprocessing plant La Hague, France\"], \"property\": 121, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"source\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e3641426a8b3febb4bf69bf5bc59f8f4f66294a1c12ace90ce5ec878bbfc1772",
+   "definition": "Flood risk index related to mobility and accessibility when streets around the houses are flooded",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"index\", \"hasObjectOfInterest\": \"risk\", \"hasMatrix\": \"urban area\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"cause: pluvial flood to mobility and accessibility of an urban area\", \"on\": \"risk\"}]}",
+   "patterns": "{\"object_of_interest\": \"risk\", \"matrix_entity\": \"urban area\", \"restrictions\": [\"pluvial flood to mobility and accessibility of an urban area\"], \"property\": 132, \"matrix\": 44, \"context\": false, \"modifier\": false, \"constraints\": [\"cause\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e711a0b9e881efdba4f65439c20f340aeaedcbb8666fcad26684e5b08fc2d241",
+   "definition": "Atmospheric optical thickness of particulate organic matter at 550nm.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"optical thickness\", \"hasObjectOfInterest\": \"organic particulates\", \"hasMatrix\": \"aerosol\", \"hasContextObject\": \"atmosphere\", \"hasConstraint\": [{\"label\": \"condition: at 550nm wavelength\", \"on\": \"optical thickness\"}]}",
+   "patterns": "{\"object_of_interest\": \"organic particulates\", \"matrix_entity\": \"aerosol\", \"restrictions\": [\"at 550nm wavelength\"], \"property\": 113, \"matrix\": 40, \"context\": true, \"modifier\": false, \"constraints\": [\"condition\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:e8d2143d78c4c1199d8ba8e4c7383efc56ee9c46f184c12400fe906755eeb4ef",
+   "definition": "Concentration of Al cations in water",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"amount of substance concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"aluminium cation / water\", \"hasNumerator\": \"aluminium cation\", \"hasDenominator\": \"water\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"aluminium cation / water\", \"matrix_entity\": null, \"restrictions\": [], \"property\": 128, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:eac2ff5b242695c88bac645ba7dc4d3e18fd1e7ebdb1aaa53cedb7db5114cb63",
+   "definition": "mass concentration of ice in atmosphere measured in g/m3",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"mass concentration\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"water / atmosphere\", \"hasNumerator\": \"water\", \"hasDenominator\": \"atmosphere\"}, \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"physical form: ice\", \"on\": \"water\"}, {\"label\": \"state: solid\", \"on\": \"water\"}]}",
+   "patterns": "{\"object_of_interest\": \"water / atmosphere\", \"matrix_entity\": null, \"restrictions\": [\"ice\", \"solid\"], \"property\": 128, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"physical form\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:ec5852427c1b8a6c433d8cc423f3c169f71cc1501bd5a76bc7e92688549cc687",
+   "definition": "Standard deviation of the component of water velocity in a water body along radial lines centered at the HFR antenna, evaluated over the coverage period",
+   "decomposition": "{\"hasStatisticalModifier\": \"standard deviation\", \"hasProperty\": \"radial velocity\", \"hasObjectOfInterest\": \"sea water\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"part: surface level\", \"on\": \"sea water\"}, {\"label\": \"reference: relative to instrument\", \"on\": \"radial velocity\"}, {\"label\": \"temporal extent: over the temporal coverage period\", \"on\": \"standard deviation\"}]}",
+   "patterns": "{\"object_of_interest\": \"sea water\", \"matrix_entity\": null, \"restrictions\": [\"surface level\", \"relative to instrument\", \"over the temporal coverage period\"], \"property\": 120, \"matrix\": null, \"context\": false, \"modifier\": true, \"constraints\": [\"part\", \"reference\", \"temporal extent\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:ecff8ef3ee2a279b44f9099b3f0a55ec66697e541fbbe477bb97cb9582bef3d7",
+   "definition": "Atmospheric boundary layer height defined by temperature inversion, aboveground.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"height\", \"hasObjectOfInterest\": \"atmospheric boundary layer\", \"hasMatrix\": \"atmosphere\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"process: temperature inversion\", \"on\": \"atmospheric boundary layer\"}, {\"label\": \"reference: above ground\", \"on\": \"height\"}]}",
+   "patterns": "{\"object_of_interest\": \"atmospheric boundary layer\", \"matrix_entity\": \"atmosphere\", \"restrictions\": [\"temperature inversion\", \"above ground\"], \"property\": 107, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"process\", \"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:f2751bbdb87cf55ba61dc1e17ad3256788975592c4ba3408e3b8b29e1e074e56",
+   "definition": "Aircraft Angle of Attack measured in degrees. The angle at which a straight line from the leading edge to the trailing edge of an aircraft’s wing meets the relative wind. ",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"plane angle\", \"hasObjectOfInterest\": {\"SymmetricSystem\": \"relative wind vector + wing chord line\", \"hasPart\": [\"relative wind vector\", \"wing chord line\"]}, \"hasMatrix\": \"aircraft\", \"hasContextObject\": \"\", \"hasConstraint\": []}",
+   "patterns": "{\"object_of_interest\": \"relative wind vector + wing chord line\", \"matrix_entity\": \"aircraft\", \"restrictions\": [], \"property\": 116, \"matrix\": 42, \"context\": false, \"modifier\": false, \"constraints\": []}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:f438e56a0a51290ecd91f1ead7450bc4eb2dd18cd70026bb63a49e8e77f2195f",
+   "definition": "Mean sea level pressure expressed in Pa",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"atmospheric pressure\", \"hasObjectOfInterest\": \"air\", \"hasMatrix\": \"atmosphere\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"reference: mean sea level\", \"on\": \"air\"}]}",
+   "patterns": "{\"object_of_interest\": \"air\", \"matrix_entity\": \"atmosphere\", \"restrictions\": [\"mean sea level\"], \"property\": 140, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:f545e06ffe881f040e259b1cd249fe36767622ffd3039adbfaa1705eabae60b3",
+   "definition": "Northward Near-Surface Wind (v-component), measured in m s⁻¹",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"velocity\", \"hasObjectOfInterest\": \"wind\", \"hasMatrix\": \"atmosphere\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"direction: northward\", \"on\": \"velocity\"}, {\"label\": \"part: near surface\", \"on\": \"atmosphere\"}]}",
+   "patterns": "{\"object_of_interest\": \"wind\", \"matrix_entity\": \"atmosphere\", \"restrictions\": [\"northward\", \"near surface\"], \"property\": 120, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"direction\", \"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:f8d903201bc77e3994d801fb2cda158b7cc1a89a71de3c1babcabe2cb8726168",
+   "definition": "Labile detrital nitrogen concentration in the seabed in mmoleN/kg in sediment.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"amount of substance per mass\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"nitrogen / sediment\", \"hasNumerator\": \"nitrogen\", \"hasDenominator\": \"sediment\"}, \"hasMatrix\": \"seabed\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"source: detrital organic matter\", \"on\": \"nitrogen\"}, {\"label\": \"state: labile\", \"on\": \"nitrogen\"}]}",
+   "patterns": "{\"object_of_interest\": \"nitrogen / sediment\", \"matrix_entity\": \"seabed\", \"restrictions\": [\"detrital organic matter\", \"labile\"], \"property\": 128, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"source\", \"state\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:f8e21ac2d8c3c437bc7c1cf4e9310bc9b41526343ddb304fc13233c909b900ff",
+   "definition": "Part of terrestrial Ecosystem distribution of terrestrial EUNIS Habitats EBV, probability of occurrence of EUNIS habitats within contiguous spatial units (grid cells of 100x100 m) across the EU over 1 year time. https://github.com/EuropaBON/EBV-Descriptions/entity/Terrestrial-Ecosystem-distribution-of-terrestrial-EUNIS-Habitats",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"probability\", \"hasObjectOfInterest\": \"habitat\", \"hasMatrix\": \"\", \"hasContextObject\": \"geographical area\", \"hasConstraint\": [{\"label\": \"classification: EUNIS habitat type\", \"on\": \"habitat\"}, {\"label\": \"normalization: 100x100 m grid cell\", \"on\": \"probability\"}, {\"label\": \"region: European Union\", \"on\": \"geographical area\"}, {\"label\": \"temporal reference: calendar year\", \"on\": \"probability\"}]}",
+   "patterns": "{\"object_of_interest\": \"habitat\", \"matrix_entity\": null, \"restrictions\": [\"EUNIS habitat type\", \"100x100 m grid cell\", \"European Union\", \"calendar year\"], \"property\": 139, \"matrix\": null, \"context\": true, \"modifier\": false, \"constraints\": [\"classification\", \"normalization\", \"region\", \"temporal reference\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:f9116d407ac2c3dc30d6dd10f91db8dd711714338782555b8c22a0189c59cb46",
+   "definition": "Peak acceleration measured on the earth surface when facing seismic events, like earthquakes.",
+   "decomposition": "{\"hasStatisticalModifier\": \"maximum\", \"hasProperty\": \"acceleration\", \"hasObjectOfInterest\": \"ground\", \"hasMatrix\": \"earth\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"event: seismic event\", \"on\": \"acceleration\"}, {\"label\": \"part: surface\", \"on\": \"ground\"}]}",
+   "patterns": "{\"object_of_interest\": \"ground\", \"matrix_entity\": \"earth\", \"restrictions\": [\"seismic event\", \"surface\"], \"property\": 140, \"matrix\": 41, \"context\": false, \"modifier\": true, \"constraints\": [\"event\", \"part\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:fb8647925b080ca866644af56bca0c2431a7212e342819ee085c9b810e4418ed",
+   "definition": "Percentage Branched Perfluorooctane sulfonic acid in blood",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"volume fraction\", \"hasObjectOfInterest\": {\"AsymmetricSystem\": \"Perfluorooctane sulfonic acid / blood\", \"hasNumerator\": \"Perfluorooctane sulfonic acid\", \"hasDenominator\": \"blood\"}, \"hasMatrix\": \"person\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"condition: branched isomers\", \"on\": \"Perfluorooctane sulfonic acid\"}]}",
+   "patterns": "{\"object_of_interest\": \"Perfluorooctane sulfonic acid / blood\", \"matrix_entity\": \"person\", \"restrictions\": [\"branched isomers\"], \"property\": 110, \"matrix\": 41, \"context\": false, \"modifier\": false, \"constraints\": [\"condition\"]}"
+  },
+  {
+   "id": "urn:iadopt-lab:variable:fedb7e476e30b8cb236e17415a872aeafadf626df6a8dcb44b066a1cf1e36154",
+   "definition": "The sheet resistance of a 5-nanometer-thick layer of gold.",
+   "decomposition": "{\"hasStatisticalModifier\": \"\", \"hasProperty\": \"sheet resistance\", \"hasObjectOfInterest\": \"gold\", \"hasMatrix\": \"\", \"hasContextObject\": \"\", \"hasConstraint\": [{\"label\": \"thickness: 5 nm\", \"on\": \"gold\"}]}",
+   "patterns": "{\"object_of_interest\": \"gold\", \"matrix_entity\": null, \"restrictions\": [\"5 nm\"], \"property\": 140, \"matrix\": null, \"context\": false, \"modifier\": false, \"constraints\": [\"thickness\"]}"
+  }
+ ],
+ "property_patterns": [
+  101,
+  102,
+  103,
+  104,
+  105,
+  106,
+  107,
+  108,
+  109,
+  110,
+  111,
+  112,
+  113,
+  114,
+  115,
+  116,
+  117,
+  118,
+  119,
+  120,
+  121,
+  122,
+  123,
+  124,
+  125,
+  126,
+  127,
+  128,
+  129,
+  130,
+  131,
+  132,
+  133,
+  134,
+  135,
+  136,
+  137,
+  138,
+  139,
+  140,
+  141,
+  142
+ ],
+ "statements": {
+  "none": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: none; use \"\".",
+  "40": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: one term.\nIt follows these I-ADOPT patterns:\n- Matrix pattern 40: embedding material. The matrix must be of a different material than the object of interest. If the material is the same, the description component has a context object role. simple matrix.",
+  "41": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: one term.\nIt follows these I-ADOPT patterns:\n- Matrix pattern 41: natural container. A matrix is required when the object of interest is contained in a natural body.",
+  "42": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: one term.\nIt follows these I-ADOPT patterns:\n- Matrix pattern 42: artificial container. A matrix is required when the object of interest is contained in an artificial vessel.",
+  "43": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: one term.\nIt follows these I-ADOPT patterns:\n- Matrix pattern 43: natural process. A phenomenon in which the object is involved. The phenomena must be repesented with a simple matrix.",
+  "44": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: one term.\nIt follows these I-ADOPT patterns:\n- Matrix pattern 44: reference area. Is an area that acts as reference like a study area. matrix needed.",
+  "45": "\n\nPATTERN GUIDANCE FOR THIS DEFINITION (not part of the definition)\nThe decomposition must have this form:\n- hasMatrix: an asymmetric system with hasSource and hasTarget.\nIt follows these I-ADOPT patterns:\n- Matrix pattern 45: flow. Flow of material from one source to a target. A matrix as asymmetric system is required for a flux property. The components associated with to the system are source and target, via the respective properties hasSource and hasTarget."
+ },
+ "request": {
+  "temperature": 0.0,
+  "top_p": 1.0,
+  "max_tokens": 700
+ }
+}

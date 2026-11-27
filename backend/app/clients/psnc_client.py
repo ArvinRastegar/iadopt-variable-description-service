@@ -93,6 +93,36 @@ def build_measured_psnc_payload(
     }
 
 
+def build_finder_psnc_payload(
+    model: str, prompt: str, *, temperature: float, top_p: float, max_tokens: int
+) -> Dict[str, Any]:
+    """Build the body of the matrix finder's request (the lab's best pipeline).
+
+    The keys of the measured body (D-003), with the finder's own settings from its data: temperature 0, top_p 1 and
+    at most 700 answer tokens, never streamed.
+
+    Args:
+        model: PSNC model name.
+        prompt: The finder's prompt.
+        temperature: Its temperature.
+        top_p: Its nucleus sampling cutoff.
+        max_tokens: Its output ceiling.
+
+    Returns:
+        The request payload dict, with the keys ``model``, ``messages``, ``stream``, ``temperature``, ``top_p``,
+        ``max_tokens`` and ``chat_template_kwargs``.
+    """
+    return {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
 def build_entity_link_payload(model: str, system_prompt: str, user_message: str) -> Dict[str, Any]:
     """Build the request body of the measured entity-linking question.
 

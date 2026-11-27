@@ -21,13 +21,22 @@ Definitions the provider never answered, or whose answer was lost, count as empt
 makes the score a lower bound: it may still pass, but below the threshold the gate cannot tell
 the code from a provider outage and does not decide.
 
-Read the result with D-043's caveats: the owner chose all 102 variables and a single run. 25
-of the 102 are the prompt's own examples, whose answers the model sees, which raises the
-score; and runs vary (a standard deviation of 0.019 over repeated runs on the lab's 24
-held-out variables, not measured on all 102). So the gate also prints, for information, the
-score of the variables the prompt does not show and of its examples: the first run
-(2026-11-18) passed at 0.695 on all 102, with 0.571 on the 77 unseen and 0.976 on the 25
-examples.
+The backend runs the lab's best pipeline: the 25 corpus variables most similar to each definition
+as examples (by PSNC's embedding model), the matrix finder's statement, and the most typical of
+three answers. The gate leaves each scored variable out of its own examples and of the finder's,
+so no prompt shows the answer being scored. When PSNC fails the embedding request, that prompt
+shows the 25 fixed examples instead, and when it fails the finder's request, it states no matrix:
+below the threshold with such failures the gate does not decide either. It prints how many fell
+back or got no statement, for which cause, which matrix decisions the finder stated, and which of
+the three answers was kept.
+
+Read the result with D-043's caveats: the owner chose all 102 variables and a single run, and runs
+vary (a standard deviation of 0.019 over repeated runs on the lab's 24 held-out variables, not
+measured on all 102). The gate also prints, for information, the score of the 25 fixed examples and
+of the other 77. Before the best pipeline the 25 were the prompt's examples and saw their own
+answers: the first run (2026-11-18) passed at 0.695 on all 102, with 0.571 on the 77 and 0.976 on
+the 25. The lab measured 0.694 for the best pipeline (ten runs on PSNC, each variable's fold of 17
+left out of its examples rather than only the variable).
 
 Exit codes: 0 at or above the threshold, 1 below it, 2 when the gate could not run or decide.
 Every run that got answers writes a JSON report with every raw answer to
@@ -58,8 +67,10 @@ DEFAULT_REPORT_DIR = REPO / "quality-gate-reports"
 EXPECTED_VARIABLES = 102
 # The measured configuration `prod` runs by default (D-001, with D-042's prompt layout). The
 # gate refuses another backend unless --any-backend is given; change this with that default.
-RELEASE_BACKEND = {"provider": "psnc", "model": "Qwen3.8-27B", "prompt_setup": "measured",
+RELEASE_BACKEND = {"provider": "psnc", "model": "Qwen3.8-27B", "prompt_setup": "measured-best-pipeline",
                    "temperature": 0.5, "top_p": 1.0, "max_tokens": 16000}
+CHOICE_FIELDS = ("prompt_tokens", "examples", "examples_error", "matrix", "matrix_status", "matrix_error",
+                 "answers_kept")
 UNANSWERED = ("no_answer", "missing")
 EXIT_PASS, EXIT_FAIL, EXIT_ERROR = 0, 1, 2
 
@@ -374,6 +385,7 @@ def score(records: Sequence[Mapping[str, Any]], predictions: Mapping[str, Mappin
             "error": (prediction or {}).get("error"),
             "seconds": (prediction or {}).get("seconds"),
             "decomposition_tries": (prediction or {}).get("decomposition_tries"),
+            **{field: (prediction or {}).get(field) for field in CHOICE_FIELDS},
             "raw_output": (prediction or {}).get("raw_output"),
         })
     return {
@@ -386,10 +398,10 @@ def score(records: Sequence[Mapping[str, Any]], predictions: Mapping[str, Mappin
 
 def group_scores(records: Sequence[Mapping[str, Any]], predictions: Mapping[str, Mapping[str, Any]],
                  scorer: Scorer, example_definitions: Optional[Sequence[str]]) -> Optional[Dict[str, Any]]:
-    """Score the variables the prompt shows as examples apart from those it does not, for information.
+    """Score the 25 fixed examples apart from the other variables, for information.
 
-    The decision is made on all variables (D-043); these figures show how much the examples,
-    whose answers the model sees, lift it.
+    The decision is made on all variables (D-043). With the leave-out neither group sees its own
+    answer; the fixed examples are scored apart because they were the prompt's examples before.
 
     Args:
         records: The corpus records.
@@ -412,23 +424,26 @@ def group_scores(records: Sequence[Mapping[str, Any]], predictions: Mapping[str,
     return groups
 
 
-def decide(f1: float, threshold: float, counts: Mapping[str, int]) -> Tuple[str, int]:
+def decide(f1: float, threshold: float, counts: Mapping[str, int], degraded: int = 0) -> Tuple[str, int]:
     """Turn the score into a verdict and its exit code.
 
     Unanswered definitions count as empty, so the score is a lower bound: at or above the
-    threshold it passes, but below it the gate cannot tell the code from a provider outage.
+    threshold it passes, but below it the gate cannot tell the code from a provider outage. The
+    same holds for definitions whose prompt PSNC's failures degraded (examples that fell back, a
+    finder that did not answer): their prompt is not the one to release.
 
     Args:
         f1: The micro Close F1 on all variables.
         threshold: The minimum to pass.
         counts: How many records ended with each outcome.
+        degraded: How many definitions had a degraded prompt.
 
     Returns:
         ``("pass", 0)``, ``("fail", 1)`` or ``("undecided", 2)``.
     """
     if f1 >= threshold:
         return "pass", EXIT_PASS
-    if any(counts.get(outcome) for outcome in UNANSWERED):
+    if degraded or any(counts.get(outcome) for outcome in UNANSWERED):
         return "undecided", EXIT_ERROR
     return "fail", EXIT_FAIL
 
@@ -464,6 +479,47 @@ VERDICT_TEXT = {
     "fail": "FAIL",
     "undecided": "CANNOT DECIDE (below it with the unanswered definitions counted as empty; run it again)",
 }
+
+
+def verdict_text(verdict: str, unanswered: int, fell_back: int, unstated: int) -> str:
+    """The verdict as printed; an undecided one says why the score cannot decide."""
+    if verdict != "undecided" or not (fell_back or unstated):
+        return VERDICT_TEXT[verdict]
+    reasons = ["with the unanswered definitions counted as empty"] if unanswered else []
+    if fell_back:
+        reasons.append(f"while {fell_back} definition{'' if fell_back == 1 else 's'} used the 25 fixed examples "
+                       "because the embedding request failed")
+    if unstated:
+        reasons.append(f"while {unstated} definition{'' if unstated == 1 else 's'} got no matrix statement because "
+                       "the finder's request failed")
+    return f"CANNOT DECIDE (below it {' and '.join(reasons)}; run it again)"
+
+
+def print_choices(rows: Sequence[Mapping[str, Any]]) -> None:
+    """Print what the best pipeline chose: examples, the finder's matrix decisions, the kept answers."""
+    retrieved = sum(1 for row in rows if row["examples"] == "retrieved")
+    fell_back = [row for row in rows if row["examples"] == "fallback"]
+    if retrieved or fell_back:
+        print(f"Examples: {retrieved} retrieved, {len(fell_back)} fell back to the 25 fixed examples")
+        causes = Counter(row["examples_error"] or "no reason was recorded" for row in fell_back)
+        for cause, count in sorted(causes.items(), key=lambda item: (-item[1], item[0])):
+            print(f"  {count} {cause}")
+    stated = [row for row in rows if row["matrix_status"] == "ok"]
+    unusable = [row for row in rows if row["matrix_status"] == "unusable"]
+    failed = [row for row in rows if row["matrix_status"] == "error"]
+    if stated or unusable or failed:
+        decisions = Counter(str(row["matrix"]) for row in stated)
+        shown = ", ".join(f"{name} {decisions[name]}" for name in sorted(decisions, key=lambda n: (n != "none", n)))
+        print(f"Matrix finder: {len(stated)} stated ({shown or 'none'}), {len(unusable)} not the requested JSON, "
+              f"{len(failed)} without an answer")
+        causes = Counter(row["matrix_error"] or "no reason was recorded" for row in failed)
+        for cause, count in sorted(causes.items(), key=lambda item: (-item[1], item[0])):
+            print(f"  {count} {cause}")
+    kept = Counter(row["answers_kept"] for row in rows if row["answers_kept"] is not None)
+    if kept:
+        names = {1: "the first", 2: "the second", 3: "the third"}
+        print("Kept answer: " + ", ".join(f"{names.get(position, position)} {kept[position]}"
+                                          for position in sorted(kept)))
 
 
 def main(
@@ -518,7 +574,9 @@ def main(
         return EXIT_ERROR
 
     f1 = float(result["official"]["f1"])
-    verdict, exit_code = decide(f1, args.threshold, result["counts"])
+    fell_back = sum(1 for row in result["rows"] if row["examples"] == "fallback")
+    unstated = sum(1 for row in result["rows"] if row["matrix_status"] == "error")
+    verdict, exit_code = decide(f1, args.threshold, result["counts"], fell_back + unstated)
     report.update(finished_at=now(), verdict=verdict, **result, groups=groups)
     path = write_report(args.report_dir, report)
     counts = ", ".join(f"{count} {outcome.replace('_', ' ')}" for outcome, count in sorted(result["counts"].items()))
@@ -532,15 +590,16 @@ def main(
     if unanswered:
         reason = next((row["error"] for row in unanswered if row["error"]), "no answer came back")
         print(f"  {len(unanswered)} got no answer from the provider or were lost, e.g. {reason}")
+    print_choices(result["rows"])
     print(f"Micro Close F1, all {len(records)}: {f1:.4f} (precision {result['official']['precision']:.4f}, "
           f"recall {result['official']['recall']:.4f}); usable answers only: {result['as_run']['f1']:.4f}")
     if groups is None:
         print("  (this prompt's examples are unknown, so the unseen variables are not scored apart)")
     else:
-        print(f"  the {groups['unseen']['variables']} not in the prompt: {groups['unseen']['official']['f1']:.4f}")
-        print(f"  the {groups['examples']['variables']} the prompt shows with their answers: "
-              f"{groups['examples']['official']['f1']:.4f}")
-    print(f"Threshold {args.threshold:.2f} on all {len(records)}: {VERDICT_TEXT[verdict]}")
+        print(f"  the {groups['examples']['variables']} fixed examples: {groups['examples']['official']['f1']:.4f}")
+        print(f"  the other {groups['unseen']['variables']}: {groups['unseen']['official']['f1']:.4f}")
+    print(f"Threshold {args.threshold:.2f} on all {len(records)}: "
+          f"{verdict_text(verdict, len(unanswered), fell_back, unstated)}")
     print(f"Report: {path}")
     return exit_code
 

@@ -67,17 +67,38 @@ It performs the following steps:
 
 ### The measured configuration
 
-By default the decomposition step (2–4) runs a configuration chosen in the experiments of the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
-`matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
-examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Each example
-is shown as its definition followed by its answer as indented JSON, in the shape of
-the output the model is asked for. How this prompt was measured, and what that does and does not show, is in [evaluation.md](evaluation.md).
-**Decompositions are drafts for review, not answers.**
+By default the decomposition step (2–4) runs the best pipeline found in the experiments of the sibling `iadopt-lab`
+project, with model `Qwen3.8-27B` on PSNC, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`:
+
+* **Examples by similarity.** PSNC's embedding model `Qwen3-Embedding-0.6B` turns the definition into a vector, and the
+  prompt shows the 25 of the lab's 102 corpus variables whose definitions are most similar, the most similar last
+  (`backend/data/measured/example-pool.json`). If that request brings no vector to use, the prompt shows the 25 fixed
+  examples it used before; the finder's matrix statement is still added when it answered (each step helped on its
+  own in the lab; the two together were not measured).
+* **The matrix finder.** At the same time, the model is asked once (temperature 0) to classify the definition with the
+  I-ADOPT patterns, naming the object, the matrix entity and the restricting phrases first
+  (`backend/data/measured/matrix-finder.json`). The matrix it decides is stated after the definition in the prompt; if
+  its answer is not usable, nothing is stated.
+* **The most typical of three answers.** The `matrix-decomposition-v1` prompt, rendered byte-exactly with those
+  examples, goes out three times side by side, and the answer that agrees most with the other two is kept: agreement
+  is the evaluation scorer's Exact F1 of one answer against the other, both ways (the lab used its Close F1, which
+  needs a local model; on the lab's stored answers both gave the same gain), and a tie goes to the first answer the
+  lab's check accepts. On the stream page the first answer streams as it comes; if another answer is kept, a note and
+  that answer follow.
+
+Each example is shown as its definition followed by its answer as indented JSON, in the shape of the output the model
+is asked for. In the lab, on the 102 corpus variables and PSNC, this pipeline scored a Close F1 of 0.694 against 0.590
+for the fixed 25 examples, in about 11 seconds per variable (under 30 for every one measured); exploratory, and tuned
+on these same 102 variables, so a new variable may score lower. Each run's record keeps what was chosen (its
+examples, the matrix stated, the answer kept). How the earlier prompt was measured, and what that does and does not
+show, is in [evaluation.md](evaluation.md). **Decompositions are drafts for review, not answers.**
 
 That prompt returns six lexical fields and forbids regenerating the label,
 comment, or definition, which is why step 5 exists as a separate call. Changing the
-prompt, the examples, the model, or any sampling parameter means the service is no
-longer running what was measured and the measurements no longer describe it.
+prompt, the examples, the pool, the finder, the number of answers, the model, or any sampling parameter means the
+service is no longer running what was measured and the measurements no longer describe it. The pool and the finder's
+data are rebuilt only from the lab, with `backend/tools/build_example_pool.py` and `backend/tools/build_finder_data.py`
+and the lab's Python; neither sends a request.
 
 ### Entity linking
 
@@ -563,32 +584,41 @@ From the project root run:
 First the gate asks the backend container what it runs, which calls no model. It stops
 (exit code 2) when the container's `backend/app` and `backend/data` differ from your working
 tree, so rebuild after every change. It also stops when the backend is not the measured
-configuration prod runs by default: PSNC, `Qwen3.8-27B`, the measured prompt, temperature
-0.5, top_p 1.0 and max_tokens 16000. Pass `--any-backend` to measure another configuration
-anyway.
+configuration prod runs by default: PSNC, `Qwen3.8-27B`, the best pipeline (setup `measured-best-pipeline`),
+temperature 0.5, top_p 1.0 and max_tokens 16000. Pass `--any-backend` to measure another configuration anyway.
 
 Then it sends all 102 corpus definitions through the backend's own pipeline inside the
-container. Each definition runs the whole pipeline (decomposition, label and linking with its
-vocabulary searches), so one run makes hundreds of calls to the provider. It writes no records. Each answer is scored with the lab's extraction, validation
-and Close F1 scorer, as the lab's example-layout side test scores its answers. An answer the
-app failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's
-official workflow differs: it retries an invalid answer up to three times.)
+container. Each definition runs the whole pipeline (the embedding request and the matrix finder,
+three answers of which the most typical is kept, the label, and linking with its vocabulary
+searches), so one run makes several hundred calls to the provider. Each definition is decomposed
+with its own corpus variable left out of its examples and of the finder's, so no prompt shows the
+answer being scored. It writes no records. Each answer is scored with the lab's extraction,
+validation and Close F1 scorer, as the lab's side tests score their answers. An answer the app
+failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's official
+workflow differs: it retries an invalid answer up to three times.)
 
 The gate **passes** when the micro Close F1 of one run on all 102 variables is at least
 **0.60** (exit code 0); below that it fails (1). Definitions the provider never answered,
 or whose answer was lost, also count as empty. With them the run can still pass, but below
 0.60 the gate cannot tell the code from a provider outage, so it does not decide (2, as when
-it could not run). `--threshold`, `--concurrency` (8 at once) and `--report-dir` change the
+it could not run). The same holds when PSNC failed a definition's embedding request (its prompt
+then showed the 25 fixed examples) or the finder's request (its prompt then stated no matrix):
+below 0.60 the gate then says how many and does not decide. It prints how many definitions got
+examples by similarity and how many fell back, one line per cause with its hint (for example `2
+embedding request timed out after 5 s. PSNC's embedding model did not answer in time.`), which
+matrix decisions the finder stated and why it failed where it did, and which of the three
+answers was kept; the report has the same for each variable. `--threshold`, `--concurrency` (8 at once) and `--report-dir` change the
 defaults. Each run that got answers writes a JSON report to `quality-gate-reports/`, which
 git ignores. The report holds every answer, the commit, and whether the tree had uncommitted
 changes.
 
 Read the verdict with two caveats:
 
-* 25 of the 102 variables are the prompt's own few-shot examples, shown to the model with
-  their answers, so they score far higher than the rest. The gate prints both groups apart,
-  for information. The 0.60 on all 102 is a
-  floor against regressions, not a claim that new variables score 0.60.
+* The gate prints the 25 fixed examples and the other 77 apart, for information. Before the best pipeline the 25
+  were the prompt's examples and saw their own answers, so they scored far higher; now no variable sees its own.
+  The lab measured the best pipeline at 0.694 (ten runs on PSNC, with each variable's fold of 17 left out rather
+  than only the variable; exploratory). The 0.60 on all 102 is a floor against regressions, not a claim that new
+  variables score 0.60.
 * Runs vary. In the lab, repeated runs with 20 to 30 examples on 72 variables had a standard deviation of 0.016 to
   0.018 ([evaluation.md](evaluation.md)); the spread on all 102 has not been measured. A result near 0.60 can pass or fail
   by chance, so run it again before acting on a narrow result.

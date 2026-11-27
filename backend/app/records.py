@@ -297,6 +297,7 @@ class RecordStore:
         error: Optional[str],
         client: Optional[Dict[str, Any]] = None,
         calls: Sequence[ModelCall] = (),
+        choices: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """Start a record from a decomposition: the run, a draft event, and the draft as version 0.
 
@@ -311,7 +312,7 @@ class RecordStore:
             provider: The model provider that ran.
             model: The model that ran.
             disable_thinking: Whether reasoning was switched off.
-            prompt_setup: Which prompt the run used, such as ``measured`` or ``few-shot:v3``.
+            prompt_setup: Which prompt the run used, such as ``measured-best-pipeline`` or ``few-shot:v3``.
             prompt_sha256: Fingerprint of that prompt without the definition, if known.
             started_at: When the run started.
             ended_at: When the run ended.
@@ -320,6 +321,8 @@ class RecordStore:
             client: Device and screen sent by the browser, if any.
             calls: Every request the run sent to a model, in order (stage 2); kept with the
                 run, so a failed run keeps them too.
+            choices: What the run chose on the measured path (its examples, its matrix statement,
+                the answer it kept), or ``None`` on the legacy path.
 
         Returns:
             The new record's id, or ``None`` when this user is not recorded.
@@ -350,8 +353,8 @@ class RecordStore:
                 """
                 INSERT INTO record_runs (
                     item_id, provider, model, disable_thinking, prompt_setup, prompt_sha256, started_at,
-                    ended_at, status, error, raw_output, parsed_json, schema_valid, validation_errors
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ended_at, status, error, raw_output, parsed_json, schema_valid, validation_errors, choices
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item_id,
@@ -368,6 +371,7 @@ class RecordStore:
                     None if parsed is None else json.dumps(parsed, ensure_ascii=False),
                     None if schema_valid is None else int(bool(schema_valid)),
                     None if errors is None else json.dumps(errors, ensure_ascii=False),
+                    None if choices is None else json.dumps(choices, ensure_ascii=False),
                 ),
             )
             conn.executemany(

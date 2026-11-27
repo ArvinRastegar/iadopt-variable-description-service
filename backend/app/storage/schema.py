@@ -377,3 +377,11 @@ ALTER TABLE users ADD COLUMN approved_at TEXT;
 ALTER TABLE users ADD COLUMN approved_by INTEGER;
 """
 """``0006_account_approval``: the approval of accounts that an identity provider signs in."""
+
+RECORD_CHOICES_SQL = """
+-- What a run of the best pipeline chose, as JSON: {"examples": {"source": "retrieved" | "fallback", "ids": [...]},
+-- "matrix": "none" | "40" ... "45" | null, "answers": {"asked": 3, "kept": 1 | 2 | 3 | null}}. Empty on the legacy
+-- path and for runs recorded before.
+ALTER TABLE record_runs ADD COLUMN choices TEXT;
+"""
+"""``0007_record_choices``: what a run chose on the measured path, under app-storage's additive rule."""

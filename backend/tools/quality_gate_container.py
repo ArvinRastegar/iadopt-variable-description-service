@@ -12,8 +12,10 @@ provider key of the running backend.
   decomposing that many definitions at once.
 
 It calls ``app.pipeline.run_pipeline`` with the app's default provider and model, as the
-deployed service does: the decomposition with its retries, the label call and the linking
-questions. It writes no record and no audit entry; those are written by the HTTP routes. The
+deployed service does: on the measured path the embedding request and the matrix finder, the
+three fill answers of which the most typical is kept, then the label call and the linking
+questions. Each definition is decomposed with its own corpus variable left out of the examples
+and of the finder's examples, so that no prompt shows the answer being scored. It writes no record and no audit entry; those are written by the HTTP routes. The
 app prints diagnostics to standard output from its worker threads, so the protocol lines go to
 a copy of the original standard output and everything else goes to standard error.
 """
@@ -71,7 +73,12 @@ def decompose_one(item: Dict[str, str]) -> Dict[str, Any]:
 
     Returns:
         The prediction line's fields: the raw answer or the error, whether the provider failed
-        every decomposition request (``provider_failed``), with timing and tokens.
+        every decomposition request (``provider_failed``), with timing and tokens (``prompt_tokens``
+        are the first decomposition request's that brought an answer); and what the best pipeline
+        chose: ``examples`` (``retrieved`` or ``fallback``, with the embedding call's
+        ``examples_error``), ``matrix`` (the finder's decision, ``None`` without one) with the
+        finder call's ``matrix_status`` and ``matrix_error``, and ``answers_kept`` (which answer
+        was kept, from 1).
     """
     from app.pipeline import run_pipeline
     from app.services.call_log import CallLog
@@ -81,7 +88,9 @@ def decompose_one(item: Dict[str, str]) -> Dict[str, Any]:
     raw = None
     error = None
     try:
-        raw = run_pipeline(item["definition"], calls=calls).get("raw_llm_output")
+        raw = run_pipeline(item["definition"], calls=calls, leave_out=frozenset({item["variable_id"]})).get(
+            "raw_llm_output"
+        )
     except Exception as exc:  # one failed definition must not stop the run; the gate counts it
         error = f"{type(exc).__name__}: {exc}"[:MAX_ERROR_CHARS]
     if error is None and not raw:
@@ -90,6 +99,12 @@ def decompose_one(item: Dict[str, str]) -> Dict[str, Any]:
     provider_failed = bool(decomposition) and all(call.status == "error" for call in decomposition)
     if provider_failed:
         error = f"The provider never answered: {decomposition[-1].error}"[:MAX_ERROR_CHARS]
+    answered = [call for call in decomposition if call.status != "error"]
+    choices = calls.choices() or {}
+    examples = choices.get("examples")
+    embedding = next((call for call in calls.calls() if call.purpose == "examples"), None)
+    finder = next((call for call in calls.calls() if call.purpose == "matrix"), None)
+    fell_back = examples is not None and examples.get("source") == "fallback"
     return {
         "variable_id": item["variable_id"],
         "ok": error is None,
@@ -98,16 +113,23 @@ def decompose_one(item: Dict[str, str]) -> Dict[str, Any]:
         "error": error,
         "seconds": round(time.perf_counter() - started, 3),
         "decomposition_tries": len(decomposition),
-        "prompt_tokens": decomposition[-1].input_tokens if decomposition else None,
+        "prompt_tokens": answered[0].input_tokens if answered else None,
+        "examples": examples.get("source") if examples is not None else None,
+        "examples_error": embedding.error if fell_back and embedding is not None else None,
+        "matrix": choices.get("matrix"),
+        "matrix_status": finder.status if finder is not None else None,
+        "matrix_error": finder.error if finder is not None and finder.status != "ok" else None,
+        "answers_kept": (choices.get("answers") or {}).get("kept"),
     }
 
 
 def run_description() -> Dict[str, Any]:
     """Name what the backend runs: provider, model, sampling, prompt, examples and code.
 
-    ``example_definitions`` lists the definitions the measured prompt shows with their answers,
-    so the gate can score the variables the model has not seen apart from those; it is ``None``
-    when the backend runs another prompt, whose examples this program does not read.
+    ``example_definitions`` lists the 25 fixed examples' definitions, which the measured prompt
+    shows when its retrieval falls back, so the gate can score them apart from the other
+    variables; it is ``None`` when the backend runs another prompt, whose examples this program
+    does not read.
     ``code_sha256`` is :func:`code_digest` of the code and data the backend runs.
     """
     from app.core.config import settings
@@ -117,7 +139,7 @@ def run_description() -> Dict[str, Any]:
     provider = settings.default_model_provider
     setup, fingerprint = prompt_setup(provider)
     model = settings.psnc_model_name if provider == "psnc" else settings.model_name
-    examples = [d["definition"] for d in load_demonstrations()] if setup == "measured" else None
+    examples = [d["definition"] for d in load_demonstrations()] if setup == "measured-best-pipeline" else None
     root = pathlib.Path(str(importlib.import_module("app.pipeline").__file__)).resolve().parents[1]
     return {"kind": "run", "provider": provider, "model": model, "temperature": settings.temperature,
             "top_p": settings.top_p, "max_tokens": settings.max_tokens, "prompt_setup": setup,

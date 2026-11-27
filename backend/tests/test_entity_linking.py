@@ -386,7 +386,7 @@ def test_the_pipeline_hands_its_linker_to_enrichment(monkeypatch, finalize):
 @pytest.mark.parametrize("provider, model", [("openrouter", "qwen/qwen3.5-flash-02-23"), ("psnc", "Qwen3.8-27B")])
 def test_run_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize, provider, model):
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
-    monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs", lambda definition, model_name=None, model_provider=None: ("prompt", provider, model))
+    monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs", lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
     monkeypatch.setattr(pipeline, "call_llm_loose", lambda *args, **kwargs: ("raw", pred("water")))
     monkeypatch.setattr(pipeline, "_labelled_prediction", lambda prediction, **kwargs: prediction)
     seen = []
@@ -400,7 +400,7 @@ def test_run_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize
 def test_the_streamed_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize, provider, model):
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
     monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs",
-                        lambda definition, model_name=None, model_provider=None: ("prompt", provider, model))
+                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
     deltas = [("", "{}")]
     monkeypatch.setattr(pipeline, "stream_psnc_model", lambda *args, **kwargs: iter(deltas))
     completions = SimpleNamespace(create=lambda **kwargs: iter(deltas))
@@ -422,7 +422,7 @@ def test_the_non_streamed_fallback_links_with_the_model_that_decomposed(monkeypa
     """The stream fails before its first chunk, so the pipeline asks again without streaming."""
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
     monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs",
-                        lambda definition, model_name=None, model_provider=None: ("prompt", provider, model))
+                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
 
     def broken_stream(*args, **kwargs):
         raise RuntimeError("the stream broke before its first chunk")

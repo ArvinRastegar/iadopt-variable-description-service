@@ -272,6 +272,11 @@ class StorageTestCase(TempDatabaseTestCase):
                     reference_columns = columns(reference_file(self.dir), "users")
                     self.assertEqual(columns(db, "users")[: len(reference_columns)], reference_columns)
                     self.assertIn("AUTOINCREMENT", got[("table", "users")].upper())
+                elif table == "record_runs":
+                    # record-choices (0007) adds record_runs.choices last, which rewrites the stored SQL.
+                    reference_runs = normalized(reference[("table", table)])
+                    self.assertIn(normalized(got[("table", table)]),
+                                  (reference_runs, reference_runs[:-1] + ",choices text)"))
                 else:
                     self.assertEqual(normalized(got[("table", table)]), normalized(reference[("table", table)]))
         for kind, names in (("index", BASELINE_INDEXES), ("trigger", APPEND_ONLY_TRIGGERS)):

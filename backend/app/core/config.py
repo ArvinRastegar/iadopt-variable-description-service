@@ -327,6 +327,16 @@ class Settings(BaseSettings):
         return self.measured_dir / "demonstrations-top25.json"
 
     @property
+    def measured_example_pool_path(self) -> pathlib.Path:
+        """Path to the example pool: the lab's 102 corpus variables with PSNC's vectors."""
+        return self.measured_dir / "example-pool.json"
+
+    @property
+    def measured_finder_path(self) -> pathlib.Path:
+        """Path to the matrix finder's data: its prompt's head, the corpus as it shows it, and its statements."""
+        return self.measured_dir / "matrix-finder.json"
+
+    @property
     def five_shot_dir(self) -> pathlib.Path:
         """Path to the five-shot example directory."""
         return self.data_dir / "Json_preferred" / "five_shot"

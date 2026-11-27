@@ -161,7 +161,7 @@ def test_unanswered_definitions_can_still_pass_but_never_fail(tmp_path, capsys):
 
 def test_the_unseen_variables_and_the_examples_are_shown_apart_but_do_not_decide(tmp_path, capsys):
     records = make_records()
-    # The 25 examples (definitions 0-24) all right, the 77 others: 40 right.
+    # The 25 fixed examples (definitions 0-24) all right, the 77 others: 40 right.
     result = run_main(tmp_path, records, {r["variable_id"]: answer(r) for r in records[:65]})
     groups = result.report["groups"]
     assert (groups["examples"]["variables"], groups["unseen"]["variables"]) == (25, 77)
@@ -169,8 +169,8 @@ def test_the_unseen_variables_and_the_examples_are_shown_apart_but_do_not_decide
     assert groups["unseen"]["official"]["f1"] == pytest.approx(40 / 77)
     assert (result.code, result.report["official"]["f1"]) == (qg.EXIT_PASS, pytest.approx(65 / 102))  # all 102 decide
     out = capsys.readouterr().out
-    assert "the 77 not in the prompt: 0.5195" in out
-    assert "the 25 the prompt shows with their answers: 1.0000" in out
+    assert "  the other 77: 0.5195" in out.splitlines()
+    assert "  the 25 fixed examples: 1.0000" in out.splitlines()
 
 
 def test_without_known_examples_no_groups_are_scored(tmp_path, capsys):
@@ -309,7 +309,7 @@ def test_the_container_program_reports_the_answer_or_the_error(monkeypatch):
     from app import pipeline
     from app.services.call_log import start_call
 
-    def answered(definition, calls=None):
+    def answered(definition, calls=None, **_):
         start_call(calls, "decomposition", "psnc", "Qwen3.8-27B").finish("ok", usage={"prompt_tokens": 5208,
                                                                                        "completion_tokens": 113})
         return {"raw_llm_output": '{"hasProperty": "count"}'}
@@ -320,18 +320,18 @@ def test_the_container_program_reports_the_answer_or_the_error(monkeypatch):
         True, False, '{"hasProperty": "count"}', None)
     assert (line["decomposition_tries"], line["prompt_tokens"]) == (1, 5208)
 
-    def broken(definition, calls=None):
+    def broken(definition, calls=None, **_):
         raise RuntimeError("the linker crashed")
 
     monkeypatch.setattr(pipeline, "run_pipeline", broken)
     line = container.decompose_one({"variable_id": "v1", "definition": "d"})
     assert (line["ok"], line["provider_failed"], line["error"]) == (False, False, "RuntimeError: the linker crashed")
 
-    monkeypatch.setattr(pipeline, "run_pipeline", lambda definition, calls=None: {"raw_llm_output": ""})
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda definition, calls=None, **_: {"raw_llm_output": ""})
     line = container.decompose_one({"variable_id": "v1", "definition": "d"})
     assert (line["ok"], line["provider_failed"], line["error"]) == (False, False, "The pipeline returned no answer.")
 
-    def refused(definition, calls=None):
+    def refused(definition, calls=None, **_):
         for _ in range(3):
             start_call(calls, "decomposition", "psnc", "Qwen3.8-27B").finish("error", error="HTTP 401: key refused")
         return {"raw_llm_output": ""}
@@ -347,9 +347,9 @@ def test_the_container_describes_what_it_runs_and_agrees_with_the_gate_on_this_t
     from app.services import measured_prompt
 
     monkeypatch.setattr(measured_prompt, "load_demonstrations", lambda: [{"definition": "shown one"}])
-    monkeypatch.setattr(pipeline, "prompt_setup", lambda provider=None: ("measured", "f" * 64))
+    monkeypatch.setattr(pipeline, "prompt_setup", lambda provider=None: ("measured-best-pipeline", "f" * 64))
     run = container.run_description()
-    assert (run["kind"], run["prompt_setup"], run["example_definitions"]) == ("run", "measured", ["shown one"])
+    assert (run["kind"], run["prompt_setup"], run["example_definitions"]) == ("run", "measured-best-pipeline", ["shown one"])
     assert {"provider", "model", "temperature", "top_p", "max_tokens", "prompt_sha256"} <= set(run)
     assert run["code_sha256"] == qg.local_code()["sha256"]  # the same tree gives the same digest on both sides
     monkeypatch.setattr(pipeline, "prompt_setup", lambda provider=None: ("few-shot:v3", "f" * 64))

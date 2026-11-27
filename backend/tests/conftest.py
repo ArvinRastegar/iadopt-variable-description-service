@@ -11,6 +11,10 @@ increment-1 tests gate (G-018), whose commands write to the database (migrations
 The sign-in, request-guard and daily-limit settings are set for the whole session too, empty, which
 counts as unset: the application never overrides a variable that is set, so nothing in a developer's
 ``.env`` reaches a test, and no test reaches an identity provider but the fake one it starts itself.
+
+The best pipeline's extra requests (the examples' embedding, the matrix finder, two more fill answers) are switched
+off in every test module but ``test_best_pipeline.py``, which tests them (``retrieval_support.py``): the modules
+written before it script one decomposition answer at a time.
 """
 
 from __future__ import annotations
@@ -20,6 +24,9 @@ import os
 import pathlib
 import shutil
 import tempfile
+from typing import Iterator
+
+import pytest
 
 _SESSION_DIR = pathlib.Path(tempfile.mkdtemp(prefix="iadopt-tests-"))
 atexit.register(shutil.rmtree, _SESSION_DIR, ignore_errors=True)
@@ -29,3 +36,13 @@ for _name in (
     "IADOPT_OIDC_POST_LOGOUT", "IADOPT_TRUSTED_PROXY_HOPS", "IADOPT_SIGN_IN_LIMIT", "IADOPT_DAILY_DECOMPOSITIONS",
 ):
     os.environ[_name] = ""
+
+
+@pytest.fixture(autouse=True)
+def _best_pipeline_off(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Today's prompt and one fill answer, without the best pipeline's extra requests, outside its own tests."""
+    from retrieval_support import BEST_PIPELINE_TESTS, switch_best_pipeline_off
+
+    if request.module.__name__.rsplit(".", 1)[-1] != BEST_PIPELINE_TESTS:
+        switch_best_pipeline_off(monkeypatch)
+    yield

@@ -37,15 +37,26 @@ You get the parts:
 
 ## How it works
 
+```mermaid
+flowchart LR
+  s["Your sentence"] --> e["The 25 most similar<br/>reference examples"]
+  s --> m["Matrix hint: is there<br/>a matrix, and which kind?"]
+  e --> p["Prompt"]
+  m --> p
+  p --> a["Three answers from<br/>the language model"]
+  a --> k["Keep the answer that<br/>agrees most with the others"]
+  k --> c["Check the parts and<br/>link them to vocabularies"]
+  c --> r["Your review"]
+  r --> x["Export or publish"]
 ```
-your sentence -> language model -> checked parts -> links to vocabularies -> your review -> export or publish
-```
+
+Before the model writes, the service looks up the 25 reference variables whose definitions are closest to yours and shows them, with their expert answers, as examples. A short first question decides whether the variable has a matrix, the medium the measured thing is in, such as sea water, and adds that hint to the prompt. The model then answers three times at once, and the service keeps the answer that agrees most with the other two. In the [evaluation lab](https://github.com/ArvinRastegar/i-adopt-llm-based-service#best-pipeline-so-far) this scored 0.694, against 0.590 with one fixed set of examples.
 
 Model answers are drafts. A person always has the last word.
 
 ## Built with
 
-Python, FastAPI, SQLite, React, TypeScript, Docker and GitHub Actions. More than 800 automated tests run in CI, and before a release the service is scored on 102 reference cases.
+Python, FastAPI, SQLite, React, TypeScript, Docker and GitHub Actions. More than 1,100 automated tests run in CI, and before a release the service is scored on 102 reference cases, each without its own answer among the examples.
 
 ## Run it locally
 
@@ -62,7 +73,7 @@ Then open `.env` and set:
 - `IADOPT_SESSION_SECRET`, for example with the output of `openssl rand -hex 32`
 - `IADOPT_BOOTSTRAP_ADMIN_PASSWORD`, the password of the first admin
 - `IADOPT_COOKIE_SECURE=false`, because you run on plain http
-- `PSNC_API_KEY` if you want to decompose. With an OpenRouter key instead, set `OPENROUTER_API_KEY`, `ENABLED_MODEL_PROVIDERS=openrouter` and `DEFAULT_MODEL_PROVIDER=openrouter`, and leave `PSNC_API_KEY` at its placeholder
+- `PSNC_API_KEY` if you want to decompose. The setup above runs on PSNC and uses its chat model and its embedding model. With an OpenRouter key instead, set `OPENROUTER_API_KEY`, `ENABLED_MODEL_PROVIDERS=openrouter` and `DEFAULT_MODEL_PROVIDER=openrouter`, and leave `PSNC_API_KEY` at its placeholder; OpenRouter gets a simpler prompt with five fixed examples
 
 Without a key you can leave the placeholders. Opening, editing and exporting Turtle still work, only decomposing does not.
 

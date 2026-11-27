@@ -77,6 +77,7 @@ CONTEXT: Dict[str, Any] = {
     "bodyValue": {"@id": "oa:bodyValue"},
     "parsedAnswer": {"@id": "rec:parsedAnswer", "@type": "@json"},
     "validationErrors": {"@id": "rec:validationErrors", "@type": "@json"},
+    "choices": {"@id": "rec:choices", "@type": "@json"},
 }
 """The JSON-LD context of ``records.jsonld``; any key it does not list falls in the record vocabulary."""
 
@@ -332,6 +333,7 @@ def _record_node(conn: sqlite3.Connection, item: sqlite3.Row) -> Dict[str, Any]:
                 "reasoningOff": bool(run["disable_thinking"]),
                 "promptSetup": run["prompt_setup"],
                 "promptSha256": run["prompt_sha256"],
+                "choices": _json_or_text(run["choices"]),
                 "startedAtTime": run["started_at"],
                 "endedAtTime": run["ended_at"],
                 "status": run["status"],
@@ -565,6 +567,12 @@ def _readme(exported_at: datetime, counts: Dict[str, int]) -> str:
             "Annotation. A version's Turtle is its graph written out again, without the comments,",
             "layout or prefix names of the text it was stored with. In Python: json.load(file)['@graph'];",
             "with rdflib: Graph().parse('records.jsonld', format='json-ld').",
+            "",
+            "A model run's choices say what the best pipeline chose: its examples (the corpus variables",
+            "its prompt showed, by lab id in prompt order: retrieved by similarity, or the fallback, the",
+            "25 fixed examples), the matrix the finder stated (none, a matrix pattern, or null when the",
+            "finder gave no usable answer) and which of the answers it asked for it kept. Runs on another",
+            "prompt have none.",
             "",
             "Read the CSV files with pandas (pandas.read_csv) or R (read.csv). In Excel, use",
             "Data > From Text/CSV rather than opening the files directly, so that text people typed",

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import httpx
 import requests
@@ -29,7 +30,7 @@ from ..clients.psnc_client import (
 )
 from ..core.config import OPENROUTER_MODEL_PROVIDER, PSNC_MODEL_PROVIDER, settings
 from ..core.provider_keys import without_keys
-from .call_log import CallLog, mark_unusable, short_reason, start_call
+from .call_log import CallLog, PendingCall, mark_unusable, short_reason, start_call
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?", re.MULTILINE)
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -173,6 +174,77 @@ def call_model(
             print(f"Unexpected error attempt {attempt}: {without_keys(e)}")
 
     return ""
+
+
+@dataclass
+class FillAnswer:
+    """One of the fill answers the best pipeline asks for side by side.
+
+    Attributes:
+        text: The answer's text without reasoning, or ``None`` when no answer came.
+        usage: The ``usage`` PSNC reported, if any.
+        error: Why no answer came, or ``None``.
+        pending: Its call, not yet finished: the vote decides its status.
+    """
+
+    text: Optional[str]
+    usage: Any
+    error: Optional[BaseException]
+    pending: Optional[PendingCall]
+
+
+def send_psnc_fill(
+    model: str,
+    prompt: str,
+    temperature: float,
+    *,
+    calls: Optional[CallLog],
+    start: Optional[Callable[[], Optional[PendingCall]]] = None,
+) -> FillAnswer:
+    """Send the measured fill prompt once, not streamed and without retry; its call is finished by the caller.
+
+    Args:
+        model: PSNC model name.
+        prompt: The fill prompt.
+        temperature: Sampling temperature.
+        calls: The run's call log; the call is started here and finished once the answers are compared.
+        start: Starts the call in place of :func:`start_call` (the stream's background answers); when it gives
+            ``None`` the stream has ended and nothing is sent.
+
+    Returns:
+        The answer, or why none came. A key that cannot be sent gives no call, nor does a ``start`` that gives
+        ``None``: nothing was sent.
+
+    Side effects:
+        One PSNC HTTP call.
+    """
+    try:
+        headers = psnc_chat_headers()
+    except RuntimeError as e:
+        return FillAnswer(None, None, e, None)
+    pending = start() if start is not None else start_call(calls, "decomposition", PSNC_MODEL_PROVIDER, model)
+    if pending is None:
+        return FillAnswer(None, None, None, None)
+    try:
+        response = get_http_session().post(
+            psnc_chat_completions_url(),
+            headers=headers,
+            json=_psnc_payload(model, prompt, temperature, disable_thinking=True, stream=False, measured=True),
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:  # the vote decides; no answer counts as unusable there
+        pending.answered()
+        return FillAnswer(None, None, e, pending)
+    pending.answered()
+    usage = data.get("usage") if isinstance(data, dict) else None
+    return FillAnswer(_extract_chat_completion_text(data), usage, None, pending)
+
+
+def chat_completion_text(data: Any) -> str:
+    """The assistant's text of a non-streamed chat-completions body, without reasoning; ``""`` when there is none."""
+    return _extract_chat_completion_text(data) if isinstance(data, dict) else ""
 
 
 def _extract_chat_completion_text(data: Dict[str, Any]) -> str:
