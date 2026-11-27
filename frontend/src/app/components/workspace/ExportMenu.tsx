@@ -1,7 +1,6 @@
 import { ChevronDownIcon, DownloadIcon } from 'lucide-react';
-import { toast } from 'sonner';
-
 import { Button } from '@/components/ui/button';
+import { toastError } from '@/components/ui/feedback';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/menus';
 import { downloadBlob } from '@/lib/download';
 import toTurtle from '@/model/toTurtle.js';
@@ -34,7 +33,10 @@ export function useExport() {
       console.error(error);
       const message = error instanceof Error ? error.message : String(error);
       logEvent('export_failed', {}, { error: message });
-      toast.error(message || 'Export failed.');
+      toastError('Could not export the file. Try again; if it keeps failing, reload the page. Your draft is kept on this device.', {
+        id: 'export-failed',
+        description: message || undefined,
+      });
     }
   };
 }

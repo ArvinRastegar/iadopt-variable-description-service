@@ -177,7 +177,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
         setStep('check');
         return;
       }
-      setPublishError(error instanceof Error ? error.message : 'Nanopub publish failed.');
+      setPublishError(error instanceof Error && error.message ? error.message : 'The service gave no reason.');
       setStep('confirm');
     } finally {
       setBusy(false);
@@ -355,7 +355,12 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
               <Callout tone="warning" title="Publishing is permanent and public">
                 Anyone can read the nanopublication, and nobody can edit or delete it. If something turns out wrong, you can publish a retraction, which also stays public.
               </Callout>
-              {publishError && <Callout tone="danger" title="Publishing failed">{publishError}</Callout>}
+              {publishError && (
+                <Callout tone="danger" title="Publishing failed">
+                  <span className="block break-words">{publishError}</span>
+                  <span className="mt-1 block">Try again in a moment. If it keeps failing, write to the contacts at the bottom of the start page.</span>
+                </Callout>
+              )}
               <div className="flex items-start gap-2.5 text-sm leading-5">
                 <Checkbox id="publish-agree" className="mt-px" checked={agree} onCheckedChange={(value) => setAgree(value === true)} />
                 <label htmlFor="publish-agree">I checked the components and links, and I want to publish this variable.</label>

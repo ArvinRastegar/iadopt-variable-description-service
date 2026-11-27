@@ -15,8 +15,17 @@ function storedTheme(): Theme | null {
   return value === 'light' || value === 'dark' ? value : null;
 }
 
+/**
+ * Switch the theme with transitions paused for one frame, so every colour does not animate at once.
+ * The `theme-switching` class is defined in globals.css.
+ */
 function applyTheme(theme: Theme) {
-  document.documentElement.classList.toggle('dark', theme === 'dark');
+  const root = document.documentElement;
+  if (root.classList.contains('dark') === (theme === 'dark')) return;
+  root.classList.add('theme-switching');
+  root.classList.toggle('dark', theme === 'dark');
+  void root.offsetHeight; // apply the new colours before transitions come back
+  window.requestAnimationFrame(() => root.classList.remove('theme-switching'));
 }
 
 const ThemeContext = React.createContext<{ theme: Theme; toggle: () => void }>({

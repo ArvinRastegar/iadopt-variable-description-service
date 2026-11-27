@@ -32,7 +32,9 @@ export function DiagramView() {
   const workspace = useWorkspace();
   const container = React.useRef<HTMLDivElement>(null);
   const width = useContainerWidth(container);
-  const [zoom, setZoom] = React.useState<number | 'fit'>('fit');
+  // Wide screens open at 100%, where the labels are readable; narrower screens open fitted, so the whole
+  // diagram is in view, and zoom in with the buttons. The Fit button shows the whole diagram everywhere.
+  const [zoom, setZoom] = React.useState<number | 'fit'>(() => (window.matchMedia?.('(min-width: 1024px)').matches ? 1 : 'fit'));
   const idPrefix = React.useId().replace(/:/g, '');
 
   const fitScale = width > 0 ? Math.min(1.25, Math.max(0.4, (width - 48) / DIAGRAM_WIDTH)) : 1;
@@ -51,14 +53,15 @@ export function DiagramView() {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+      {/* Wraps on narrow screens instead of running off the left edge; the empty strip lets clicks through. */}
+      <div className="pointer-events-none absolute top-3 right-3 left-3 z-10 flex flex-wrap items-center justify-end gap-2 [&>*]:pointer-events-auto">
         <OrderPopover />
         <div className="flex h-8 items-center rounded-md border border-border bg-surface shadow-xs">
-          <button type="button" aria-label="Zoom out" onClick={() => step(-1)} className="flex size-8 items-center justify-center rounded-l-md text-text-2 hover:bg-surface-2 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none">
+          <button type="button" aria-label="Zoom out" onClick={() => step(-1)} className="flex size-8 items-center justify-center rounded-l-md text-text-2 hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none">
             <MinusIcon className="size-3.5" aria-hidden="true" />
           </button>
           <span className="w-12 text-center font-mono text-xs text-text-2" aria-live="polite">{Math.round(scale * 100)}%</span>
-          <button type="button" aria-label="Zoom in" onClick={() => step(1)} className="flex size-8 items-center justify-center rounded-r-md text-text-2 hover:bg-surface-2 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none">
+          <button type="button" aria-label="Zoom in" onClick={() => step(1)} className="flex size-8 items-center justify-center rounded-r-md text-text-2 hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none">
             <PlusIcon className="size-3.5" aria-hidden="true" />
           </button>
         </div>
@@ -67,7 +70,7 @@ export function DiagramView() {
         </Button>
       </div>
 
-      <div ref={container} className="canvas-dots min-h-0 flex-1 overflow-auto px-6 pt-16 pb-24">
+      <div ref={container} className="canvas-dots min-h-0 flex-1 overflow-auto px-6 pt-24 pb-24 min-[400px]:pt-16">
         {renderError && (
           <div className="mx-auto mb-6 max-w-2xl">
             <Callout tone="danger" title={`Error during ${renderError.phase.toLowerCase()}`}>
@@ -146,7 +149,7 @@ function OrderPopover() {
         <button
           type="button"
           title="Display order of components"
-          className="flex h-8 items-center gap-2 rounded-md border border-border bg-surface pr-2 pl-2.5 text-xs font-medium text-text-2 shadow-xs hover:bg-surface-2 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none"
+          className="flex h-8 items-center gap-2 rounded-md border border-border bg-surface pr-2 pl-2.5 text-xs font-medium text-text-2 shadow-xs hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
         >
           Order
           <span className="flex gap-[3px]" aria-hidden="true">

@@ -61,20 +61,22 @@ export function WorkspacePage() {
           <span className="hidden text-xs text-muted-foreground md:inline">Draft saved on this device</span>
           <ExportMenu />
           <MarkBestButton onRequest={() => void markBest.request()} />
-          <Button onClick={() => void publish.request()} disabled={!workspace.layout || workspace.decomposing}>
+          {/* While the Turtle has unsaved edits, "Update diagram" is the one filled action. */}
+          <Button variant={workspace.turtleDirty ? 'outline' : 'default'} onClick={() => void publish.request()} disabled={!workspace.layout || workspace.decomposing}>
             <CloudUploadIcon aria-hidden="true" /> Publish
           </Button>
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <aside aria-label="Definition and review" className="order-2 flex flex-col gap-6 border-t border-border bg-surface px-4 pt-[18px] pb-6 lg:order-1 lg:w-[296px] lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-r">
+        {/* One order on every screen: what you see first is what Tab and screen readers reach first. */}
+        <aside aria-label="Definition and review" className="flex flex-col gap-6 border-b border-border bg-surface px-4 pt-[18px] pb-6 lg:w-[296px] lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <DefinitionPanel />
           <RunPanel />
           <ReviewPanel onMarkBest={() => void markBest.request()} />
         </aside>
 
-        <section aria-label="Decomposition" className="order-1 flex min-h-[560px] min-w-0 flex-1 flex-col lg:order-2 lg:min-h-0">
+        <section aria-label="Decomposition" className="flex min-h-[560px] min-w-0 flex-1 flex-col lg:min-h-0">
           {workspace.decomposing ? (
             <DecomposeProgress />
           ) : (
@@ -118,7 +120,7 @@ export function WorkspacePage() {
           )}
         </section>
 
-        <aside ref={inspectorRef} aria-label="Inspector" className="order-3 flex flex-col border-t border-border bg-surface lg:w-[340px] lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l">
+        <aside ref={inspectorRef} aria-label="Inspector" className="flex flex-col border-t border-border bg-surface lg:w-[340px] lg:shrink-0 lg:overflow-y-auto lg:border-t-0 lg:border-l">
           {workspace.decomposing ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2.5 p-8 text-center">
               <div className="font-semibold">Components appear here</div>

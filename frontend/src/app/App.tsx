@@ -12,6 +12,9 @@ import { StartPage } from './pages/StartPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { PublicationsPage } from './pages/PublicationsPage';
 
+const SITE_NAME = 'I-ADOPT Variable Description Service';
+const ROUTE_TITLES = { workspace: 'Workspace', publications: 'Publications' } as const;
+
 function Shell() {
   const auth = useAuth();
   const { theme } = useTheme();
@@ -23,6 +26,21 @@ function Shell() {
   React.useEffect(() => {
     if (openedFromUrl && firstRoute.current === 'start' && !window.location.hash) navigate('workspace');
   }, [openedFromUrl]);
+
+  // Each view has its own title, and moving to another view puts focus on its heading, as a page load would.
+  const previousRoute = React.useRef(route);
+  React.useEffect(() => {
+    document.title = route === 'start' ? SITE_NAME : `${ROUTE_TITLES[route]} · ${SITE_NAME}`;
+    if (previousRoute.current === route) return;
+    previousRoute.current = route;
+    const frame = window.requestAnimationFrame(() => {
+      const heading = document.querySelector<HTMLElement>('main h1') ?? document.querySelector<HTMLElement>('main');
+      if (!heading) return;
+      heading.tabIndex = -1;
+      heading.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [route]);
 
   const nav = [
     { href: routeHref('start'), label: 'New variable', current: route === 'start' },

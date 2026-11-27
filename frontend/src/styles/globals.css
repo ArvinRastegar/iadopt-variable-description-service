@@ -262,8 +262,9 @@
 }
 
 @layer base {
+  /* Full-strength outline colour: links and plain buttons use the browser's focus outline, which needs 3:1. */
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
 
   html {
@@ -276,8 +277,9 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    font-size: 14px;
-    line-height: 20px;
+    /* In rem, so a larger default font size in the browser enlarges the text; 14px and 20px at the default. */
+    font-size: 0.875rem;
+    line-height: 1.25rem;
   }
 
   a {
@@ -317,6 +319,22 @@
   font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* Set for one frame while the theme switches (src/shared/theme.tsx), so colours change at once. */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
+/* Keyboard focus on a diagram box: a ring outside the selection ring, so focus and selection stay apart. */
+.diagram-focus-ring {
+  visibility: hidden;
+}
+
+.diagram-box:focus-visible > .diagram-focus-ring {
+  visibility: visible;
 }
 
 @keyframes caret-blink {

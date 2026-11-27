@@ -1,10 +1,8 @@
 import * as React from 'react';
-import { BookOpenIcon, EraserIcon, LogOutIcon, ShieldCheckIcon } from 'lucide-react';
-import { toast } from 'sonner';
-
+import { BookOpenIcon, CheckIcon, EraserIcon, LogOutIcon, MenuIcon, ShieldCheckIcon } from 'lucide-react';
 import logoUrl from '../../logo.svg';
 import { Button } from '@/components/ui/button';
-import { Pill } from '@/components/ui/feedback';
+import { Pill, toastError } from '@/components/ui/feedback';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/menus';
 import { cn } from '@/lib/utils';
@@ -43,7 +41,31 @@ export function AppHeader({
   return (
     <header className={cn('sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface px-3 sm:px-5', className)}>
       <Brand href={brandHref} />
-      <nav aria-label="Main" className="ml-1 flex min-w-0 items-center gap-0.5 overflow-x-auto sm:ml-3">
+      {/*
+        Below 1024px the links sit behind a menu button: from 640px the logo text and, from 768px, the guide
+        link leave too little room, and the strip would run over the buttons beside it.
+      */}
+      <nav aria-label="Main" className="lg:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-1.5 px-2">
+              <MenuIcon aria-hidden="true" />
+              Menu
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {nav.map((item) => (
+              <DropdownMenuItem key={item.href} asChild>
+                <a href={item.href} aria-current={item.current ? 'page' : undefined} className="justify-between text-foreground no-underline">
+                  {item.label}
+                  {item.current && <CheckIcon aria-hidden="true" />}
+                </a>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </nav>
+      <nav aria-label="Main" className="ml-3 hidden min-w-0 items-center gap-0.5 lg:flex">
         {nav.map((item) => (
           <a
             key={item.href}
@@ -51,7 +73,8 @@ export function AppHeader({
             aria-current={item.current ? 'page' : undefined}
             className={cn(
               'flex h-8 items-center rounded-md px-2.5 text-sm font-medium whitespace-nowrap no-underline transition-colors',
-              item.current ? 'bg-surface-2 text-foreground' : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+              // The current page carries the tabs' underline, not only a tint.
+              item.current ? 'bg-surface-2 text-foreground shadow-[inset_0_-2px_0_var(--foreground)]' : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
             )}
           >
             {item.label}
@@ -85,7 +108,7 @@ function AccountButton({ auth }: { auth: HeaderAuth }) {
       await signOut();
     } catch (error) {
       console.error(error);
-      toast.error(error instanceof Error && error.message ? error.message : 'Could not sign out. Please try again.');
+      toastError('Could not sign out. Try again.', { id: 'sign-out-failed', description: error instanceof Error && error.message ? error.message : undefined });
     } finally {
       setBusy(false);
     }
@@ -105,7 +128,7 @@ function AccountButton({ auth }: { auth: HeaderAuth }) {
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex h-[38px] items-center gap-2 rounded-full border border-border py-0 pr-3 pl-1 text-foreground transition-colors outline-none hover:bg-surface-2 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+            className="flex h-[38px] items-center gap-2 rounded-full border border-border py-0 pr-3 pl-1 text-foreground transition-colors outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             aria-label={`Account menu for ${name}`}
           >
             <span aria-hidden="true" className="flex size-7 items-center justify-center rounded-full bg-prop-bg text-xs font-semibold text-prop-fg">
