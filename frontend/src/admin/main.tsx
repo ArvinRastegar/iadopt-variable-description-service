@@ -190,7 +190,7 @@ function AdminPage() {
                 </span>
                 <Sub>{stats.event_count_30d ? `${((stats.failures_30d / stats.event_count_30d) * 100).toFixed(1)}% of events` : 'No events'}</Sub>
               </StatTile>
-              <StatTile label="Average latency">{formatLatency(stats.average_latency_ms_30d)}<Sub>across all actions</Sub></StatTile>
+              <StatTile label="Average latency">{formatLatency(stats.average_latency_ms_30d)}<Sub>recent actions count most</Sub></StatTile>
             </div>
 
             <div className="flex flex-wrap items-start gap-4">

@@ -59,6 +59,12 @@ NOBODY: Dict[str, Any] = {}
 PASSWORD_ITERATIONS = 390_000
 """The PBKDF2-SHA256 iterations of a new password hash."""
 
+LATENCY_HALF_LIFE_ACTIONS = 20
+"""How many actions back an action's weight in the admin dashboard's average latency halves.
+
+The last 20 actions carry half the weight, so the figure follows a change in latency within a few
+dozen actions instead of averaging thousands equally."""
+
 
 @dataclass(frozen=True)
 class AppSession:
@@ -126,6 +132,30 @@ def parse_utc(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def recency_weighted_average(values_newest_first: List[int], half_life: int = LATENCY_HALF_LIFE_ACTIONS) -> int:
+    """Average values so that recent ones count more, rounded to whole units.
+
+    Each value weighs half as much as the one ``half_life`` places newer (an exponentially
+    weighted mean), so the average follows recent changes quickly.
+
+    Args:
+        values_newest_first: The values, the most recent first.
+        half_life: How many values back the weight halves; must be positive.
+
+    Returns:
+        The weighted mean, or ``0`` when there are no values.
+    """
+    decay = 0.5 ** (1 / half_life)
+    weight = 1.0
+    total = 0.0
+    weights = 0.0
+    for value in values_newest_first:
+        total += weight * value
+        weights += weight
+        weight *= decay
+    return round(total / weights) if weights else 0
 
 
 def _hash_text(iterations: int, salt: bytes, digest: bytes) -> str:
@@ -1038,7 +1068,8 @@ class AuthStore:
             "active_usernames_30d": sorted(active_usernames),
             "event_count_30d": len(events),
             "failures_30d": failures,
-            "average_latency_ms_30d": round(sum(latencies) / len(latencies)) if latencies else 0,
+            # Recent actions count more (``latencies`` is newest first), so the figure updates quickly.
+            "average_latency_ms_30d": recency_weighted_average(latencies),
             "events_by_action_30d": by_action,
             "model_usage_30d": model_usage,
             "recent_events": events[:25],
