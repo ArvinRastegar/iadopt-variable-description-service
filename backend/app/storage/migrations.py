@@ -21,6 +21,7 @@ from .schema import (
     DAILY_DECOMPOSITIONS_SQL,
     INCREMENTAL_VACUUM_SQL,
     OIDC_IDENTITY_SQL,
+    PUBLISHED_VARIABLE_SQL,
     RECORD_CHOICES_SQL,
 )
 
@@ -64,6 +65,7 @@ MIGRATIONS: List[Migration] = [
     Migration("0005_daily_decompositions", SQL, DAILY_DECOMPOSITIONS_SQL),
     Migration("0006_account_approval", SQL, ACCOUNT_APPROVAL_SQL),
     Migration("0007_record_choices", SQL, RECORD_CHOICES_SQL),
+    Migration("0008_published_variable", SQL, PUBLISHED_VARIABLE_SQL),
 ]
 """The ordered migrations: app-storage's own two, then those of the modules that own the tables."""
 

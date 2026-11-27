@@ -69,6 +69,7 @@ CONTEXT: Dict[str, Any] = {
     "bestVersion": {"@id": "rec:bestVersion", "@type": "@id"},
     "publishedAs": {"@id": "rec:publishedAs", "@type": "@id"},
     "nanopublication": {"@id": "rec:nanopublication", "@type": "@id"},
+    "introduced": {"@id": "rec:introduced", "@type": "@id"},
     "orcid": {"@id": "rec:orcid", "@type": "@id"},
     "role": {"@id": "rec:role", "@type": "@id"},
     "annotation": {"@id": "rec:annotation"},
@@ -377,7 +378,7 @@ def _record_node(conn: sqlite3.Connection, item: sqlite3.Row) -> Dict[str, Any]:
     for event in conn.execute(
         """
         SELECT e.id, e.seq, e.type, v.number AS version, e.occurred_at, e.recorded_at, e.note,
-               e.unchecked_components, e.nanopub_uri, e.orcid
+               e.unchecked_components, e.nanopub_uri, e.orcid, e.variable_uri
           FROM record_events e
           LEFT JOIN record_versions v ON v.id = e.version_id
          WHERE e.item_id = ?
@@ -418,6 +419,7 @@ def _record_node(conn: sqlite3.Connection, item: sqlite3.Row) -> Dict[str, Any]:
             )
         if event["type"] == "publish":
             step["nanopublication"] = event["nanopub_uri"]
+            step["introduced"] = event["variable_uri"]
             step["orcid"] = event["orcid"]
             if event["nanopub_uri"]:
                 published.append(event["nanopub_uri"])
@@ -560,6 +562,9 @@ def _readme(exported_at: datetime, counts: Dict[str, int]) -> str:
             "leave the graph as it was; checks and unchecks count each \"Looks right\" set and undone.",
             "best version is the version marked as best most recently. published as lists every",
             "nanopublication made from the record, oldest first, and last published is the latest.",
+            "A publication step in records.jsonld names the variable IRI it introduced: the first",
+            "publication of a record gets one made from its nanopublication's code, and later ones keep",
+            "it. The version it published may still show the draft IRI it was given before publishing.",
             "",
             "records.jsonld is one JSON-LD document. Each record sits on its own line in @graph, in",
             "the order things happened: who made it, the definition, the model run with each call,",

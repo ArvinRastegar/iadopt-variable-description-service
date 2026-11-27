@@ -170,6 +170,22 @@ def core_graph(graph: Graph) -> Graph:
     return core
 
 
+def _published_variable(publication: sqlite3.Row) -> Optional[str]:
+    """The variable IRI a publication introduced.
+
+    Recorded with the publication since ``0008_published_variable``; for one recorded before, the IRI in the Turtle
+    it published, which its version holds. ``None`` when that Turtle names no single variable.
+    """
+    if publication["variable_uri"]:
+        return str(publication["variable_uri"])
+    try:
+        graph = Graph().parse(data=str(publication["turtle"]), format="turtle")
+    except Exception:  # a version's Turtle parsed when it was recorded; this is only a safeguard
+        return None
+    variables = {subject for subject in graph.subjects(RDF.type, IADOPT_VARIABLE) if isinstance(subject, URIRef)}
+    return str(next(iter(variables))) if len(variables) == 1 else None
+
+
 def fingerprints(graph: Graph) -> Tuple[str, str]:
     """Return a graph's full and core fingerprints (see :func:`graph_sha256`, :func:`core_graph`).
 
@@ -423,6 +439,7 @@ class RecordStore:
         nanopub_uri: str,
         orcid: str,
         client: Optional[Dict[str, Any]] = None,
+        variable_uri: Optional[str] = None,
     ) -> None:
         """Add a publication to its record, after the nanopublication was published.
 
@@ -438,6 +455,8 @@ class RecordStore:
             nanopub_uri: The new nanopublication's URI.
             orcid: The ORCID iD the nanopublication names as its creator.
             client: Device and screen sent by the browser, if any.
+            variable_uri: The variable IRI the nanopublication introduced, which can differ from the one in
+                ``turtle``: the first publication mints it at signing, later ones keep it.
         """
         item_id = int(target["item_id"])
         with self._lock, self._transaction(immediate=True) as conn:
@@ -461,6 +480,7 @@ class RecordStore:
                 context_id=self._context_id(conn, user_id=int(user["id"]), request=request, client=client),
                 nanopub_uri=nanopub_uri,
                 orcid=orcid,
+                variable_uri=variable_uri,
             )
 
     # ------------------------------------------------------------------ #
@@ -665,13 +685,18 @@ class RecordStore:
         nanopublication metadata, as the preparation step does, but nothing else. An earlier
         mark no longer counts once another version is marked. Nothing is written.
 
+        It also says what the record published before: a record's variable keeps the IRI its first
+        publication introduced, and each publication replaces the one before it.
+
         Args:
             user: The signed-in user; only the record's owner can publish from it.
             record_id: The record's id.
             graph: The parsed assertion graph about to be published.
 
         Returns:
-            ``{"item_id", "marked_version_id", "sha256", "core_sha256"}`` for :meth:`record_publish`.
+            ``{"item_id", "marked_version_id", "sha256", "core_sha256"}`` for :meth:`record_publish`, and
+            ``variable_uri`` (the IRI the record's first publication introduced) and ``supersedes`` (its latest
+            nanopublication), both ``None`` before its first publication.
 
         Raises:
             HTTPException: 404 when the record does not exist for this user; 409 when no
@@ -682,6 +707,17 @@ class RecordStore:
             item = self._owned_item(conn, user, record_id)
             item_id = int(item["id"])
             marked = self._latest_mark(conn, item_id)
+            publications = conn.execute(
+                """
+                SELECT e.variable_uri, e.nanopub_uri, c.turtle
+                  FROM record_events e
+                  JOIN record_versions v ON v.id = e.version_id
+                  JOIN record_contents c ON c.sha256 = v.content_sha256
+                 WHERE e.item_id = ? AND e.type = 'publish' AND e.nanopub_uri IS NOT NULL
+                 ORDER BY e.seq
+                """,
+                (item_id,),
+            ).fetchall()
         if marked is None:
             raise HTTPException(status_code=409, detail="Mark this version as best before publishing.")
         try:
@@ -693,7 +729,14 @@ class RecordStore:
                 status_code=409,
                 detail="This is not the version you marked as best. Mark this version as best before publishing.",
             )
-        return {"item_id": item_id, "marked_version_id": int(marked["id"]), "sha256": sha, "core_sha256": core}
+        return {
+            "item_id": item_id,
+            "marked_version_id": int(marked["id"]),
+            "sha256": sha,
+            "core_sha256": core,
+            "variable_uri": _published_variable(publications[0]) if publications else None,
+            "supersedes": str(publications[-1]["nanopub_uri"]) if publications else None,
+        }
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -761,6 +804,7 @@ class RecordStore:
         unchecked_components: Optional[int] = None,
         nanopub_uri: Optional[str] = None,
         orcid: Optional[str] = None,
+        variable_uri: Optional[str] = None,
     ) -> Tuple[int, int]:
         """Append an event at the end of the record's timeline; return its row id and number."""
         seq = int(
@@ -770,8 +814,8 @@ class RecordStore:
             """
             INSERT INTO record_events (
                 item_id, seq, type, version_id, occurred_at, recorded_at, context_id,
-                note, unchecked_components, nanopub_uri, orcid
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                note, unchecked_components, nanopub_uri, orcid, variable_uri
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
@@ -785,6 +829,7 @@ class RecordStore:
                 unchecked_components,
                 nanopub_uri,
                 orcid,
+                variable_uri,
             ),
         )
         return int(cursor.lastrowid or 0), seq

@@ -342,6 +342,18 @@ My system is measuring air temperature at a height of 1.7m
    your ORCID iD and asks you to confirm, because publishing is permanent and public. Retract it
    later under **Publications**.
 
+   The variable gets its permanent IRI when it is first published, not before: until then the IRI
+   in the Turtle (`https://w3id.org/iadopt/variable/<date and time>-NN`) is only a draft name. The
+   first publication writes the variable as `https://w3id.org/iadopt/variable/~~~ARTIFACTCODE~~~`,
+   and signing puts the nanopublication's own code there, so the IRI is opaque, never the same
+   twice, and names the nanopublication that introduced it (`https://w3id.org/np/<code>`). Publishing
+   the same record again (after a correction, say) keeps that IRI and marks the new nanopublication
+   as superseding the record's previous one, so the nanopublication network, Nanodash's search and
+   the [I-ADOPT catalogue](https://mabablue.github.io/catalogue/) show the variable once, at its
+   newest version; the catalogue picks it up in its nightly run. A record published before this
+   change keeps the IRI it published then. A variable imported into a new record gets a new IRI.
+   The publish dialog shows the IRI as published.
+
 ---
 
 # Stopping the Application

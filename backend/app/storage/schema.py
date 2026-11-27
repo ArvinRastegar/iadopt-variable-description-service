@@ -385,3 +385,11 @@ RECORD_CHOICES_SQL = """
 ALTER TABLE record_runs ADD COLUMN choices TEXT;
 """
 """``0007_record_choices``: what a run chose on the measured path, under app-storage's additive rule."""
+
+PUBLISHED_VARIABLE_SQL = """
+-- The variable IRI a publication introduced: the first publication of a record mints it from its own artifact code
+-- (https://w3id.org/iadopt/variable/<code>), and the record's later publications keep it. Empty for events that are
+-- no publication, and for publications recorded before, whose version holds the Turtle they published.
+ALTER TABLE record_events ADD COLUMN variable_uri TEXT;
+"""
+"""``0008_published_variable``: the variable IRI each publication introduced, under app-storage's additive rule."""

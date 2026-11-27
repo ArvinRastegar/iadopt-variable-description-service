@@ -1219,14 +1219,15 @@ class RecordChoicesMigrationTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_it_comes_last_and_adds_one_empty_column_that_the_previous_image_does_not_mind(self):
+    def test_it_follows_0006_and_adds_one_empty_column_that_the_previous_image_does_not_mind(self):
         ids = [item.id for item in storage.MIGRATIONS]
-        self.assertEqual(ids[-2:], ["0006_account_approval", MIGRATION])
-        migration = storage.MIGRATIONS[-1]
+        index = ids.index(MIGRATION)
+        self.assertEqual(ids[index - 1], "0006_account_approval")
+        migration = storage.MIGRATIONS[index]
         self.assertEqual(migration.checksum, hashlib.sha256(migration.sql.encode("utf-8")).hexdigest())
         old = self.dir / "previous.sqlite3"
         previous_image.make_de1a7af_file(old)
-        del storage.MIGRATIONS[-1]
+        del storage.MIGRATIONS[index:]  # the previous image's migrations: up to 0006
         storage.migrate(old)
         others = "SELECT type, name, sql FROM sqlite_master WHERE name <> 'record_runs' ORDER BY type, name"
         schema = self.rows(others, old)

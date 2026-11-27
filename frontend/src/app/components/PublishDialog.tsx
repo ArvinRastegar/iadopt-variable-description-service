@@ -225,7 +225,10 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
               {refusal && <Callout tone="danger" title={refusal.title}>{refusal.text}</Callout>}
               <div className="flex flex-col gap-1.5 rounded-[14px] border border-border bg-background p-4">
                 <div className="font-semibold">{variableTitle(workspace.variable)}</div>
-                <div className="font-mono text-xs break-all text-muted-foreground">{workspace.variable?.getIri() ?? 'Blank node'}</div>
+                <div className="text-xs text-muted-foreground">
+                  <span className="font-mono break-all">{workspace.variable?.getIri() ?? 'Blank node'}</span>
+                  {' · draft name, replaced by the permanent identifier on publishing'}
+                </div>
               </div>
               <ul className="m-0 flex list-none flex-col gap-1 p-0">
                 {!auth.user ? (
@@ -277,7 +280,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                       ? `The diagram could not be updated: ${workspace.turtleError.message}`
                       : workspace.turtleDirty
                         ? 'Update the diagram first, so you publish what you reviewed.'
-                        : 'What you see in the Turtle tab is exactly what is published.'
+                        : 'What you see in the Turtle tab is what is published, with the permanent identifier in place of the draft name.'
                   }
                   action={workspace.turtleDirty ? <Button size="sm" variant="outline" disabled={workspace.rendering} onClick={() => void workspace.applyTurtle()}>Update diagram</Button> : undefined}
                 />
@@ -335,7 +338,11 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
             <>
               <dl className="m-0 grid grid-cols-[112px_minmax(0,1fr)] overflow-hidden rounded-[14px] border border-border text-[13px] leading-[19px]">
                 <SummaryRow term="Variable">{variableTitle(workspace.variable)}</SummaryRow>
-                <SummaryRow term="Identifier" mono>{workspace.variable?.getIri() ?? '—'}</SummaryRow>
+                {/* The IRI in the Turtle is a draft name: the backend gives the variable its IRI from the first
+                    nanopublication's code and keeps it for this record's later publications (D-057). */}
+                <SummaryRow term="Identifier">
+                  <span className="break-normal font-normal">Given on publishing, from the nanopublication’s own code, and kept when you publish this record again</span>
+                </SummaryRow>
                 <SummaryRow term="Creator" mono>
                   <span className="flex items-center gap-2">
                     <OrcidMark className="size-[18px] text-[9px]" />
