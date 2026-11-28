@@ -8,6 +8,7 @@ import { Kbd, SectionLabel, Textarea } from '@/components/ui/fields';
 import { findHighlights } from '@/lib/iadopt/highlight';
 import { KIND_CHIP, KIND_DOT, KIND_HIGHLIGHT } from '@/lib/iadopt/kinds';
 import { isLinkableRole, isVocabularyLink, type ComponentInfo } from '@/lib/iadopt/model';
+import { SUBMIT_SHORTCUT_KEYS, submitShortcutLabel } from '@/lib/shortcut';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/shared/auth';
 import { useWorkspace } from '../../state/workspace';
@@ -23,12 +24,28 @@ export function DefinitionPanel() {
     .map((item) => ({ label: item.label, kind: item.kind }));
   const segments = findHighlights(workspace.definition, terms);
   const hasHighlights = segments.some((segment) => segment.kind);
-  // On a phone this panel is below the diagram, so why a decomposition failed comes into view by itself.
+  // On a phone this panel scrolls with the page, so why a decomposition failed is brought into view.
   const failure = workspace.decomposing ? null : workspace.decomposeError;
   const failureRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (failure) failureRef.current?.scrollIntoView({ block: 'nearest' });
   }, [failure]);
+
+  // An empty definition is reported next to the box when Decompose is pressed, not by a disabled button.
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const [definitionError, setDefinitionError] = React.useState(false);
+  // Only while the box is still empty: text can also arrive from the start page or a restored draft.
+  const showDefinitionError = definitionError && !workspace.definition.trim();
+  function runDecompose() {
+    if (!workspace.definition.trim()) {
+      setEditing(true);
+      setDefinitionError(true);
+      // The box may only appear with this render.
+      window.requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
+    void workspace.decompose();
+  }
 
   return (
     <section aria-labelledby="definition-heading" className="flex flex-col gap-2.5">
@@ -45,18 +62,31 @@ export function DefinitionPanel() {
           <label htmlFor="workspace-definition" className="sr-only">Variable definition</label>
           <Textarea
             id="workspace-definition"
+            ref={textareaRef}
             rows={4}
             value={workspace.definition}
-            placeholder="Describe the variable in plain words"
-            onChange={(event) => workspace.setDefinition(event.target.value)}
+            placeholder="For example: Maximum daily air temperature at 2 meters"
+            aria-invalid={showDefinitionError || undefined}
+            aria-describedby={showDefinitionError ? 'workspace-definition-error' : undefined}
+            aria-keyshortcuts={SUBMIT_SHORTCUT_KEYS}
+            onChange={(event) => {
+              workspace.setDefinition(event.target.value);
+              if (definitionError && event.target.value.trim()) setDefinitionError(false);
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                 event.preventDefault();
-                void workspace.decompose();
+                runDecompose();
               }
             }}
             className="text-[15px] leading-[22px]"
           />
+          {showDefinitionError && (
+            <p id="workspace-definition-error" className="m-0 flex items-center gap-1.5 text-[13px] font-medium text-destructive-soft-foreground">
+              <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden="true" />
+              Enter a definition to decompose.
+            </p>
+          )}
           {workspace.definition.trim() && workspace.layout && (
             <Button variant="ghost" size="sm" className="self-start" onClick={() => setEditing(false)}>Done</Button>
           )}
@@ -78,12 +108,12 @@ export function DefinitionPanel() {
       <div className="flex flex-col gap-2">
         <Button
           variant={workspace.layout ? 'outline' : 'default'}
-          disabled={workspace.decomposing || !workspace.definition.trim()}
-          onClick={() => void workspace.decompose()}
+          disabled={workspace.decomposing}
+          onClick={runDecompose}
         >
           {workspace.decomposing ? <Spinner /> : <RotateCcwIcon aria-hidden="true" />}
           {workspace.decomposing ? 'Decomposing…' : workspace.run ? 'Run again' : 'Decompose'}
-          {!workspace.decomposing && <Kbd>⌘↵</Kbd>}
+          {!workspace.decomposing && <Kbd aria-hidden="true">{submitShortcutLabel()}</Kbd>}
         </Button>
         <div className="rounded-lg bg-surface-2 p-1">
           <RunSettingsPopover />
@@ -150,7 +180,8 @@ export function ReviewPanel({ onMarkBest }: { onMarkBest?: () => void }) {
         aria-valuenow={done}
         className="h-1.5 overflow-hidden rounded-full bg-surface-3"
       >
-        <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${Math.round((done / total) * 100)}%` }} />
+        {/* Grows by transform, not width, so the animation never triggers layout. */}
+        <div className="h-full w-full origin-left bg-primary transition-transform duration-300 ease-out" style={{ transform: `scaleX(${done / total})` }} />
       </div>
       <ul className="m-0 -mx-1.5 flex list-none flex-col gap-0.5 p-0">
         {workspace.components.map((item, index) => {
@@ -163,8 +194,8 @@ export function ReviewPanel({ onMarkBest }: { onMarkBest?: () => void }) {
                 onClick={() => workspace.select(item.comp)}
                 aria-current={workspace.selected === item.comp ? 'true' : undefined}
                 className={cn(
-                  'flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] transition-colors outline-none hover:bg-surface-2 focus-visible:ring-[3px] focus-visible:ring-ring/40',
-                  workspace.selected === item.comp && 'bg-surface-2',
+                  'flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] transition-colors outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  workspace.selected === item.comp && 'bg-surface-2 shadow-[inset_0_0_0_1px_var(--text-2)]',
                   item.depth > 0 && 'pl-6',
                 )}
               >
@@ -191,7 +222,7 @@ export function ReviewPanel({ onMarkBest }: { onMarkBest?: () => void }) {
         </div>
       )}
       <p className="m-0 text-xs leading-[17px] text-muted-foreground">
-        Select a component and mark it as checked in the inspector. {auth.recorded ? 'Checks are kept on this device and recorded with your account.' : 'Checks are kept on this device.'}
+        Select a component and choose Looks right in the inspector. {auth.recorded ? 'Checks are kept on this device and recorded with your account.' : 'Checks are kept on this device.'}
       </p>
     </section>
   );
@@ -234,7 +265,7 @@ export function ComponentsTable({ onOpen }: { onOpen: () => void }) {
               const selected = workspace.selected === item.comp;
               return (
                 <tr key={index} className={cn('border-b border-border last:border-b-0', selected && 'bg-surface-2')}>
-                  <td className="px-4 py-2.5">
+                  <td className={cn('px-4 py-2.5', selected && 'shadow-[inset_3px_0_0_var(--text-2)]')}>
                     <span className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs font-semibold whitespace-nowrap', KIND_CHIP[item.kind], item.depth > 0 && 'ml-4')}>
                       <span aria-hidden="true" className={cn('size-[7px] rounded-[2px]', KIND_DOT[item.kind])} />
                       {item.typeName}
@@ -243,7 +274,7 @@ export function ComponentsTable({ onOpen }: { onOpen: () => void }) {
                   <td className="max-w-[260px] px-3 py-2.5">
                     <button
                       type="button"
-                      className="max-w-full truncate text-left font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                      className="max-w-full truncate text-left font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                       onClick={() => {
                         workspace.select(item.comp);
                         onOpen();

@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request, Response, status
 
 from . import storage
-from .account_model import ACCOUNT_COLUMNS, account_from_row, add_history, find_account
+from .account_model import ACCOUNT_COLUMNS, account_from_row, add_history, find_account, owner_id
 from .guards import client_ip, exact_cookie
 from .oidc import store as oidc_store
 from .oidc.settings import current as sign_in_settings
@@ -56,6 +56,15 @@ ROHUB_COOKIE = "iadopt_rohub_session"
 NOBODY: Dict[str, Any] = {}
 """The acting user of an audit event that names nobody, whatever session its browser has."""
 
+PASSWORD_ITERATIONS = 390_000
+"""The PBKDF2-SHA256 iterations of a new password hash."""
+
+LATENCY_HALF_LIFE_ACTIONS = 20
+"""How many actions back an action's weight in the admin dashboard's average latency halves.
+
+The last 20 actions carry half the weight, so the figure follows a change in latency within a few
+dozen actions instead of averaging thousands equally."""
+
 
 @dataclass(frozen=True)
 class AppSession:
@@ -64,7 +73,8 @@ class AppSession:
     Attributes:
         kind: ``password`` or ``rohub``.
         user: The account's user dict.
-        csrf_token: What an unsafe request with a ROHub session must carry; ``None`` for a password.
+        csrf_token: What an unsafe request with the session must carry: a ROHub session's, and in
+            ``oidc`` the owner's password session's (owner-sign-in, section 4); ``None`` otherwise.
     """
 
     kind: str
@@ -122,6 +132,55 @@ def parse_utc(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def recency_weighted_average(values_newest_first: List[int], half_life: int = LATENCY_HALF_LIFE_ACTIONS) -> int:
+    """Average values so that recent ones count more, rounded to whole units.
+
+    Each value weighs half as much as the one ``half_life`` places newer (an exponentially
+    weighted mean), so the average follows recent changes quickly.
+
+    Args:
+        values_newest_first: The values, the most recent first.
+        half_life: How many values back the weight halves; must be positive.
+
+    Returns:
+        The weighted mean, or ``0`` when there are no values.
+    """
+    decay = 0.5 ** (1 / half_life)
+    weight = 1.0
+    total = 0.0
+    weights = 0.0
+    for value in values_newest_first:
+        total += weight * value
+        weights += weight
+        weight *= decay
+    return round(total / weights) if weights else 0
+
+
+def _hash_text(iterations: int, salt: bytes, digest: bytes) -> str:
+    """Return a stored password hash: ``pbkdf2_sha256$<iterations>$<salt>$<digest>`` with base64 parts."""
+    return "pbkdf2_sha256${}${}${}".format(
+        iterations, base64.b64encode(salt).decode("ascii"), base64.b64encode(digest).decode("ascii")
+    )
+
+
+def _iterations_of(password_hash: str) -> Optional[int]:
+    """Return the iterations of a usable password hash: ``None`` for the unusable marker and a malformed hash.
+
+    Usable is what :meth:`AuthStore.verify_password` checks with one PBKDF2-SHA256 run.
+
+    Args:
+        password_hash: The stored hash.
+    """
+    try:
+        algorithm, iterations_raw, salt_raw, digest_raw = password_hash.split("$", 3)
+        iterations = int(iterations_raw)
+        base64.b64decode(salt_raw)
+        base64.b64decode(digest_raw)
+    except ValueError:  # binascii.Error is one
+        return None
+    return iterations if algorithm == "pbkdf2_sha256" and iterations > 0 else None
 
 
 class AuthStore:
@@ -243,13 +302,8 @@ class AuthStore:
             The hash string ``pbkdf2_sha256$<iterations>$<salt>$<digest>`` (base64 parts).
         """
         salt = secrets.token_bytes(16)
-        iterations = 390_000
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-        return "pbkdf2_sha256${}${}${}".format(
-            iterations,
-            base64.b64encode(salt).decode("ascii"),
-            base64.b64encode(digest).decode("ascii"),
-        )
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS)
+        return _hash_text(PASSWORD_ITERATIONS, salt, digest)
 
     def hash_new_password(self, password: str) -> str:
         """Hash a password someone sets, refusing one that is too short.
@@ -314,6 +368,59 @@ class AuthStore:
             )
             # Nothing updated: the account was blocked or its password changed meanwhile.
             return find_account(conn, row["id"]) if signed_in.rowcount else None
+
+    def authenticate_owner(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        """Check a name and password on the owner's route, with the same work for every name (owner-sign-in, section 3).
+
+        Only the account the owner binding resolves to signs in, and no other account's hash is read: the
+        name is compared with the owner's username as :meth:`authenticate` matches names. Exactly one
+        PBKDF2-SHA256 check runs: against the owner's hash when the name is the owner's and the account
+        is active with a usable hash, otherwise against a stand-in with the iterations of the owner's
+        hash, or of a new hash when the owner has none.
+
+        Args:
+            username: The name as given.
+            password: The plaintext password.
+
+        Returns:
+            The owner's account on success, else ``None``. Updates ``last_login_at`` on success.
+        """
+        with self._lock, self._connect() as conn:
+            owner = owner_id(conn)
+            row = None
+            if owner is not None:
+                # Compared in the column's collation, as a login's lookup by name compares.
+                row = conn.execute(
+                    "SELECT id, is_active, password_hash, username = ? AS named FROM users WHERE id = ?",
+                    (username.strip(), owner),
+                ).fetchone()
+        iterations = _iterations_of(row["password_hash"]) if row else None
+        if row is None or iterations is None or not row["named"] or not row["is_active"]:
+            self._check_stand_in(password, iterations or PASSWORD_ITERATIONS)
+            return None
+        # Checked outside the write transaction: hashing a password takes a while.
+        if not self.verify_password(password, row["password_hash"]):
+            return None
+        now = utc_iso()
+        with self._lock, self._connect(immediate=True) as conn:
+            if owner_id(conn) != row["id"]:
+                return None  # the binding moved meanwhile
+            signed_in = conn.execute(
+                "UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ? AND is_active = 1 AND password_hash = ?",
+                (now, now, row["id"], row["password_hash"]),
+            )
+            # Nothing updated: the account was blocked or its password changed meanwhile.
+            return find_account(conn, row["id"]) if signed_in.rowcount else None
+
+    def _check_stand_in(self, password: str, iterations: int) -> None:
+        """Run the one password check of a refusal against a stand-in hash, which no password matches by design.
+
+        Args:
+            password: The plaintext password as given.
+            iterations: The iterations of the check.
+        """
+        stand_in = _hash_text(iterations, secrets.token_bytes(16), secrets.token_bytes(32))
+        self.verify_password(password, stand_in)
 
     def create_session(self, user_id: int, request: Request) -> str:
         """Create a session for a user and return the signed cookie value.
@@ -538,16 +645,25 @@ class AuthStore:
         return session
 
     def _session_from_request(self, request: Request) -> Optional[AppSession]:
-        """Return the session that counts in the sign-in mode: a ROHub one before a password one."""
+        """Return the session that counts in the sign-in mode: a ROHub one before a password one.
+
+        Where the mode takes passwords, every password session counts, without a token. In ``oidc``
+        only the owner's counts, with a token as a ROHub session has (owner-sign-in, section 4).
+        """
         settings = sign_in_settings()
         if settings.rohub:
             session = self._rohub_session(request, settings.issuer)
             if session:
                 return session
-        if not settings.password:
+        found = self._password_session(request)
+        if found is None:
             return None
-        user = self._password_user(request)
-        return AppSession(PASSWORD, user) if user else None
+        user, token = found
+        if settings.password:
+            return AppSession(PASSWORD, user)
+        if user["role"] != "owner":
+            return None
+        return AppSession(PASSWORD, user, csrf_token=self._csrf_token(token))
 
     def _rohub_session(self, request: Request, issuer: str) -> Optional[AppSession]:
         """Return the browser's ROHub session of an issuer, deleting one that has ended."""
@@ -561,11 +677,20 @@ class AuthStore:
             with self._lock, self._connect() as conn:
                 oidc_store.delete_ended_session(conn, token_hash=token_hash, now=now)
             return None
-        # Bound to the session and known only to who may read its answers: not stored anywhere.
-        return AppSession(ROHUB, account_from_row(row), csrf_token=self._sign_session_token(f"csrf:{token}"))
+        return AppSession(ROHUB, account_from_row(row), csrf_token=self._csrf_token(token))
 
-    def _password_user(self, request: Request) -> Optional[Dict[str, Any]]:
-        """Return the user of the browser's password session, deleting one that has ended."""
+    def _csrf_token(self, token: str) -> str:
+        """Return the CSRF token of a session's token.
+
+        Bound to the session and known only to who may read its answers: not stored anywhere.
+
+        Args:
+            token: The session's token.
+        """
+        return self._sign_session_token(f"csrf:{token}")
+
+    def _password_session(self, request: Request) -> Optional[Tuple[Dict[str, Any], str]]:
+        """Return the user and the token of the browser's password session, deleting one that has ended."""
         token = self._session_token_from_request(request)
         if not token:
             return None
@@ -598,7 +723,7 @@ class AuthStore:
                 )
             return None
 
-        return account_from_row(row)
+        return account_from_row(row), token
 
     def require_user(self, request: Request) -> Dict[str, Any]:
         """Return the authenticated user or raise 401.
@@ -943,7 +1068,8 @@ class AuthStore:
             "active_usernames_30d": sorted(active_usernames),
             "event_count_30d": len(events),
             "failures_30d": failures,
-            "average_latency_ms_30d": round(sum(latencies) / len(latencies)) if latencies else 0,
+            # Recent actions count more (``latencies`` is newest first), so the figure updates quickly.
+            "average_latency_ms_30d": recency_weighted_average(latencies),
             "events_by_action_30d": by_action,
             "model_usage_30d": model_usage,
             "recent_events": events[:25],

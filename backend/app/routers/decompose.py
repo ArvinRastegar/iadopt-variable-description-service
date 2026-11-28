@@ -172,10 +172,12 @@ def _record_run(
     result: Optional[Dict[str, Any]],
     error: Optional[str],
     calls: Sequence[ModelCall] = (),
+    choices: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     """Write a run to the account's decomposition record; a failure here never fails the run.
 
-    ``calls`` are the requests the run sent to a model, recorded with it.
+    ``calls`` are the requests the run sent to a model, recorded with it, and ``choices`` what the run
+    chose on the measured path.
 
     Returns:
         The new record's id, or ``None`` when nothing was recorded.
@@ -206,6 +208,7 @@ def _record_run(
             error=error,
             client=req.client.model_dump(exclude_none=True) if req.client else None,
             calls=calls,
+            choices=choices,
         )
     except Exception:
         logger.exception("Could not write the decomposition record.")
@@ -303,6 +306,7 @@ def decompose_stream(
                             result=final_payload,
                             error=None,
                             calls=calls.calls(),
+                            choices=calls.choices(),
                         )
                         if isinstance(final_payload, dict):
                             line = stream_event("final", data={**final_payload, "record_id": record_id})
@@ -333,6 +337,7 @@ def decompose_stream(
                     result=None,
                     error=error_detail or "The decomposition stopped before it finished.",
                     calls=calls.calls(),
+                    choices=calls.choices(),
                 )
             auth_store.audit_event(
                 action="decompose.stream",
@@ -387,7 +392,8 @@ def decompose(
         )
         use.finish(Outcome.SUCCESS)
         record_id = _record_run(
-            user=user, request=request, req=req, started_at=started_at, result=result, error=None, calls=calls.calls()
+            user=user, request=request, req=req, started_at=started_at, result=result, error=None, calls=calls.calls(),
+            choices=calls.choices(),
         )
         auth_store.audit_event(
             action="decompose",
@@ -415,7 +421,8 @@ def decompose(
         use.finish(_failure(calls.calls()))
         detail = without_keys(e)
         record_id = _record_run(
-            user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls()
+            user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls(),
+            choices=calls.choices(),
         )
         auth_store.audit_event(
             action="decompose",
@@ -431,7 +438,8 @@ def decompose(
         use.finish(_failure(calls.calls()))
         detail = f"Unexpected backend error: {without_keys(e)}"
         record_id = _record_run(
-            user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls()
+            user=user, request=request, req=req, started_at=started_at, result=None, error=detail, calls=calls.calls(),
+            choices=calls.choices(),
         )
         auth_store.audit_event(
             action="decompose",

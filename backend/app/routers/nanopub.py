@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from nanopub import Nanopub, NanopubConf
-from rdflib import Graph, Literal
+from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDFS
 
 from ..access.dependencies import require
@@ -27,7 +27,9 @@ from ..schemas import (
 )
 from ..schemas.requests import PublishNanopubRequest, RetractNanopubRequest
 from ..services.nanopub_service import (
+    NEW_VARIABLE_URI,
     add_nanopub_metadata,
+    as_published,
     assert_retraction_allowed,
     build_retraction_nanopub,
     extract_assertion_label,
@@ -37,6 +39,7 @@ from ..services.nanopub_service import (
     get_nanopub_profile,
     nanopub_created_literal,
     normalize_target_nanopub_uri,
+    with_variable_uri,
 )
 
 router = APIRouter()
@@ -77,6 +80,11 @@ def publish_nanopub(
     version most recently marked as best in that record, plus at most nanopublication
     metadata (D-036). The publication is then added to the record. The audit entry keeps
     the ORCID iD and record, not the Turtle, which the record holds (D-024).
+
+    Only the variable's IRI is not the shown one (D-057): the record's first publication gives it
+    ``https://w3id.org/iadopt/variable/<artifact code>``, which signing makes from the
+    nanopublication's own code, and every later publication from the record keeps that IRI and
+    supersedes the record's latest nanopublication. The response names the IRI as published.
 
     Raises:
         HTTPException: 400 on an empty/unparseable TTL payload; 409 without an account or
@@ -147,9 +155,11 @@ def publish_nanopub(
 
     try:
         profile = get_nanopub_profile()
-        variable_uri = extract_variable_uri(assertion_graph)
-        variable_identifier = extract_variable_identifier(assertion_graph, variable_uri)
-        assertion_label = extract_assertion_label(assertion_graph, variable_uri)
+        # The record's first publication mints the variable's IRI from its own artifact code; later ones keep that IRI
+        # and replace the record's latest publication. The IRI the Turtle carries is a draft name (D-057).
+        variable_uri = URIRef(record_target["variable_uri"]) if record_target.get("variable_uri") else NEW_VARIABLE_URI
+        published_graph = with_variable_uri(assertion_graph, extract_variable_uri(assertion_graph), variable_uri)
+        assertion_label = extract_assertion_label(published_graph, variable_uri)
         created_at = nanopub_created_literal()
         agent_uri = get_nanopub_agent_uri()
 
@@ -161,13 +171,14 @@ def publish_nanopub(
             attribute_assertion_to_profile=False,
             attribute_publication_to_profile=False,
         )
-        nanopub = Nanopub(assertion=assertion_graph, conf=nanopub_conf)
+        nanopub = Nanopub(assertion=published_graph, conf=nanopub_conf)
         add_nanopub_metadata(
             nanopub,
             variable_uri=variable_uri,
             created_at=created_at,
             agent_uri=agent_uri,
             creator_orcid_id=req.creator_orcid_id,
+            supersedes=record_target.get("supersedes"),
         )
 
         if assertion_label:
@@ -177,12 +188,14 @@ def publish_nanopub(
         publish_result = nanopub.publish()
         nanopub_url = str(publish_result[0])
         published_to = str(publish_result[1])
+        published_uri = as_published(str(variable_uri), nanopub_url)
+        variable_identifier = as_published(extract_variable_identifier(published_graph, variable_uri), nanopub_url)
 
         response_payload = PublishNanopubResponse(
             nanopub_url=nanopub_url,
             published_to=published_to,
             variable_identifier=variable_identifier,
-            variable_uri=str(variable_uri),
+            variable_uri=published_uri,
         )
         # The nanopublication exists now, whatever happens here: a failed record write is logged, not raised.
         try:
@@ -194,6 +207,7 @@ def publish_nanopub(
                 nanopub_uri=nanopub_url,
                 orcid=normalize_orcid(req.creator_orcid_id) or req.creator_orcid_id,
                 client=req.client.model_dump(exclude_none=True) if req.client else None,
+                variable_uri=published_uri,
             )
         except Exception:
             logger.exception("Could not add the publication to record %s.", req.record_id)
@@ -205,7 +219,7 @@ def publish_nanopub(
             latency_ms=round((time.perf_counter() - start) * 1000),
             request_payload=audit_payload,
             response_payload=response_payload.model_dump(),
-            metadata={"variable_identifier": variable_identifier, "variable_uri": str(variable_uri)},
+            metadata={"variable_identifier": variable_identifier, "variable_uri": published_uri},
         )
         return response_payload
     except HTTPException:

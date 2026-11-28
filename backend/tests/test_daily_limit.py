@@ -692,6 +692,7 @@ class WhoTests(LimitTestCase):
         ada, ben = self.person("ada"), self.person("ben")
         code, out = run_cli("owner", "bind", "--issuer", self.provider.issuer, "--subject", "subject-ada")
         self.assertEqual(code, 0, out)
+        ada = self.person("ada")  # owner bind ended the session (owner-sign-in, section 4)
         self.assert_without_limit(ada)
         granted = ada.post(f"/api/admin/users/{self.account('ben')['id']}/grant-admin", json={}, headers=self.csrf_headers(ada))
         self.assertEqual(granted.status_code, 200, granted.text)
@@ -726,9 +727,10 @@ class WhoTests(LimitTestCase):
     def test_a_grant_a_revocation_and_a_block_reach_a_session_at_once(self):
         """Covers: AC-daily-limit-008."""
         self.switch("1")
-        ada, owner = self.person(), self.password_browser()
+        ada = self.person()
         code, out = run_cli("owner", "bind", "--username", "admin")
         self.assertEqual(code, 0, out)
+        owner = self.password_browser()  # after the bind, which ends the account's sessions (owner-sign-in, section 4)
         account = self.account()
 
         def change(what: str) -> None:

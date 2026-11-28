@@ -7,15 +7,16 @@ import { Callout } from '@/components/ui/feedback';
 import { Input, Label, PasswordInput } from '@/components/ui/fields';
 import { navigation, ROHUB_SIGN_OUT_ADDRESS, rohubSignInAddress } from '@/lib/leaving';
 import { safeRedirect } from '@/lib/safeRedirect';
-import { fetchSession, SessionError, signIn, type SignInMethod } from '@/shared/api';
+import { fetchSession, SessionError, signIn, signInAsOwner, type SignInMethod } from '@/shared/api';
 import { Brand } from '@/shared/AppHeader';
-import { OrDivider, RohubButton } from '@/shared/auth';
+import { OrDivider, OwnerSignInLink, RohubButton } from '@/shared/auth';
 import { ThemeProvider, ThemeToggle } from '@/shared/theme';
 
 /*
  * Stand-alone sign-in page. nginx sends visitors here when a protected page (the admin page)
  * needs a session; afterwards they go back to `?redirect=`. A ROHub sign-in that did not work
- * ends here too, with a code in `?error=`: the page then says what happened and stays.
+ * ends here too, with a code in `?error=`: the page then says what happened and stays. Where only
+ * ROHub signs people in, the owner signs in with a password through "Owner sign-in".
  */
 
 const GENERAL_ERROR = 'The sign-in did not work. Please try again.';
@@ -49,6 +50,7 @@ export function LoginPage() {
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  const [ownerOpen, setOwnerOpen] = React.useState(false);
 
   // The password form does not wait for a slow answer: without ROHub it was there from the start.
   React.useEffect(() => {
@@ -69,12 +71,18 @@ export function LoginPage() {
       });
   }, [errorCode, redirect]);
 
+  const withPassword = methods?.includes('password') ?? false;
+  const withRohub = methods?.includes('rohub') ?? false;
+  // Where the password form is there, the owner uses it; the link is for where only ROHub signs in.
+  const ownerLink = withRohub && !withPassword;
+  const ownerForm = ownerLink && ownerOpen;
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError('');
     setBusy(true);
     try {
-      await signIn(username.trim(), password);
+      await (ownerForm ? signInAsOwner : signIn)(username.trim(), password);
       window.location.replace(redirect);
     } catch (caught) {
       setError(caught instanceof Error && caught.message ? caught.message : 'Login failed.');
@@ -84,8 +92,20 @@ export function LoginPage() {
     }
   }
 
-  const withPassword = methods?.includes('password') ?? false;
-  const withRohub = methods?.includes('rohub') ?? false;
+  const fields = (
+    <>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="username">Username</Label>
+        <Input id="username" autoComplete="username" required autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="password">Password</Label>
+        <PasswordInput id="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+      </div>
+      <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">{error}</p>
+      <Button type="submit" size="lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+    </>
+  );
 
   return (
     <div className="canvas-dots flex min-h-screen flex-col">
@@ -112,22 +132,11 @@ export function LoginPage() {
               )}
             </Callout>
           )}
-          {withPassword && (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="username">Username</Label>
-                <Input id="username" autoComplete="username" required autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="password">Password</Label>
-                <PasswordInput id="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
-              </div>
-              <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">{error}</p>
-              <Button type="submit" size="lg" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
-            </>
-          )}
+          {withPassword && fields}
           {withPassword && withRohub && <OrDivider />}
           {withRohub && <RohubButton size="lg" autoFocus={!withPassword} onClick={() => navigation.leave(rohubSignInAddress(redirect))} />}
+          {ownerLink && <OwnerSignInLink open={ownerOpen} onToggle={() => setOwnerOpen((current) => !current)} />}
+          {ownerForm && fields}
         </form>
       </main>
     </div>

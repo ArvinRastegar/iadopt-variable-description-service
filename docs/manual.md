@@ -67,17 +67,38 @@ It performs the following steps:
 
 ### The measured configuration
 
-By default the decomposition step (2–4) runs a configuration chosen in the experiments of the sibling `iadopt-lab` project: model `Qwen3.8-27B` on PSNC, the
-`matrix-decomposition-v1` prompt rendered byte-exactly with 25 fixed few-shot
-examples, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`. Each example
-is shown as its definition followed by its answer as indented JSON, in the shape of
-the output the model is asked for. How this prompt was measured, and what that does and does not show, is in [evaluation.md](evaluation.md).
-**Decompositions are drafts for review, not answers.**
+By default the decomposition step (2–4) runs the best pipeline found in the experiments of the sibling `iadopt-lab`
+project, with model `Qwen3.8-27B` on PSNC, reasoning disabled, `T=0.5`, `top_p=1.0`, `max_tokens=16000`:
+
+* **Examples by similarity.** PSNC's embedding model `Qwen3-Embedding-0.6B` turns the definition into a vector, and the
+  prompt shows the 25 of the lab's 102 corpus variables whose definitions are most similar, the most similar last
+  (`backend/data/measured/example-pool.json`). If that request brings no vector to use, the prompt shows the 25 fixed
+  examples it used before; the finder's matrix statement is still added when it answered (each step helped on its
+  own in the lab; the two together were not measured).
+* **The matrix finder.** At the same time, the model is asked once (temperature 0) to classify the definition with the
+  I-ADOPT patterns, naming the object, the matrix entity and the restricting phrases first
+  (`backend/data/measured/matrix-finder.json`). The matrix it decides is stated after the definition in the prompt; if
+  its answer is not usable, nothing is stated.
+* **The most typical of three answers.** The `matrix-decomposition-v1` prompt, rendered byte-exactly with those
+  examples, goes out three times side by side, and the answer that agrees most with the other two is kept: agreement
+  is the evaluation scorer's Exact F1 of one answer against the other, both ways (the lab used its Close F1, which
+  needs a local model; on the lab's stored answers both gave the same gain), and a tie goes to the first answer the
+  lab's check accepts. On the stream page the first answer streams as it comes; if another answer is kept, a note and
+  that answer follow.
+
+Each example is shown as its definition followed by its answer as indented JSON, in the shape of the output the model
+is asked for. In the lab, on the 102 corpus variables and PSNC, this pipeline scored a Close F1 of 0.694 against 0.590
+for the fixed 25 examples, in about 11 seconds per variable (under 30 for every one measured); exploratory, and tuned
+on these same 102 variables, so a new variable may score lower. Each run's record keeps what was chosen (its
+examples, the matrix stated, the answer kept). How the earlier prompt was measured, and what that does and does not
+show, is in [evaluation.md](evaluation.md). **Decompositions are drafts for review, not answers.**
 
 That prompt returns six lexical fields and forbids regenerating the label,
 comment, or definition, which is why step 5 exists as a separate call. Changing the
-prompt, the examples, the model, or any sampling parameter means the service is no
-longer running what was measured and the measurements no longer describe it.
+prompt, the examples, the pool, the finder, the number of answers, the model, or any sampling parameter means the
+service is no longer running what was measured and the measurements no longer describe it. The pool and the finder's
+data are rebuilt only from the lab, with `backend/tools/build_example_pool.py` and `backend/tools/build_finder_data.py`
+and the lab's Python; neither sends a request.
 
 ### Entity linking
 
@@ -321,6 +342,18 @@ My system is measuring air temperature at a height of 1.7m
    your ORCID iD and asks you to confirm, because publishing is permanent and public. Retract it
    later under **Publications**.
 
+   The variable gets its permanent IRI when it is first published, not before: until then the IRI
+   in the Turtle (`https://w3id.org/iadopt/variable/<date and time>-NN`) is only a draft name. The
+   first publication writes the variable as `https://w3id.org/iadopt/variable/~~~ARTIFACTCODE~~~`,
+   and signing puts the nanopublication's own code there, so the IRI is opaque, never the same
+   twice, and names the nanopublication that introduced it (`https://w3id.org/np/<code>`). Publishing
+   the same record again (after a correction, say) keeps that IRI and marks the new nanopublication
+   as superseding the record's previous one, so the nanopublication network, Nanodash's search and
+   the [I-ADOPT catalogue](https://mabablue.github.io/catalogue/) show the variable once, at its
+   newest version; the catalogue picks it up in its nightly run. A record published before this
+   change keeps the IRI it published then. A variable imported into a new record gets a new IRI.
+   The publish dialog shows the IRI as published.
+
 ---
 
 # Stopping the Application
@@ -420,13 +453,29 @@ python -m app.cli owner bind --username NAME
 `owner rebind --username NAME --reason TEXT` moves the binding. The previous owner stays an admin
 until the new owner revokes it. Rebinding to the same account restores an owner account that was
 blocked or demoted outside these rules, for instance by the previous image after a rollback. Both
-commands also take `--account ID`, or `--issuer ISS --subject SUB` for an identity the account holds.
+commands also take `--account ID`, or `--issuer ISS --subject SUB` for an identity the account holds,
+and both end every session of the accounts they bind or unbind.
+
+**The owner's own sign-in.** The owner keeps a password sign-in of their own in every mode, also where
+only ROHub signs everybody else in: **Owner sign-in**, a small link under **Sign in with ROHub** on the
+sign-in page and in the sign-in dialog. Only the owner's account signs in there; every other name gets
+the answer of a wrong password. The owner's sign-in takes 10 tries per network address in 10 minutes,
+then one a minute. Set or change the owner's password in the backend's container:
+
+```bash
+python -m app.cli owner password
+```
+
+On a terminal it asks twice and shows nothing; otherwise it reads one line from standard input. It takes
+15 to 1,024 characters, never a password as an argument, and ends the owner's sessions. Where only ROHub
+signs people in, only this command changes the owner's password, and the purge keeps the owner's password.
 
 **Bootstrap admin.** `IADOPT_BOOTSTRAP_ADMIN_*` create the first admin on an empty database only.
 Once any account exists they change nothing, and the log says so at each start.
 
 **Local accounts.** Until the cutover to the identity provider, admins create local accounts with a
-password on the admin page, always as ordinary users, and edit them.
+password on the admin page, always as ordinary users, and edit them. Where only ROHub signs people in,
+the admin page resets no password, and a local account other than the owner's cannot sign in.
 
 **Approving ROHub accounts.** An account that ROHub signs in waits until an admin or the owner approves
 it on the admin page, which lists the waiting accounts first. Until then it can use the public tools and
@@ -446,12 +495,12 @@ need a bound owner, and the account's history keeps the change with the reason g
 | `legacy show --account ID` (or `--username NAME`) | Prints an account's role, block state, identities, data and history |
 | `legacy link --account ID --issuer ISS --subject SUB --reason TEXT [--keep-admin]` | Lets an identity-provider subject sign in to a local account, keeping its id, records and saved ORCID iDs. An admin stays one only with `--keep-admin` |
 | `legacy fold --from ID --into ID --reason TEXT [--keep-admin]` | Moves the identities of a new, empty identity-provider account into a local account, and blocks the emptied one |
-| `legacy purge-passwords --confirm-cutover` | Ends every password login, in this image and the previous one. Without the flag it only counts |
+| `legacy purge-passwords --confirm-cutover` | Ends every password login except the owner's, in this image and the previous one, and keeps the owner's password. Without the flag it only counts, the owner's not among them |
 
 Link and fold take an account with a password and no identity yet, so do both **before**
 `legacy purge-passwords`. Fold a new account **before** you approve it: an account that was ever approved
-has a history and counts as empty no more. After the purge nobody can sign in to a local account that was
-neither linked nor folded into. A session of an ordinary one that is still open may decompose, save, publish and
+has a history and counts as empty no more. After the purge nobody but the owner can sign in to a local account
+that was neither linked nor folded into. A session of an ordinary one that is still open may decompose, save, publish and
 retract nothing (`password_ended`), and no approval changes that; an admin or the owner keeps what the role gives.
 
 ## Signing in with ROHub
@@ -461,7 +510,7 @@ One switch, `IADOPT_AUTH_MODE`, decides how people sign in:
 | Mode | Password | ROHub |
 |---|---|---|
 | `local` (default) | yes | no; its routes answer 404 |
-| `oidc` | no | yes |
+| `oidc` | only the owner's, through **Owner sign-in** | yes |
 | `both`, only with `IADOPT_ENVIRONMENT=development` | yes | yes |
 
 With authentication enabled and no new setting, nothing changes. Disabled authentication now needs
@@ -484,7 +533,9 @@ A person who signs in with ROHub for the first time gets an ordinary account, fo
 subject, never by email. ROHub must report a verified email. The account waits until an admin approves
 it ([Accounts, admins and the owner](#accounts-admins-and-the-owner)), on a development machine as in
 production. Roles never come from ROHub: the operator binds the owner with `owner bind`, and the owner
-makes admins.
+makes admins. In `oidc` the owner still signs in with a password, through **Owner sign-in**
+([Accounts, admins and the owner](#accounts-admins-and-the-owner)); the switch ends every other password
+sign-in.
 
 "Sign out" ends the session here and then goes to ROHub's sign-out page. "Sign out and clear this
 browser" also deletes the draft, the remembered ORCID iD and the list of publications from it.
@@ -545,32 +596,41 @@ From the project root run:
 First the gate asks the backend container what it runs, which calls no model. It stops
 (exit code 2) when the container's `backend/app` and `backend/data` differ from your working
 tree, so rebuild after every change. It also stops when the backend is not the measured
-configuration prod runs by default: PSNC, `Qwen3.8-27B`, the measured prompt, temperature
-0.5, top_p 1.0 and max_tokens 16000. Pass `--any-backend` to measure another configuration
-anyway.
+configuration prod runs by default: PSNC, `Qwen3.8-27B`, the best pipeline (setup `measured-best-pipeline`),
+temperature 0.5, top_p 1.0 and max_tokens 16000. Pass `--any-backend` to measure another configuration anyway.
 
 Then it sends all 102 corpus definitions through the backend's own pipeline inside the
-container. Each definition runs the whole pipeline (decomposition, label and linking with its
-vocabulary searches), so one run makes hundreds of calls to the provider. It writes no records. Each answer is scored with the lab's extraction, validation
-and Close F1 scorer, as the lab's example-layout side test scores its answers. An answer the
-app failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's
-official workflow differs: it retries an invalid answer up to three times.)
+container. Each definition runs the whole pipeline (the embedding request and the matrix finder,
+three answers of which the most typical is kept, the label, and linking with its vocabulary
+searches), so one run makes several hundred calls to the provider. Each definition is decomposed
+with its own corpus variable left out of its examples and of the finder's, so no prompt shows the
+answer being scored. It writes no records. Each answer is scored with the lab's extraction,
+validation and Close F1 scorer, as the lab's side tests score their answers. An answer the app
+failed to produce, or one the lab cannot use, counts as an empty prediction. (The lab's official
+workflow differs: it retries an invalid answer up to three times.)
 
 The gate **passes** when the micro Close F1 of one run on all 102 variables is at least
 **0.60** (exit code 0); below that it fails (1). Definitions the provider never answered,
 or whose answer was lost, also count as empty. With them the run can still pass, but below
 0.60 the gate cannot tell the code from a provider outage, so it does not decide (2, as when
-it could not run). `--threshold`, `--concurrency` (8 at once) and `--report-dir` change the
+it could not run). The same holds when PSNC failed a definition's embedding request (its prompt
+then showed the 25 fixed examples) or the finder's request (its prompt then stated no matrix):
+below 0.60 the gate then says how many and does not decide. It prints how many definitions got
+examples by similarity and how many fell back, one line per cause with its hint (for example `2
+embedding request timed out after 5 s. PSNC's embedding model did not answer in time.`), which
+matrix decisions the finder stated and why it failed where it did, and which of the three
+answers was kept; the report has the same for each variable. `--threshold`, `--concurrency` (8 at once) and `--report-dir` change the
 defaults. Each run that got answers writes a JSON report to `quality-gate-reports/`, which
 git ignores. The report holds every answer, the commit, and whether the tree had uncommitted
 changes.
 
 Read the verdict with two caveats:
 
-* 25 of the 102 variables are the prompt's own few-shot examples, shown to the model with
-  their answers, so they score far higher than the rest. The gate prints both groups apart,
-  for information. The 0.60 on all 102 is a
-  floor against regressions, not a claim that new variables score 0.60.
+* The gate prints the 25 fixed examples and the other 77 apart, for information. Before the best pipeline the 25
+  were the prompt's examples and saw their own answers, so they scored far higher; now no variable sees its own.
+  The lab measured the best pipeline at 0.694 (ten runs on PSNC, with each variable's fold of 17 left out rather
+  than only the variable; exploratory). The 0.60 on all 102 is a floor against regressions, not a claim that new
+  variables score 0.60.
 * Runs vary. In the lab, repeated runs with 20 to 30 examples on 72 variables had a standard deviation of 0.016 to
   0.018 ([evaluation.md](evaluation.md)); the spread on all 102 has not been measured. A result near 0.60 can pass or fail
   by chance, so run it again before acting on a narrow result.

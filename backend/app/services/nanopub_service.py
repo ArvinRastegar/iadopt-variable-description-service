@@ -25,8 +25,16 @@ from rdflib.namespace import DCTERMS, FOAF, PROV, RDF, RDFS, SKOS, XSD
 from ..core.config import settings
 from ..core.text import normalize_text
 from .orcid import lookup_orcid_display_name, normalize_orcid, resolve_creator_metadata
+from .rdf_ttl import IADOPT_VARIABLE_BASE
 
 IADOPT_VARIABLE_CLASS = URIRef("https://w3id.org/iadopt/ont/Variable")
+
+ARTIFACT_CODE_PLACEHOLDER = "~~~ARTIFACTCODE~~~"
+"""What signing replaces with the nanopublication's own artifact code, in any IRI (nanopub-py 2.2.1 and later)."""
+
+NEW_VARIABLE_URI = URIRef(f"{IADOPT_VARIABLE_BASE}{ARTIFACT_CODE_PLACEHOLDER}")
+"""The IRI a record's first publication gives its variable, ``https://w3id.org/iadopt/variable/<artifact code>``
+once signed: opaque and never the same twice, and it names the nanopublication that introduced it (D-057)."""
 
 # Lazily-resolved, process-wide caches.
 _nanopub_profile: Optional[Profile] = None
@@ -221,6 +229,39 @@ def extract_variable_identifier(assertion_graph: Graph, variable_uri: URIRef) ->
     return str(variable_uri).rstrip("/").rsplit("/", 1)[-1]
 
 
+def with_variable_uri(assertion_graph: Graph, variable_uri: URIRef, new_uri: URIRef) -> Graph:
+    """Return a copy of the assertion in which the variable has another IRI, wherever it occurs.
+
+    Args:
+        assertion_graph: The parsed Turtle assertion.
+        variable_uri: The variable's IRI in it.
+        new_uri: The IRI the variable gets.
+
+    Returns:
+        A new graph with the same prefixes; ``assertion_graph`` is left as it is.
+    """
+    renamed = Graph()
+    for prefix, namespace in assertion_graph.namespaces():
+        renamed.bind(prefix, namespace, override=True, replace=True)
+    for s, p, o in assertion_graph:
+        renamed.add((new_uri if s == variable_uri else s, p, new_uri if o == variable_uri else o))
+    return renamed
+
+
+def as_published(text: str, nanopub_uri: str) -> str:
+    """Return a text as signing wrote it: the artifact-code placeholder replaced by the nanopublication's code.
+
+    Args:
+        text: An IRI or identifier that may hold :data:`ARTIFACT_CODE_PLACEHOLDER`.
+        nanopub_uri: The signed nanopublication's URI, whose last segment is its artifact code.
+
+    Returns:
+        The text with the code in place of the placeholder; unchanged when it holds none.
+    """
+    code = nanopub_uri.strip().rstrip("/#").rsplit("/", 1)[-1]
+    return text.replace(ARTIFACT_CODE_PLACEHOLDER, code)
+
+
 def normalize_target_nanopub_uri(raw_value: str) -> str:
     """Normalize a nanopub reference to its canonical ``https://w3id.org/np/RA...`` URI.
 
@@ -401,6 +442,7 @@ def add_nanopub_metadata(
     created_at: Literal,
     agent_uri: Optional[str],
     creator_orcid_id: str,
+    supersedes: Optional[str] = None,
 ) -> None:
     """Add provenance + pubinfo template metadata to a publish nanopub before signing.
 
@@ -410,6 +452,7 @@ def add_nanopub_metadata(
         created_at: The publication timestamp literal.
         agent_uri: The software-agent URI, or ``None``.
         creator_orcid_id: The publishing person's ORCID.
+        supersedes: The nanopublication this one replaces (the record's latest), or ``None`` for a record's first.
 
     Side effects:
         Resolves creator metadata (possible ORCID lookup).
@@ -430,6 +473,9 @@ def add_nanopub_metadata(
     nanopub.pubinfo.add((nanopub_uri, DCTERMS.creator, pubinfo_creator_uri))
     nanopub.pubinfo.add((nanopub_uri, DCTERMS.license, URIRef(settings.nanopub_license_uri)))
     nanopub.pubinfo.add((nanopub_uri, NPX.introduces, variable_uri))
+    if supersedes:
+        # A new version of the record's variable: the network then lists this one and no longer the one before.
+        nanopub.pubinfo.add((nanopub_uri, NPX.supersedes, URIRef(supersedes)))
     nanopub.pubinfo.add((nanopub_uri, NPX["wasCreatedAt"], URIRef(settings.nanopub_was_created_at)))
 
     if settings.nanopub_template_uri:

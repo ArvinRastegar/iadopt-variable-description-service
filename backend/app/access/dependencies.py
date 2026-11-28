@@ -24,6 +24,8 @@ ROUTE_CAPABILITIES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("GET", f"{API_PREFIX}/readyz"): None,
     ("GET", f"{API_PREFIX}/health"): None,
     ("POST", f"{API_PREFIX}/auth/login"): None,
+    # owner-sign-in, section 3: the owner's own password route, public like the password route.
+    ("POST", f"{API_PREFIX}/auth/owner-login"): None,
     ("GET", f"{API_PREFIX}/auth/login"): None,
     ("GET", f"{API_PREFIX}/auth/callback"): None,
     ("GET", f"{API_PREFIX}/auth/end-session"): None,

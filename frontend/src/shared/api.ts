@@ -6,9 +6,10 @@ import { bareOrcid } from '@/lib/orcid';
  * sent, with these additions: the saved ORCID iD routes (`/auth/me/orcids`, D-035), the
  * decomposition record of a signed-in account (D-037): the `/records` routes, `client` on
  * decompose and publish, and `record_id` on publish; and what the session may do
- * (`capabilities` of `/auth/me`) with the admin page's role, block and history routes. With a
- * session ROHub started, every unsafe request carries the session's CSRF token, which stays in
- * this module's memory.
+ * (`capabilities` of `/auth/me`) with the admin page's role, block and history routes; and the
+ * owner's own sign-in (`/auth/owner-login`). With a session that has a CSRF token (one ROHub
+ * started, or the owner's where only ROHub signs everybody else in), every unsafe request carries
+ * it; it stays in this module's memory.
  */
 
 export const API_BASE = '/api';
@@ -249,7 +250,7 @@ export const OUTDATED_PAGE = 'Your session changed, so nothing was done. This pa
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** The token of a session ROHub started; only ever in memory. */
+/** The token of the session, where it has one (`csrf_token` of `/auth/me`); only ever in memory. */
 let csrfToken: string | null = null;
 /** How the page reads its session again, and how it does when a failure to read must change nothing. */
 let readSessionAgain: () => Promise<unknown> = () => fetchSession();
@@ -377,8 +378,29 @@ export function isRecordedAccount(user: User | null, authEnabled: boolean | null
   return Boolean(user?.id) && authEnabled !== false;
 }
 
-export async function signIn(username: string, password: string): Promise<User> {
-  const response = await apiFetch('/auth/login', {
+export function signIn(username: string, password: string): Promise<User> {
+  return signInThrough('/auth/login', username, password);
+}
+
+/** What the owner's sign-in shows when its request did not reach the backend. */
+export const SIGN_IN_REQUEST_FAILED = 'The sign-in request failed. Check your connection and try again.';
+
+/**
+ * The owner's own password sign-in, which works where only ROHub signs everybody else in
+ * (owner-sign-in). Its session's token comes, as every session's, from `/auth/me`.
+ */
+export async function signInAsOwner(username: string, password: string): Promise<User> {
+  try {
+    return await signInThrough('/auth/owner-login', username, password);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    console.error(error);
+    throw new ApiError(SIGN_IN_REQUEST_FAILED, 0);
+  }
+}
+
+async function signInThrough(path: string, username: string, password: string): Promise<User> {
+  const response = await apiFetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),

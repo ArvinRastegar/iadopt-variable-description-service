@@ -84,6 +84,7 @@ class DevelopmentMachineTests(OidcTestCase):
         """Covers: AC-account-approval-005."""
         code, out = run_cli("owner", "bind", "--issuer", self.provider.issuer, "--subject", "subject-ada")
         self.assertEqual(code, 0, out)
+        self.ada = self.signed_in(sub="subject-ada", email="ada@example.org", preferred_username="ada")  # owner bind ended the session (owner-sign-in, section 4)
         capabilities = self.me(self.ada)["capabilities"]
         self.assertTrue(capabilities["decompose"]["allowed"] and capabilities["publish"]["allowed"])
         self.assertEqual(self.decompose(self.ada)[0].status_code, 200)

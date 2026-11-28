@@ -177,6 +177,7 @@ export function DiagramSvg({
 
         const interactive = live
           ? {
+              className: 'diagram-box',
               role: 'button',
               tabIndex: 0,
               'aria-label': boxLabel(box),
@@ -190,12 +191,27 @@ export function DiagramSvg({
                   onSelect?.(box.comp);
                 }
               },
+              // The browser outline is replaced by the focus ring below, shown only on keyboard focus.
               style: { cursor: 'pointer', outline: 'none' } as React.CSSProperties,
             }
           : {};
 
         return (
           <g key={`b${index}`} {...interactive}>
+            {live && (
+              <rect
+                className="diagram-focus-ring"
+                x={box.x - 7}
+                y={box.y - 7}
+                width={box.width + 14}
+                height={box.height + 14}
+                rx={17}
+                fill="none"
+                stroke="var(--ring)"
+                strokeWidth={2}
+                pointerEvents="none"
+              />
+            )}
             {isSelected && (
               <rect x={box.x - 4} y={box.y - 4} width={box.width + 8} height={box.height + 8} rx={14} fill="none" stroke={palette.primary} strokeWidth={2} />
             )}

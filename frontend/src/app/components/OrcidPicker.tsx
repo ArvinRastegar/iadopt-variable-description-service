@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { XIcon } from 'lucide-react';
-import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/controls';
-import { Spinner } from '@/components/ui/feedback';
+import { Spinner, toastError } from '@/components/ui/feedback';
 import { Input, Label } from '@/components/ui/fields';
 import { normalizeOrcid } from '@/lib/applyPreNanopubSettingsToTurtle.js';
 import { bareOrcid } from '@/lib/orcid';
@@ -169,7 +168,7 @@ export function useOrcidChoice(
     } catch (caught) {
       if (caught instanceof AuthRequiredError) return;
       console.error(caught);
-      toast('The ORCID iD was not removed.', { description: caught instanceof Error ? caught.message : undefined });
+      toastError('The ORCID iD was not removed. Try again in a moment.', { id: 'orcid-remove-failed', description: caught instanceof Error ? caught.message : undefined });
       // Show the account's real list again, for example when another tab removed it already.
       fetchSavedOrcids()
         .then((list) => {
@@ -200,7 +199,7 @@ export function useOrcidChoice(
     } catch (caught) {
       if (caught instanceof AuthRequiredError) return;
       console.error(caught);
-      toast('Your ORCID iD was not saved to your account.', { description: caught instanceof Error ? caught.message : undefined });
+      toastError('Your ORCID iD was not saved to your account. Try again the next time you use it.', { id: 'orcid-save-failed', description: caught instanceof Error ? caught.message : undefined });
     }
   }
 

@@ -804,36 +804,40 @@ class LegacyCommandTests(AccountsTestCase):
                 self.assertEqual(self.rows("SELECT is_active FROM users WHERE id = ?", provider["id"]), [{"is_active": 1}])
 
     def test_purge_passwords_without_the_flag_only_counts(self):
-        """Covers: AC-accounts-roles-014 (without --confirm-cutover)."""
+        """Covers: AC-accounts-roles-014 (without --confirm-cutover), as owner-sign-in section 10 amends it."""
         self.provider_account("no-password")
         before = self.rows("SELECT * FROM users ORDER BY id")
         code, out = run_cli("legacy", "purge-passwords")
-        self.assertRegex(out, r"\b3\b")  # admin, bob and carol have usable passwords
+        self.assertRegex(out, r"\b2\b")  # bob and carol; the owner's (admin's) password is kept, so not counted
         self.assertEqual(self.rows("SELECT * FROM users ORDER BY id"), before)
         self.assertEqual(self.all_history(), [row for row in self.all_history() if row["action"] != "password_purged"])
         self.signed_in("bob")
 
-    def test_purge_passwords_ends_every_password_login_and_keeps_every_row(self):
-        """Covers: AC-accounts-roles-014 (with --confirm-cutover)."""
+    def test_purge_passwords_ends_every_password_login_but_the_owners_and_keeps_every_row(self):
+        """Covers: AC-accounts-roles-014 (with --confirm-cutover), as owner-sign-in section 10 amends it: the owner's
+        (admin's) password is kept."""
         provider = self.provider_account("no-password")
         before = self.users_without("password_hash", "updated_at")
+        owner_hash = self.rows("SELECT password_hash FROM users WHERE id = ?", self.admin["id"])[0]["password_hash"]
         code, out = run_cli("legacy", "purge-passwords", "--confirm-cutover")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.users_without("password_hash", "updated_at"), before)
-        self.assertEqual({row["password_hash"] for row in self.rows("SELECT password_hash FROM users")}, {"!"})
+        self.assertEqual({row["password_hash"] for row in self.rows("SELECT password_hash FROM users WHERE id <> ?", self.admin["id"])}, {"!"})
+        self.assertEqual(self.rows("SELECT password_hash FROM users WHERE id = ?", self.admin["id"]), [{"password_hash": owner_hash}])
         conn = previous_image.connect(self.db)
         try:
-            for username, password in (("admin", "admin-password"), ("bob", "password-123"), ("carol", "password-123")):
+            for username, password, works in (("admin", "admin-password", True), ("bob", "password-123", False), ("carol", "password-123", False)):
                 with self.subTest(username=username):
                     response = self.client().post("/api/auth/login", json={"username": username, "password": password})
-                    self.assertEqual(response.status_code, 401)
-                    self.assertFalse(previous_image.password_login(conn, username, password))
+                    self.assertEqual(response.status_code, 200 if works else 401)
+                    self.assertEqual(bool(previous_image.password_login(conn, username, password)), works)
         finally:
             conn.close()
-        for account_id in (self.admin["id"], self.bob["id"], self.carol["id"]):
+        for account_id in (self.bob["id"], self.carol["id"]):
             rows = [row for row in self.history(account_id) if row["action"] == "password_purged"]
             self.assertEqual([(row["actor_kind"]) for row in rows], ["offline"])
-        self.assertEqual([row for row in self.history(provider["id"]) if row["action"] == "password_purged"], [])
+        for account_id in (self.admin["id"], provider["id"]):
+            self.assertEqual([row for row in self.history(account_id) if row["action"] == "password_purged"], [])
 
     def test_legacy_show_describes_an_account(self):
         """Covers: AC-accounts-roles-012 (section 8's legacy show: identities and history among what it prints)."""

@@ -377,3 +377,19 @@ ALTER TABLE users ADD COLUMN approved_at TEXT;
 ALTER TABLE users ADD COLUMN approved_by INTEGER;
 """
 """``0006_account_approval``: the approval of accounts that an identity provider signs in."""
+
+RECORD_CHOICES_SQL = """
+-- What a run of the best pipeline chose, as JSON: {"examples": {"source": "retrieved" | "fallback", "ids": [...]},
+-- "matrix": "none" | "40" ... "45" | null, "answers": {"asked": 3, "kept": 1 | 2 | 3 | null}}. Empty on the legacy
+-- path and for runs recorded before.
+ALTER TABLE record_runs ADD COLUMN choices TEXT;
+"""
+"""``0007_record_choices``: what a run chose on the measured path, under app-storage's additive rule."""
+
+PUBLISHED_VARIABLE_SQL = """
+-- The variable IRI a publication introduced: the first publication of a record mints it from its own artifact code
+-- (https://w3id.org/iadopt/variable/<code>), and the record's later publications keep it. Empty for events that are
+-- no publication, and for publications recorded before, whose version holds the Turtle they published.
+ALTER TABLE record_events ADD COLUMN variable_uri TEXT;
+"""
+"""``0008_published_variable``: the variable IRI each publication introduced, under app-storage's additive rule."""

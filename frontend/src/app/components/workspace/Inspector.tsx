@@ -73,7 +73,7 @@ function TurtleChanges({ className }: { className?: string }) {
         <span className={cn(error && 'font-mono text-xs break-words')}>
           {error ? error.message : 'Update the diagram to save them. Editing here waits until then.'}
         </span>
-        <Button size="sm" className="self-start" disabled={workspace.rendering} onClick={() => void workspace.applyTurtle()}>
+        <Button size="sm" variant="outline" className="self-start" disabled={workspace.rendering} onClick={() => void workspace.applyTurtle()}>
           <RefreshCwIcon aria-hidden="true" /> Update diagram
         </Button>
       </div>
@@ -119,10 +119,23 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
   const linkable = isLinkableRole(item.role);
   const isVariable = comp instanceof Variable;
 
-  async function save() {
+  // While edits are unsaved, selecting another component asks first instead of dropping them.
+  const [pendingSelection, setPendingSelection] = React.useState<{ next: Parameters<typeof workspace.select>[0] } | null>(null);
+  const { setSelectionGuard, select } = workspace;
+  React.useEffect(() => {
+    if (!dirty) return;
+    setSelectionGuard((next) => {
+      if (next === comp) return true;
+      setPendingSelection({ next });
+      return false;
+    });
+    return () => setSelectionGuard(null);
+  }, [dirty, comp, setSelectionGuard]);
+
+  async function save(): Promise<boolean> {
     setSaving(true);
     try {
-      await workspace.mutate(() => applyEdit(comp, fields, canChangeShape(comp) ? shape : undefined));
+      return await workspace.mutate(() => applyEdit(comp, fields, canChangeShape(comp) ? shape : undefined));
     } finally {
       setSaving(false);
     }
@@ -182,12 +195,11 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="inspector-description">{isVariable ? 'Definition or comment' : 'Description'}</Label>
+            <Label htmlFor="inspector-description">{isVariable ? 'Definition or comment (optional)' : 'Description (optional)'}</Label>
             <Textarea
               id="inspector-description"
               rows={3}
               value={fields.comment}
-              placeholder="Optional"
               onChange={(event) => setFields({ ...fields, comment: event.target.value })}
             />
           </div>
@@ -214,7 +226,7 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
                   key={index}
                   type="button"
                   onClick={() => workspace.select(constraint)}
-                  className="flex min-h-9 items-center gap-2 rounded-lg border border-dashed border-con-line bg-con-bg px-2.5 text-left text-[13px] font-medium text-con-fg outline-none hover:brightness-[0.98] focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                  className="flex min-h-9 items-center gap-2 rounded-lg border border-dashed border-con-line bg-con-bg px-2.5 text-left text-[13px] font-medium text-con-fg outline-none hover:brightness-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 >
                   <span aria-hidden="true" className="size-[7px] rounded-[2px] bg-con" />
                   {labelOf(constraint) || 'Unnamed constraint'}
@@ -287,11 +299,12 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
         onClose={() => setAdding(null)}
         onAdd={async (type, values, choice) => {
           setAdding(null);
-          await workspace.mutate(() => {
+          const added = await workspace.mutate(() => {
             if (type === 'Constraint') addConstraint(comp, values);
             else if (workspace.variable) addToVariable(workspace.variable, type, values, choice);
           });
-          toast(`${ADD_LABELS[type]} added`);
+          // A failed add already shows its error; only a saved one is announced.
+          if (added) toast(`${ADD_LABELS[type]} added`);
         }}
       />
 
@@ -307,11 +320,46 @@ function InspectorFor({ item }: { item: ComponentInfo }) {
               variant="destructive"
               onClick={async () => {
                 setConfirmDelete(false);
-                workspace.select(null);
+                workspace.select(null, { force: true });
                 await workspace.mutate(() => deleteComponent(comp));
               }}
             >
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pendingSelection !== null} onOpenChange={(open) => !open && setPendingSelection(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save changes to “{item.label || 'Unnamed'}”?</DialogTitle>
+            <DialogDescription>
+              You changed this {KIND_NAMES[item.kind].toLowerCase()} but did not save it. Save or discard the changes before you select another component.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-5">
+            <Button variant="ghost" onClick={() => setPendingSelection(null)}>Keep editing</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const next = pendingSelection?.next ?? null;
+                setPendingSelection(null);
+                select(next, { force: true });
+              }}
+            >
+              Discard changes
+            </Button>
+            <Button
+              disabled={saving || locked}
+              onClick={async () => {
+                const next = pendingSelection?.next ?? null;
+                const saved = await save();
+                setPendingSelection(null);
+                if (saved) select(next, { force: true });
+              }}
+            >
+              {saving ? 'Saving…' : 'Save changes'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -415,10 +463,13 @@ function AddComponentDialog({
 }) {
   const [fields, setFields] = React.useState<Fields>({ label: '', iri: '', comment: '' });
   const [shape, setShape] = React.useState<ShapeChoice>({ shape: 'simple', pairIndex: 0 });
+  const [labelError, setLabelError] = React.useState(false);
+  const labelInput = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => {
     if (type) {
       setFields({ label: '', iri: '', comment: '' });
       setShape({ shape: 'simple', pairIndex: 0 });
+      setLabelError(false);
     }
   }, [type]);
   const canBeSystem = type === 'ContextObject' || type === 'Matrix';
@@ -427,10 +478,18 @@ function AddComponentDialog({
     <Dialog open={type !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-md">
         <form
+          noValidate
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
-            if (type) onAdd(type, fields, shape);
+            if (!type) return;
+            // Validate on submit and say what is missing, instead of a disabled button that never says why.
+            if (!fields.label.trim()) {
+              setLabelError(true);
+              labelInput.current?.focus();
+              return;
+            }
+            onAdd(type, fields, shape);
           }}
         >
           <DialogHeader>
@@ -440,21 +499,40 @@ function AddComponentDialog({
           <DialogBody className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="add-label">Label</Label>
-              <Input id="add-label" autoFocus required value={fields.label} onChange={(event) => setFields({ ...fields, label: event.target.value })} />
+              <Input
+                id="add-label"
+                ref={labelInput}
+                autoFocus
+                required
+                aria-invalid={labelError || undefined}
+                aria-describedby={labelError ? 'add-label-error' : undefined}
+                value={fields.label}
+                onChange={(event) => {
+                  setFields({ ...fields, label: event.target.value });
+                  if (labelError && event.target.value.trim()) setLabelError(false);
+                }}
+              />
+              {labelError && (
+                <p id="add-label-error" className="m-0 flex items-center gap-1.5 text-[13px] text-destructive-soft-foreground">
+                  <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                  Enter a label for the new component.
+                </p>
+              )}
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="add-iri">IRI</Label>
-              <Input id="add-iri" placeholder="Optional; leave empty for a blank node" spellCheck={false} className="font-mono text-[12.5px]" value={fields.iri} onChange={(event) => setFields({ ...fields, iri: event.target.value })} />
+              <Label htmlFor="add-iri">IRI (optional)</Label>
+              <Input id="add-iri" aria-describedby="add-iri-help" spellCheck={false} className="font-mono text-[12.5px]" value={fields.iri} onChange={(event) => setFields({ ...fields, iri: event.target.value })} />
+              <p id="add-iri-help" className="m-0 text-xs text-muted-foreground">Leave it empty for a blank node.</p>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="add-description">Description</Label>
-              <Textarea id="add-description" rows={2} placeholder="Optional" value={fields.comment} onChange={(event) => setFields({ ...fields, comment: event.target.value })} />
+              <Label htmlFor="add-description">Description (optional)</Label>
+              <Textarea id="add-description" rows={2} value={fields.comment} onChange={(event) => setFields({ ...fields, comment: event.target.value })} />
             </div>
             {canBeSystem && <ShapePicker value={shape} onChange={setShape} />}
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={!fields.label.trim()}>Add</Button>
+            <Button type="submit">Add</Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -251,6 +251,8 @@ function RetractSheet({
         retractedAt: new Date().toISOString(),
       });
       toast(`Retracted ${target.label}`, {
+        // A toast with an action stays until it is closed.
+        duration: Infinity,
         action: { label: 'Open', onClick: () => window.open(result.retraction_url, '_blank', 'noopener,noreferrer') },
       });
       onDone({ label: target.label, url: result.retraction_url });

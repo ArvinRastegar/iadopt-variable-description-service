@@ -23,7 +23,7 @@ export function RunSettingsPopover() {
         <button
           type="button"
           disabled={decomposing}
-          className="flex h-[34px] min-w-0 items-center gap-2 rounded-md px-2.5 text-[13px] font-medium text-text-2 transition-colors outline-none hover:bg-surface-3 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40 disabled:opacity-50"
+          className="flex h-[34px] min-w-0 items-center gap-2 rounded-md px-2.5 text-[13px] font-medium text-text-2 transition-colors outline-none hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50"
         >
           <SlidersHorizontalIcon className="size-4 shrink-0" aria-hidden="true" />
           <span className="truncate">

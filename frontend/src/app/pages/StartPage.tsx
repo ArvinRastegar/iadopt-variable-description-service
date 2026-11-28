@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { ArrowRightIcon, BracesIcon, ExternalLinkIcon, HistoryIcon, LockIcon, ShapesIcon } from 'lucide-react';
+import { AlertTriangleIcon, ArrowRightIcon, BracesIcon, ExternalLinkIcon, HistoryIcon, LockIcon, ShapesIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/fields';
 import { EXAMPLE_DEFINITIONS, EXAMPLE_TURTLE } from '@/lib/iadopt/example';
 import { KIND_CHIP, KIND_DOT, KIND_HIGHLIGHT, KIND_NAMES, KIND_TEXT, type Kind } from '@/lib/iadopt/kinds';
+import { SUBMIT_SHORTCUT_KEYS, submitShortcutLabel } from '@/lib/shortcut';
 import { cn } from '@/lib/utils';
 import { displayName, useAuth } from '@/shared/auth';
 import { SiteFooter } from '@/shared/SiteFooter';
@@ -40,9 +41,14 @@ export function StartPage() {
   const workspace = useWorkspace();
   const open = useOpenTurtle();
   const textarea = React.useRef<HTMLTextAreaElement>(null);
+  const [definitionError, setDefinitionError] = React.useState(false);
+  // Only while the box is still empty: text can also arrive from an example or a restored draft.
+  const showDefinitionError = definitionError && !workspace.definition.trim();
 
   async function startDecomposition() {
     if (!workspace.definition.trim()) {
+      // Say what is missing, next to the box, instead of only moving the cursor back.
+      setDefinitionError(true);
       textarea.current?.focus();
       return;
     }
@@ -85,7 +91,13 @@ export function StartPage() {
                 ref={textarea}
                 rows={3}
                 value={workspace.definition}
-                onChange={(event) => workspace.setDefinition(event.target.value)}
+                aria-invalid={showDefinitionError || undefined}
+                aria-describedby={showDefinitionError ? 'definition-error' : undefined}
+                aria-keyshortcuts={SUBMIT_SHORTCUT_KEYS}
+                onChange={(event) => {
+                  workspace.setDefinition(event.target.value);
+                  if (definitionError && event.target.value.trim()) setDefinitionError(false);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
@@ -95,14 +107,23 @@ export function StartPage() {
                 placeholder="For example: Maximum daily air temperature at 2 meters"
                 className="min-h-24 w-full resize-none border-0 bg-transparent px-5 pt-2 pb-3 text-[19px] leading-[29px] tracking-[-0.005em] outline-none"
               />
+              {showDefinitionError && (
+                <p id="definition-error" className="m-0 flex items-center gap-1.5 px-5 pb-2 text-[13px] font-medium text-destructive-soft-foreground">
+                  <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                  Enter a definition to decompose, or pick one of the examples below.
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-2 px-4 pb-3.5">
                 <span className="px-1 text-xs text-muted-foreground">Try</span>
                 {EXAMPLE_DEFINITIONS.map((example) => (
                   <button
                     key={example}
                     type="button"
-                    onClick={() => workspace.setDefinition(example)}
-                    className="h-[30px] max-w-full truncate rounded-full border border-border bg-surface-2 px-3 text-[13px] text-text-2 transition-colors outline-none hover:border-input hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
+                    onClick={() => {
+                      workspace.setDefinition(example);
+                      setDefinitionError(false);
+                    }}
+                    className="h-[30px] max-w-full truncate rounded-full border border-border bg-surface-2 px-3 text-[13px] text-text-2 transition-colors outline-none hover:border-input hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
                     {example}
                   </button>
@@ -112,7 +133,7 @@ export function StartPage() {
                 <RunSettingsPopover />
                 <Button type="submit" size="lg" disabled={workspace.decomposing} className="ml-auto">
                   {workspace.decomposing ? 'Decomposing…' : 'Decompose'}
-                  <Kbd className="border-transparent bg-white/15 text-current">⌘↵</Kbd>
+                  <Kbd aria-hidden="true" className="border-transparent bg-white/15 text-current">{submitShortcutLabel()}</Kbd>
                 </Button>
               </div>
             </div>

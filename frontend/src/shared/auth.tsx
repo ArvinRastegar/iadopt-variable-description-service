@@ -9,7 +9,7 @@ import { Input, Label, PasswordInput } from '@/components/ui/fields';
 import { clearWork, navigation, rohubSignInAddress, saveWork } from '@/lib/leaving';
 import {
   ADMIN_PAGE_CAPABILITIES, allows, AuthRequiredError, fetchSession, isRecordedAccount, onOutdatedSession, postEvent, refusalMessage,
-  SessionError, signIn, signOut,
+  SessionError, signIn, signInAsOwner, signOut,
   type Capabilities, type SignInMethod, type User,
 } from './api';
 
@@ -17,8 +17,9 @@ import {
  * Accounts on the main page. Anonymous visitors keep every public tool; protected actions
  * (decompose, mark as best, publish, retract) ask for a sign-in in place, keep the work on the
  * page, and are never repeated automatically after signing in. With a password that happens in the
- * dialog; for ROHub the page is left, with the work kept in this tab, and comes back. A response that
- * belongs to an older session (tracked by `revision`) must never sign out a newer one.
+ * dialog; for ROHub the page is left, with the work kept in this tab, and comes back. Where only ROHub
+ * signs people in, the owner still signs in with a password in the dialog, through "Owner sign-in".
+ * A response that belongs to an older session (tracked by `revision`) must never sign out a newer one.
  */
 
 interface AuthContextValue {
@@ -313,6 +314,24 @@ export function RohubButton({ onClick, autoFocus, size }: { onClick: () => void;
   );
 }
 
+/**
+ * The owner's own way in where only ROHub signs everybody else in (owner-sign-in, section 7): a
+ * small link under the ROHub button that opens a password form.
+ */
+export function OwnerSignInLink({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="link"
+      className="h-auto self-center px-0 text-[13px] font-medium"
+      aria-expanded={open}
+      onClick={onToggle}
+    >
+      Owner sign-in
+    </Button>
+  );
+}
+
 /** Separates the two ways to sign in. */
 export function OrDivider() {
   return (
@@ -341,6 +360,7 @@ function SignInDialog({
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  const [ownerOpen, setOwnerOpen] = React.useState(false);
   const open = reason !== null;
 
   React.useEffect(() => {
@@ -348,15 +368,22 @@ function SignInDialog({
       setUsername('');
       setPassword('');
       setError('');
+      setOwnerOpen(false);
     }
   }, [open]);
+
+  const withPassword = methods.includes('password');
+  const withRohub = methods.includes('rohub');
+  // Where the password form is there, the owner uses it; the link is for where only ROHub signs in.
+  const ownerLink = withRohub && !withPassword;
+  const ownerForm = ownerLink && ownerOpen;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError('');
     setBusy(true);
     try {
-      const user = await signIn(username.trim(), password);
+      const user = await (ownerForm ? signInAsOwner : signIn)(username.trim(), password);
       onSignedIn(user);
     } catch (caught) {
       setError(caught instanceof Error && caught.message ? caught.message : 'Login failed.');
@@ -366,8 +393,36 @@ function SignInDialog({
     }
   }
 
-  const withPassword = methods.includes('password');
-  const withRohub = methods.includes('rohub');
+  const fields = (
+    <>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="sign-in-username">Username</Label>
+        <Input
+          id="sign-in-username"
+          name="username"
+          autoComplete="username"
+          required
+          autoFocus
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="sign-in-password">Password</Label>
+        <PasswordInput
+          id="sign-in-password"
+          name="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </div>
+      <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">
+        {error}
+      </p>
+    </>
+  );
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -380,42 +435,15 @@ function SignInDialog({
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
-            {withPassword && (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="sign-in-username">Username</Label>
-                  <Input
-                    id="sign-in-username"
-                    name="username"
-                    autoComplete="username"
-                    required
-                    autoFocus
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="sign-in-password">Password</Label>
-                  <PasswordInput
-                    id="sign-in-password"
-                    name="password"
-                    autoComplete="current-password"
-                    required
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                </div>
-                <p role="status" aria-live="polite" className="m-0 min-h-5 text-[13px] text-destructive-soft-foreground">
-                  {error}
-                </p>
-              </>
-            )}
+            {withPassword && fields}
             {withPassword && withRohub && <OrDivider />}
             {withRohub && <RohubButton onClick={onRohub} autoFocus={!withPassword} />}
+            {ownerLink && <OwnerSignInLink open={ownerOpen} onToggle={() => setOwnerOpen((current) => !current)} />}
+            {ownerForm && fields}
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-            {withPassword && <Button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>}
+            {(withPassword || ownerForm) && <Button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>}
           </DialogFooter>
         </form>
       </DialogContent>

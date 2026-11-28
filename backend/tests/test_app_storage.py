@@ -57,6 +57,14 @@ STORAGE_DIR = BACKEND / "app" / "storage"
 # ------------------------------------------------------------------------------------------------
 
 
+ADDED_COLUMNS = {
+    "record_runs": lambda sql: sql[:-1] + ",choices text)",
+    "record_events": lambda sql: sql.replace("orcid text,unique(", "orcid text,variable_uri text,unique("),
+}
+"""A baseline table's SQL, as :func:`normalized` writes it, once a later module's migration added its column:
+SQLite puts the column after the last one, before any table rule."""
+
+
 def normalized(sql: str) -> str:
     """SQL text without layout differences: one space between words, none around brackets and commas."""
     text = " ".join(sql.split())
@@ -272,6 +280,12 @@ class StorageTestCase(TempDatabaseTestCase):
                     reference_columns = columns(reference_file(self.dir), "users")
                     self.assertEqual(columns(db, "users")[: len(reference_columns)], reference_columns)
                     self.assertIn("AUTOINCREMENT", got[("table", "users")].upper())
+                elif table in ADDED_COLUMNS:
+                    # A later migration (0007 record_runs.choices, 0008 record_events.variable_uri) adds one
+                    # column last, which rewrites the stored SQL.
+                    reference_sql = normalized(reference[("table", table)])
+                    self.assertIn(normalized(got[("table", table)]),
+                                  (reference_sql, ADDED_COLUMNS[table](reference_sql)))
                 else:
                     self.assertEqual(normalized(got[("table", table)]), normalized(reference[("table", table)]))
         for kind, names in (("index", BASELINE_INDEXES), ("trigger", APPEND_ONLY_TRIGGERS)):

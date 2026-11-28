@@ -76,6 +76,8 @@ EXPECTED_ROUTES: Dict[Tuple[str, str], Optional[Capability]] = {
     ("GET", "/api/readyz"): None,
     ("GET", "/api/health"): None,
     ("POST", "/api/auth/login"): None,
+    # owner-sign-in, section 3 (the owner's own password route; added at its implementation gate, G-027).
+    ("POST", "/api/auth/owner-login"): None,
     # oidc-identity, section 10 (increment 2).
     ("GET", "/api/auth/login"): None,
     ("GET", "/api/auth/callback"): None,
@@ -632,6 +634,7 @@ class MeTests(AccessHttpTestCase):
         self.assert_me(self.me(bob), "bob", "user")
         self.assert_me(self.me(admin), "admin", "admin")
         self.bind_owner("admin")
+        self.login(admin, "admin", "admin-password")  # owner bind ended the session (owner-sign-in, section 4)
         self.assert_me(self.me(admin), "admin", "owner")
 
     def test_me_reports_the_uses_left_under_a_daily_cap(self):

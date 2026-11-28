@@ -1340,6 +1340,7 @@ class CsrfTests(OidcTestCase):
         browser, other = self.signed_in(), self.signed_in(sub="subject-ben", email="ben@example.org", sid="session-ben")
         code, out = run_cli("owner", "bind", "--issuer", self.provider.issuer, "--subject", "subject-ada")
         self.assertEqual(code, 0, out)
+        browser = self.signed_in()  # owner bind ended the session (owner-sign-in, section 4)
         good, foreign = self.csrf_headers(browser), self.csrf_headers(other)
         self.assertNotEqual(good["X-CSRF-Token"], foreign["X-CSRF-Token"])
         bad: Dict[str, Dict[str, str]] = {
@@ -1636,6 +1637,7 @@ class AccountTests(OidcTestCase):
 
         code, out = run_cli("owner", "bind", "--issuer", self.provider.issuer, "--subject", "subject-ada")
         self.assertEqual(code, 0, out)
+        ada = self.signed_in(**roles)  # owner bind ended the session (owner-sign-in, section 4)
         self.assertEqual((self.me(ada)["user"]["role"], self.me(ben)["user"]["role"]), ("owner", "user"))
         self.assertEqual(ada.get("/api/auth/verify/admin").status_code, 204)
         self.assertEqual(self.browser().get("/api/auth/verify/admin").status_code, 401)

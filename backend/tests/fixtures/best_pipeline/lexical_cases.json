@@ -1,0 +1,287 @@
+{
+  "source": "iadopt_lab.validation.lexical.validate_prediction, each error written as few-shot-selection/guided/pipeline.py check() writes it; lab commit 763a675, see tests/fixtures/best_pipeline/PROVENANCE.md",
+  "cases": [
+    {
+      "case": "valid",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "hotel",
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "rating: three star",
+            "on": "hotel"
+          }
+        ]
+      },
+      "problems": []
+    },
+    {
+      "case": "extra key definition",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "hotel",
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "rating: three star",
+            "on": "hotel"
+          }
+        ],
+        "definition": "d"
+      },
+      "problems": [
+        "the answer: Additional properties are not allowed ('definition' was unexpected)"
+      ]
+    },
+    {
+      "case": "missing hasConstraint",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "hotel",
+        "hasContextObject": ""
+      },
+      "problems": [
+        "the answer: 'hasConstraint' is a required property"
+      ]
+    },
+    {
+      "case": "hasConstraint not a list",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "hotel",
+        "hasContextObject": "",
+        "hasConstraint": "rating"
+      },
+      "problems": [
+        "/hasConstraint: 'rating' is not of type 'array'"
+      ]
+    },
+    {
+      "case": "whitespace-only matrix",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "   ",
+        "hasContextObject": "",
+        "hasConstraint": []
+      },
+      "problems": [
+        "/hasMatrix: A value must be empty or contain non-whitespace."
+      ]
+    },
+    {
+      "case": "duplicate symmetric parts",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": {
+          "SymmetricSystem": "",
+          "hasPart": [
+            "Water",
+            "water "
+          ]
+        },
+        "hasContextObject": "",
+        "hasConstraint": []
+      },
+      "problems": [
+        "/hasMatrix/hasPart: Symmetric members must be unique under lexical target normalization."
+      ]
+    },
+    {
+      "case": "unknown constraint target",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "hotel",
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "rating: three star",
+            "on": "motel"
+          }
+        ]
+      },
+      "problems": [
+        "/hasConstraint/0/on: Constraint target must resolve to exactly one emitted lexical value."
+      ]
+    },
+    {
+      "case": "ambiguous constraint target",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "water body",
+        "hasMatrix": {
+          "SymmetricSystem": "water body",
+          "hasPart": [
+            "lake",
+            "river"
+          ]
+        },
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "state: liquid",
+            "on": "water body"
+          }
+        ]
+      },
+      "problems": [
+        "/hasConstraint/0/on: Constraint target must resolve to exactly one emitted lexical value."
+      ]
+    },
+    {
+      "case": "target is a system's own label",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": {
+          "SymmetricSystem": "water body",
+          "hasPart": [
+            "lake",
+            "river"
+          ]
+        },
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "state: liquid",
+            "on": "Water Body"
+          }
+        ]
+      },
+      "problems": []
+    },
+    {
+      "case": "target is a ratio's display label",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": {
+          "AsymmetricSystem": "",
+          "hasNumerator": "nitrogen",
+          "hasDenominator": "phosphorus"
+        },
+        "hasMatrix": "hotel",
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "unit: molar",
+            "on": "nitrogen / phosphorus"
+          }
+        ]
+      },
+      "problems": []
+    },
+    {
+      "case": "target is a part",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": {
+          "SymmetricSystem": "water body",
+          "hasPart": [
+            "lake",
+            "river"
+          ]
+        },
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "state: liquid",
+            "on": "river"
+          }
+        ]
+      },
+      "problems": []
+    },
+    {
+      "case": "more than six problems",
+      "answer": {
+        "hasStatisticalModifier": "",
+        "hasProperty": "count",
+        "hasObjectOfInterest": "night",
+        "hasMatrix": "hotel",
+        "hasContextObject": "",
+        "hasConstraint": [
+          {
+            "label": "c0: x",
+            "on": "nothing 0"
+          },
+          {
+            "label": "c1: x",
+            "on": "nothing 1"
+          },
+          {
+            "label": "c2: x",
+            "on": "nothing 2"
+          },
+          {
+            "label": "c3: x",
+            "on": "nothing 3"
+          },
+          {
+            "label": "c4: x",
+            "on": "nothing 4"
+          },
+          {
+            "label": "c5: x",
+            "on": "nothing 5"
+          },
+          {
+            "label": "c6: x",
+            "on": "nothing 6"
+          },
+          {
+            "label": "c7: x",
+            "on": "nothing 7"
+          }
+        ]
+      },
+      "problems": [
+        "/hasConstraint/0/on: Constraint target must resolve to exactly one emitted lexical value.",
+        "/hasConstraint/1/on: Constraint target must resolve to exactly one emitted lexical value.",
+        "/hasConstraint/2/on: Constraint target must resolve to exactly one emitted lexical value.",
+        "/hasConstraint/3/on: Constraint target must resolve to exactly one emitted lexical value.",
+        "/hasConstraint/4/on: Constraint target must resolve to exactly one emitted lexical value.",
+        "/hasConstraint/5/on: Constraint target must resolve to exactly one emitted lexical value."
+      ]
+    },
+    {
+      "case": "not an object",
+      "answer": [
+        {
+          "hasStatisticalModifier": "",
+          "hasProperty": "count",
+          "hasObjectOfInterest": "night",
+          "hasMatrix": "hotel",
+          "hasContextObject": "",
+          "hasConstraint": [
+            {
+              "label": "rating: three star",
+              "on": "hotel"
+            }
+          ]
+        }
+      ],
+      "problems": [
+        "the answer: [{'hasStatisticalModifier': '', 'hasProperty': 'count', 'hasObjectOfInterest': 'night', 'hasMatrix': 'hotel', 'hasContextObject': '', 'hasConstraint': [{'label': 'rating: three star', 'on': 'hotel'}]}] is not of type 'object'"
+      ]
+    }
+  ]
+}

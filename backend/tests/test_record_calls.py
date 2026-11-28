@@ -219,7 +219,7 @@ def run(monkeypatch):
 
     def install(provider="openrouter", model="qwen/qwen3-32b"):
         monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs",
-                            lambda definition, model_name=None, model_provider=None: ("prompt", provider, model))
+                            lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
 
         def label(prediction, **kwargs):
             seen.label_logs.append(kwargs.get("calls"))

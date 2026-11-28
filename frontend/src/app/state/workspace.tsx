@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Parser } from 'n3';
 import { toast } from 'sonner';
 
+import { toastError } from '@/components/ui/feedback';
 import extract from '@/lib/extract.js';
 import mergeCurrentTurtle from '@/lib/mergeCurrentTurtle.js';
 import { applyPreNanopubSettingsToTurtle } from '@/lib/applyPreNanopubSettingsToTurtle.js';
@@ -82,7 +83,10 @@ interface WorkspaceValue {
   setOrder: (order: string) => void;
 
   selected: Concept | null;
-  select: (comp: Concept | null) => void;
+  /** Select a component. A registered guard (unsaved inspector edits) may hold it back unless `force` is set. */
+  select: (comp: Concept | null, options?: { force?: boolean }) => void;
+  /** The inspector registers a guard while it has unsaved edits; it returns false to hold a selection back. */
+  setSelectionGuard: (guard: ((next: Concept | null) => boolean) | null) => void;
   isChecked: (comp: Concept) => boolean;
   toggleChecked: (comp: Concept) => void;
   checkedCount: number;
@@ -95,7 +99,8 @@ interface WorkspaceValue {
   /** "Update diagram": draw the visible Turtle and record it as an applied change. */
   applyTurtle: () => Promise<boolean>;
   openTurtle: (turtle: string) => Promise<boolean>;
-  mutate: (change: () => { syncVariableLabels?: boolean } | void) => Promise<void>;
+  /** Apply an edit to the model; true when it was saved into the Turtle. */
+  mutate: (change: () => { syncVariableLabels?: boolean } | void) => Promise<boolean>;
   applyNanopubMetadata: () => Promise<boolean>;
   reset: () => void;
 
@@ -209,6 +214,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [order, setOrderState] = React.useState(DEFAULT_ORDER);
   const [version, setVersion] = React.useState(0);
   const [selected, setSelected] = React.useState<Concept | null>(null);
+  // Unsaved inspector edits hold a selection back until the person saves or discards them.
+  const selectionGuard = React.useRef<((next: Concept | null) => boolean) | null>(null);
+  const setSelectionGuard = React.useCallback((guard: ((next: Concept | null) => boolean) | null) => {
+    selectionGuard.current = guard;
+  }, []);
+  const select = React.useCallback((comp: Concept | null, options?: { force?: boolean }) => {
+    if (!options?.force && selectionGuard.current && !selectionGuard.current(comp)) return;
+    setSelected(comp);
+  }, []);
   const [checks, setChecks] = React.useState<Record<string, true>>(draft?.checks ?? {});
 
   const variableRef = React.useRef<Variable | null>(null);
@@ -343,7 +357,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const offerDraft = React.useCallback((message: string, earlier: Draft) => {
     const seen = clearings.current;
     toast(message, {
-      duration: 20_000,
+      // The only way back to the earlier draft, so it stays until the person closes it.
+      duration: Infinity,
       action: {
         label: 'Restore draft',
         onClick: () => {
@@ -431,7 +446,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const mutate = React.useCallback(async (change: () => { syncVariableLabels?: boolean } | void) => {
     const variable = variableRef.current;
-    if (!variable) return;
+    if (!variable) return false;
     const before = turtleRef.current;
     const beforeTurtle = renderedRef.current;
     const beforeStates = snapshotComponents(variable);
@@ -439,26 +454,30 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     try {
       result = change();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toastError('Could not make the change, so nothing was changed. Check the values you entered and try again.', {
+        id: 'change-failed',
+        description: error instanceof Error ? error.message : String(error),
+      });
       // The change may have stopped halfway: rebuild the model from the Turtle, the source of truth.
       await visualize(before, { log: false });
-      return;
+      return false;
     }
     const seen = clearings.current;
     const merged = await mergeCurrentTurtle(before, variable, {
       syncVariableLabels: Boolean(result && result.syncVariableLabels),
     });
-    if (seen !== clearings.current) return;
+    if (seen !== clearings.current) return false;
     if (!parsesAsTurtle(merged)) {
-      toast.error('The change could not be written as valid Turtle, so it was not saved.');
+      toastError('Your change was not saved, because the Turtle it produced did not parse. Try again, or make the change in the Turtle tab.', { id: 'change-not-saved' });
       await visualize(before, { log: false });
-      return;
+      return false;
     }
     setTurtle(merged);
     setRenderedTurtle(merged);
     // One applied change, one recorded step with its component changes.
     void recordApplied({ type: 'edit', beforeTurtle, before: beforeStates, afterTurtle: merged, after: snapshotComponents(variable) });
     await relayout(variable);
+    return true;
   }, [recordApplied, relayout, setRenderedTurtle, visualize]);
 
   const applyTurtle = React.useCallback(async () => {
@@ -474,7 +493,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const applyNanopubMetadata = React.useCallback(async () => {
     if (!preparationOptions) {
-      toast.error(preparationError || 'Nanopublication preparation settings could not be loaded from the backend.');
+      toastError('Could not load the nanopublication settings from the server. Reload the page to try again; your draft is kept on this device.', {
+        id: 'nanopub-settings',
+        description: preparationError || undefined,
+      });
       return false;
     }
     const input = turtleRef.current;
@@ -506,7 +528,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logEvent('apply_pre_nanopub_settings_failed', { input_turtle: input, settings }, { error: message });
-      toast.error(message || 'Could not apply pre-nanopublication settings.');
+      toastError('Could not add the nanopublication metadata. Check that the Turtle parses in the Turtle tab, then try again.', {
+        id: 'nanopub-metadata',
+        description: message || undefined,
+      });
       return false;
     }
   }, [currentStates, logEvent, preparationError, preparationOptions, recordApplied, visualize]);
@@ -532,7 +557,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (decomposingRef.current) return;
     const text = definition.trim();
     if (!text) {
-      setDecomposeError('Please enter a variable definition first.');
+      setDecomposeError('Enter a variable definition first.');
       return;
     }
 
@@ -726,7 +751,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     order,
     setOrder,
     selected,
-    select: setSelected,
+    select,
+    setSelectionGuard,
     isChecked,
     toggleChecked,
     checkedCount,

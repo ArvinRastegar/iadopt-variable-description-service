@@ -75,8 +75,8 @@ secret and roll the backend's deployment out again.
    docker compose exec backend python -m app.cli owner bind --username NAME
    ```
 
-   With an owner already bound, use `owner rebind --username NAME --reason TEXT`. The **Admin** entry
-   appears after a reload.
+   With an owner already bound, use `owner rebind --username NAME --reason TEXT`. Either command ends the
+   account's sessions: sign in again, and the **Admin** entry appears.
 5. What the account may do: as the owner it needs no approval, so it may do everything, with the admin
    page. Any other ROHub account can use the public tools and see its account until an admin approves it
    on the admin page; until then the page says "An admin must approve your account first." and the account
@@ -86,8 +86,9 @@ secret and roll the backend's deployment out again.
 
 ### 2. Switch a hosted deployment to ROHub
 
-Only as part of the cutover: before it, people would lose their password sign-in, and accounts would
-exist without terms. Accounts are not linked before this step.
+Only as part of the cutover. The switch ends password sign-in for everybody but the owner, who keeps one of their
+own (**Owner sign-in**, with a password the owner sets before step 3, as step 4 says). Terms of use are the owner's
+matter outside the application. Accounts are not linked before this step.
 
 1. The conditions above hold, in their order.
 2. Find the number of proxies in front of the backend, with `FORWARDED_ALLOW_IPS` unset: set
@@ -97,19 +98,19 @@ exist without terms. Accounts are not linked before this step.
 3. Set `IADOPT_AUTH_MODE=oidc`, `IADOPT_OIDC_ISSUER`, `IADOPT_OIDC_CLIENT_ID`, `IADOPT_PUBLIC_URL`,
    `IADOPT_COOKIE_SECURE=true`, and `IADOPT_OIDC_POST_LOGOUT=true` once the return address is registered.
    Restart; the log says `The sign-in mode is oidc (production).`
-4. The owner signs in once with ROHub and does nothing else there; the account menu says "Signed in as NAME". That
-   is a new account, which waits and is no admin. Fold it into the owner's local account, to which the owner was bound
-   after the first release with roles (manual, "Accounts, admins and the owner"):
+4. The owner's own sign-in. Before step 3 the owner sets a long password, 15 to 1,024 characters, with
+   `owner password` in the backend's container; on a terminal it asks twice and shows nothing:
 
    ```bash
-   python -m app.cli legacy show --username NAME
-   python -m app.cli legacy fold --from NEW_ID --into OWNER_ID --reason "The owner's ROHub sign-in"
+   python -m app.cli owner password
    ```
 
-   `legacy show` prints the new account's id, issuer and subject. After the next sign-in the owner is the owner again,
-   with its records and saved ORCID iDs. Do not bind the new account first: the owner's account cannot be folded, and
-   its history stays. Only an owner who has no local account binds the new one, with
-   `owner bind --issuer ISS --subject SUB`, or `owner rebind` with the same options and `--reason TEXT`.
+   After the switch the owner keeps signing in with it through **Owner sign-in**, the small link under
+   **Sign in with ROHub**, on the account the owner was bound to after the first release with roles. The purge keeps
+   this password, in `oidc` only `owner password` changes it, and the owner's sign-in takes 10 tries per address in
+   10 minutes, then one a minute. The owner's own ROHub sign-in makes a separate account, which waits like any other
+   until the owner approves it on the admin page and makes it an admin. It is not folded into the owner's account,
+   and the binding stays where it is.
 5. Leave `IADOPT_DAILY_DECOMPOSITIONS` empty: a number lets people in without an approval. First fold the
    new accounts that belong to a local one (`legacy fold`): one that was ever approved cannot be folded any
    more. Then approve the accounts that wait on the admin page, the local ones that were linked or folded
@@ -119,7 +120,8 @@ exist without terms. Accounts are not linked before this step.
 ### 3. ROHub is not reachable, changed its keys, a client setting or its address
 
 - **Not reachable.** New sign-ins end on the sign-in page with "ROHub cannot be reached right now."
-  Open sessions and the public tools keep working. Nothing to do here; `oidc check` shows what is wrong.
+  Open sessions and the public tools keep working. Nothing to do here; `oidc check` shows what is wrong. The owner
+  still signs in, through **Owner sign-in** with the owner's password.
 - **Changed keys.** Nothing to do: an unknown key is read at once, at most once a minute.
 - **A changed client setting.** People see "ROHub did not complete the sign-in." Run `oidc check --pkce`
   and compare the client with the table above.
@@ -129,20 +131,25 @@ exist without terms. Accounts are not linked before this step.
 
 ### 4. End sessions
 
-- One person's: block the account on the admin page and unblock it. Both kinds of session end at once.
+- One person's: block the account on the admin page and unblock it. Both kinds of session end at once. A block
+  cannot reach the owner: the owner's sessions end with `owner password`, which sets a new password (runbook 5).
 - Everybody's: set a new `IADOPT_SESSION_SECRET` and restart. Everyone has to sign in again.
 
 ### 5. The owner cannot sign in
 
-`python -m app.cli owner rebind --username NAME --reason TEXT` moves the binding to another account, or
-restores the owner's account when it was blocked or demoted.
+The owner signs in through **Owner sign-in**, under **Sign in with ROHub** on the sign-in page. A lost password is
+replaced in the backend's container with `python -m app.cli owner password`, which also ends the owner's sessions.
+`python -m app.cli owner rebind --username NAME --reason TEXT` moves the binding to another account and ends the
+sessions of both accounts, or restores the owner's account when it was blocked or demoted.
 
 ### 6. Roll back
 
 - To passwords only: `IADOPT_AUTH_MODE=local`, restart.
-- To the previous image: roll the frontend back together with the backend. No ROHub session is a session
-  there, and every block holds, except that of the bootstrap account unless its settings are unset first
-  (manual, "Rolling back").
+- To the previous image: roll the frontend back together with the backend. An image without the owner's route,
+  such as `c103d4d`, refuses the owner's password while the mode is `oidc`; with the mode `local` the owner's kept
+  password works there. An image from before ROHub's sign-in, such as `de1a7af`, counts no ROHub session, and every
+  block holds there, except that of the bootstrap account unless its settings are unset first (manual, "Rolling
+  back").
 
 ## The local stack
 

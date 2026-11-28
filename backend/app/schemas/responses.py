@@ -498,7 +498,8 @@ class AdminStatsResponse(BaseModel):
         active_usernames_30d: Sorted usernames seen in recent events.
         event_count_30d: Number of recent events considered.
         failures_30d: Count of failed/errored events.
-        average_latency_ms_30d: Mean latency (integer ms), ``0`` when none.
+        average_latency_ms_30d: Recency-weighted mean latency (integer ms): each event weighs half as
+            much as the one ``LATENCY_HALF_LIFE_ACTIONS`` (20) newer; ``0`` when none.
         events_by_action_30d: Event counts keyed by action.
         model_usage_30d: Usage counts keyed by ``"provider / model"``.
         recent_events: Up to 25 most-recent audit events.

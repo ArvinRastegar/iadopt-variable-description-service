@@ -1,6 +1,6 @@
 """Process-wide warmup caches shared between startup and the services that read them.
 
-These four caches are populated once at application startup (``warmup_assets``)
+These caches are populated once at application startup (``warmup_assets``)
 and read later by the validation service and the decompose pipeline. They live in
 this neutral leaf so that neither the startup code nor the services need to import
 each other — which would create an import cycle (see the Phase-2 dependency map).
@@ -25,6 +25,10 @@ class AppState:
         examples_5_cache: The loaded five-shot examples, or ``None``.
         measured_assets_cache: ``(template, schema_text, demonstrations)`` for the
             measured configuration, or ``None`` when it is disabled.
+        example_pool_cache: The checked example pool of the best pipeline
+            (``services.example_retrieval.ExamplePool``), or ``None``.
+        finder_cache: The checked matrix finder's data (``services.matrix_finder.FinderData``),
+            or ``None``.
     """
 
     def __init__(self) -> None:
@@ -34,6 +38,8 @@ class AppState:
         self.prompt_version_cache: Optional[str] = None
         self.examples_5_cache: Optional[List[Dict[str, Any]]] = None
         self.measured_assets_cache: Optional[Tuple[str, str, List[Dict[str, Any]]]] = None
+        self.example_pool_cache: Optional[Any] = None
+        self.finder_cache: Optional[Any] = None
 
 
 app_state = AppState()

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { Toaster as SonnerToaster, type ToasterProps } from 'sonner';
+import { toast, Toaster as SonnerToaster, type ExternalToast, type ToasterProps } from 'sonner';
 import { AlertTriangleIcon, CircleCheckIcon, InfoIcon, OctagonAlertIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -85,10 +85,15 @@ function Callout({
 
 /* --------------------------------- Toasts -------------------------------- */
 
+/*
+ * Plain confirmations ("Turtle copied") close after Sonner's default 4 seconds. Errors and toasts with
+ * an action stay until they are closed (WCAG 2.2.1), so every toast carries a close button.
+ */
 function Toaster(props: ToasterProps) {
   return (
     <SonnerToaster
       position="bottom-center"
+      closeButton
       toastOptions={{
         classNames: {
           toast:
@@ -101,6 +106,11 @@ function Toaster(props: ToasterProps) {
       {...props}
     />
   );
+}
+
+/** An error toast that stays until it is closed, so nobody misses what went wrong. */
+function toastError(message: Parameters<typeof toast.error>[0], options?: ExternalToast) {
+  return toast.error(message, { duration: Infinity, ...options });
 }
 
 /* -------------------------------- Spinner -------------------------------- */
@@ -122,4 +132,4 @@ function Spinner({ className, ...props }: React.ComponentProps<'svg'>) {
   );
 }
 
-export { Callout, Pill, Spinner, Toaster };
+export { Callout, Pill, Spinner, Toaster, toastError };

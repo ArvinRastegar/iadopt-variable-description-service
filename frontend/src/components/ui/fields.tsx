@@ -32,7 +32,7 @@ function PasswordInput({ className, ...props }: Omit<React.ComponentProps<'input
         aria-controls={props.id}
         disabled={props.disabled}
         onClick={() => setVisible((current) => !current)}
-        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-50"
+        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50"
       >
         {visible ? <EyeOffIcon aria-hidden="true" className="size-4" /> : <EyeIcon aria-hidden="true" className="size-4" />}
         {/* Text rather than aria-label, so the button never counts as a label of the field. */}
