@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 test('where the header names password sign-in too, the admin page still offers "Reset password"', async () => {
-  // Covers: AC-owner-sign-in-013 (the admin page, the header naming both).
+  // The admin page, the header naming both.
   const users = [account(1, 'admin', 'owner'), account(2, 'carol', 'admin'), account(4, 'bob', 'user')];
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const path = new URL(String(url), window.location.href).pathname;

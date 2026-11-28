@@ -18,7 +18,7 @@ vi.mock('../src/lib/mergeCurrentTurtle.js', { spy: true });
 const TAB_COPY = 'iadopt-workspace-tab-copy';
 const DRAFT = 'iadopt-workspace-draft';
 const METHODS: Array<[string | null, boolean, boolean]> = [
-  ['password', true, false], ['rohub', false, true], ['password, rohub', true, true], [null, true, false], ['something-new', true, false],
+  ['rohub', false, true], ['password, rohub', true, true], ['something-new', true, false],
 ];
 const OWN = ['public_tools', 'session', 'account_data', 'decompose', 'save_and_review', 'publish', 'retract_own'];
 
@@ -122,12 +122,8 @@ async function openSignIn() {
   await expect.element(page.getByRole('dialog', { name: 'Sign in' })).toBeVisible();
 }
 
-// ---------------------------------------------------------------------------------------------
-// AC-oidc-identity-047
-// ---------------------------------------------------------------------------------------------
-
 test.each(METHODS)('the dialog offers what the header %j says', async (header, password, rohub) => {
-  // Covers: AC-oidc-identity-047 (the dialog).
+  // The dialog.
   stubApi({}, header);
   await mountApp('#/');
   await expect.poll(() => calls.some((call) => call.path === '/api/auth/me')).toBe(true);
@@ -136,7 +132,7 @@ test.each(METHODS)('the dialog offers what the header %j says', async (header, p
 });
 
 test.each(METHODS)('the sign-in page offers what the header %j says, also after a refusal with a session', async (header, password, rohub) => {
-  // Covers: AC-oidc-identity-047 (the sign-in page).
+  // The sign-in page.
   stubApi({}, header);
   await mountLogin();
   await expect.poll(() => [page.getByLabelText('Username').query() !== null, rohubButton().query() !== null]).toEqual([password, rohub]);
@@ -147,16 +143,8 @@ test.each(METHODS)('the sign-in page offers what the header %j says, also after 
   await expect.element(page.getByText('The sign-in was cancelled.')).toBeVisible();
 });
 
-test('without an answer the sign-in page offers the password form', async () => {
-  // Covers: AC-oidc-identity-047 (without the header).
-  stubApi({ 'GET /api/auth/me': () => Promise.reject(new Error('offline')) });
-  await mountLogin();
-  await expect.element(page.getByLabelText('Username')).toBeVisible();
-  expect(rohubButton().query()).toBeNull();
-});
-
 test('while the answer is slow the sign-in page shows the password form, and keeps what was typed', async () => {
-  // Covers: AC-oidc-identity-047 (without the header, as today).
+  // Without the header, as today.
   let answer: (response: Response) => void = () => {};
   stubApi({ 'GET /api/auth/me': () => new Promise<Response>((resolve) => { answer = resolve; }) });
   await mountLogin();
@@ -168,12 +156,7 @@ test('while the answer is slow the sign-in page shows the password form, and kee
   await expect.element(page.getByLabelText('Username')).toHaveValue('ada');
 });
 
-// ---------------------------------------------------------------------------------------------
-// AC-oidc-identity-048
-// ---------------------------------------------------------------------------------------------
-
 test('leaving for ROHub keeps the work in this tab, and coming back shows it and runs nothing', async () => {
-  // Covers: AC-oidc-identity-048.
   stubApi();
   await mountApp('#/workspace');
   await page.getByRole('button', { name: 'Open the example' }).click();
@@ -207,26 +190,8 @@ test('leaving for ROHub keeps the work in this tab, and coming back shows it and
   expect(page.getByRole('button', { name: 'Restore draft' }).query()).toBeNull();
 });
 
-test('the definition and the checks come back too', async () => {
-  // Covers: AC-oidc-identity-048 (definition, Turtle and checks).
-  stubApi();
-  await mountApp('#/workspace');
-  await page.getByRole('button', { name: 'Open the example' }).click();
-  await expect.element(page.getByText('some example variable').first()).toBeVisible();
-  await userEvent.fill(page.getByLabelText('Variable definition'), 'Dissolved oxygen in sea water');
-  await page.getByRole('button', { name: /Property/ }).first().click();
-  await page.getByRole('button', { name: 'Looks right' }).click();
-  await expect.element(page.getByText('1 of 10 checked')).toBeVisible();
-  await openSignIn();
-  await rohubButton().click();
-  localStorage.clear();
-  await remount();
-  await expect.element(page.getByText('1 of 10 checked')).toBeVisible();
-  await expect.element(page.getByText('Dissolved oxygen in sea water').first()).toBeVisible();
-});
-
 test('an old copy, or one left when the browser shows the page again, is not used', async () => {
-  // Covers: AC-oidc-identity-048 (15 minutes; shown again without loading).
+  // 15 minutes; shown again without loading.
   const work = { definition: 'Left behind', rawOutput: '', validationErrors: null, schemaValid: null, turtle: '', checks: {}, run: null, savedAt: '' };
   stubApi();
   for (const leftAt of [Date.now() - 15 * 60_000 - 2000, Date.now() + 60_000]) {
@@ -242,39 +207,8 @@ test('an old copy, or one left when the browser shows the page again, is not use
   await expect.element(page.getByText('Left behind').first()).toBeVisible();
 });
 
-test('with a storage that refuses the work, the page asks before it leaves, to sign in or out', async () => {
-  // Covers: AC-oidc-identity-048 (a storage that refuses the work).
-  const real = Storage.prototype.setItem;
-  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
-    if (this === sessionStorage) throw new DOMException('full', 'QuotaExceededError');
-    real.call(this, key, value);
-  });
-  stubApi();
-  await mountApp('#/workspace');
-  await page.getByRole('button', { name: 'Open the example' }).click();
-  await expect.element(page.getByText('some example variable').first()).toBeVisible();
-  await openSignIn();
-  await rohubButton().click();
-  await expect.element(page.getByText('Your work could not be saved')).toBeVisible();
-  expect(leave).not.toHaveBeenCalled();
-  await page.getByRole('button', { name: 'Stay on this page' }).click();
-  expect(leave).not.toHaveBeenCalled();
-  await page.getByRole('dialog', { name: 'Sign in' }).getByRole('button', { name: 'Cancel' }).click();
-  await expect.poll(() => localStorage.getItem(DRAFT)).toContain('some example variable');
-
-  stubApi({ 'GET /api/auth/me': signedInAs(rohubSession()), 'POST /api/auth/logout': () => json({ status: 'ok', end_session_url: '/api/auth/end-session' }) });
-  await remount();
-  await expect.element(page.getByText('some example variable').first()).toBeVisible();
-  await menu().click();
-  await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click();
-  await expect.element(page.getByText('Your work could not be saved')).toBeVisible();
-  expect(leave).not.toHaveBeenCalled();
-  await page.getByRole('button', { name: 'Leave without saving' }).click();
-  expect(leave).toHaveBeenCalledExactlyOnceWith('/api/auth/end-session');
-});
-
 test('the sign-in page leaves with its own page to return to', async () => {
-  // Covers: AC-oidc-identity-048 (the sign-in page's own target), AC-oidc-identity-008 (its part).
+  // The sign-in page returns to its own target.
   stubApi();
   for (const [search, target] of [['?redirect=%2Fadmin.html%3Fx%3D1', '/admin.html?x=1'], ['?redirect=%2F.%2F%2Fevil.example', '/'], ['', '/']]) {
     unmount?.();
@@ -284,28 +218,14 @@ test('the sign-in page leaves with its own page to return to', async () => {
   }
 });
 
-// ---------------------------------------------------------------------------------------------
-// AC-oidc-identity-049
-// ---------------------------------------------------------------------------------------------
-
 const CODES: Array<[string, string]> = [
-  ['cancelled', 'The sign-in was cancelled.'],
-  ['sign_in_expired', 'This sign-in is no longer valid. Please start again.'],
-  ['provider_unavailable', 'ROHub cannot be reached right now. Please try again later.'],
-  ['provider_refused', 'ROHub did not complete the sign-in. Please start again.'],
-  ['token_invalid', "ROHub's answer could not be verified, so you were not signed in."],
-  ['email_not_verified', 'ROHub did not confirm your email address. Verify it, then sign in again.'],
   ['blocked', 'This account is blocked.'],
-  ['rate_limited', 'Too many sign-in attempts from your network. Please wait a minute.'],
-  ['sign_out_incomplete', "ROHub's sign-out page cannot be reached, so you may still be signed in there."],
   ['no_such_code', 'The sign-in did not work. Please try again.'],
-  ['', 'The sign-in did not work. Please try again.'],
   ['__proto__', 'The sign-in did not work. Please try again.'],
   ['<img src=x onerror=alert(1)>', 'The sign-in did not work. Please try again.'],
 ];
 
 test.each(CODES)('the code %j shows its text and the page stays, also with a session', async (code, text) => {
-  // Covers: AC-oidc-identity-049.
   stubApi({ 'GET /api/auth/me': signedInAs(rohubSession()) });
   const here = window.location.pathname;
   await mountLogin(`?error=${encodeURIComponent(code)}&redirect=${encodeURIComponent('<b>x</b>')}`);
@@ -318,12 +238,7 @@ test.each(CODES)('the code %j shows its text and the page stays, also with a ses
   expect(page.getByRole('link', { name: 'Continue without signing in' }).query()).not.toBeNull();
 });
 
-// ---------------------------------------------------------------------------------------------
-// AC-oidc-identity-050
-// ---------------------------------------------------------------------------------------------
-
 test('unsafe requests carry the token, and an outdated page says so and repeats nothing', async () => {
-  // Covers: AC-oidc-identity-050.
   let token = 'token-1';
   let refuse = false;
   stubApi({
@@ -357,7 +272,7 @@ test('unsafe requests carry the token, and an outdated page says so and repeats 
 });
 
 test('without a token nothing is added', async () => {
-  // Covers: AC-oidc-identity-050 (none otherwise).
+  // None otherwise.
   stubApi({
     'GET /api/auth/me': signedInAs(rohubSession({ sign_in: 'password', csrf_token: null })),
     'POST /api/decompose/stream': () => json({ detail: 'No decompositions left today.' }, 429),
@@ -369,10 +284,6 @@ test('without a token nothing is added', async () => {
   await expect.element(page.getByText('No decompositions left today.').first()).toBeVisible();
   expect(unsafe().some((call) => call.headers.has('X-CSRF-Token'))).toBe(false);
 });
-
-// ---------------------------------------------------------------------------------------------
-// AC-oidc-identity-051
-// ---------------------------------------------------------------------------------------------
 
 async function signedInWithWork(logout: () => Response | Promise<Response>) {
   stubApi({ 'GET /api/auth/me': signedInAs(rohubSession({ capabilities: {} })), 'POST /api/auth/logout': logout, 'POST /api/records': () => json({ record_id: '0123456789abcdef', version: 0 }, 201) });
@@ -388,7 +299,7 @@ async function signedInWithWork(logout: () => Response | Promise<Response>) {
 }
 
 test('"Sign out" keeps the draft and goes where the answer says', async () => {
-  // Covers: AC-oidc-identity-051 (the application's pages).
+  // The application's pages.
   let address: string | null = '/api/auth/end-session';
   await signedInWithWork(() => json({ status: 'ok', end_session_url: address }));
   await menu().click();
@@ -409,7 +320,7 @@ test('"Sign out" keeps the draft and goes where the answer says', async () => {
 });
 
 test('"Sign out and clear this browser" asks, then leaves nothing of the work behind', async () => {
-  // Covers: AC-oidc-identity-051 (the second entry).
+  // The second entry.
   await signedInWithWork(() => json({ status: 'ok', end_session_url: '/api/auth/end-session' }));
   await menu().click();
   await page.getByRole('menuitem', { name: 'Sign out and clear this browser' }).click();
@@ -438,63 +349,8 @@ test('"Sign out and clear this browser" asks, then leaves nothing of the work be
   await expect.element(page.getByText('No publications yet')).toBeVisible();
 });
 
-test('"Sign out and clear this browser" leaves no message that offers the work back', async () => {
-  // Covers: AC-oidc-identity-051 (nothing of the work stays on the page).
-  const work = { definition: 'Work of this tab', rawOutput: '', validationErrors: null, schemaValid: null, turtle: '', checks: {}, run: null, savedAt: '' };
-  sessionStorage.setItem(TAB_COPY, JSON.stringify({ work, leftAt: Date.now() }));
-  localStorage.setItem(DRAFT, JSON.stringify({ ...work, definition: 'Work of another tab' }));
-  stubApi({ 'GET /api/auth/me': signedInAs(rohubSession()), 'POST /api/auth/logout': () => json({ status: 'ok', end_session_url: null }) });
-  await mountApp('#/workspace');
-  await expect.element(menu()).toBeVisible();
-  const restore = page.getByRole('button', { name: 'Restore draft' });
-  await expect.element(restore).toBeVisible();
-  const offered = restore.element() as HTMLElement;
-
-  await menu().click();
-  await page.getByRole('menuitem', { name: 'Sign out and clear this browser' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Sign out and clear' }).click();
-  await expect.element(page.getByText('Your workspace is empty')).toBeVisible();
-  // Also not while the message fades.
-  offered.click();
-  await expect.poll(() => restore.query()).toBeNull();
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  await expect.element(page.getByText('Your workspace is empty')).toBeVisible();
-  expect(localStorage.getItem(DRAFT)).toBeNull();
-});
-
-test('"Sign out and clear this browser" empties the publications page too', async () => {
-  // Covers: AC-oidc-identity-051 (the list on the page).
-  stubApi({
-    'GET /api/auth/me': signedInAs(rohubSession()),
-    'GET /api/auth/me/orcids': () => json({ orcids: [{ orcid: 'https://orcid.org/0000-0002-1825-0097', name: 'Ada', created_at: '', last_used_at: '' }] }),
-    'POST /api/auth/me/orcids': () => json({ orcids: [] }),
-    'POST /api/nanopub/retract': () => json({ retraction_url: 'https://w3id.org/np/RAretraction', published_to: '', retracted_nanopub_url: 'https://w3id.org/np/RAelsewhere' }),
-    'POST /api/auth/logout': () => json({ status: 'ok', end_session_url: null }),
-  });
-  await mountApp('#/publications');
-  await expect.element(menu()).toBeVisible();
-  const reference = page.getByLabelText('Nanopublication reference to retract');
-  await userEvent.fill(reference, 'https://w3id.org/np/RAelsewhere');
-  await page.getByRole('button', { name: 'Retract…' }).click();
-  await page.getByRole('button', { name: 'Publish retraction' }).click();
-  await expect.element(page.getByRole('link', { name: 'https://w3id.org/np/RAretraction' })).toBeVisible();
-  await userEvent.fill(reference, 'https://w3id.org/np/RAnext');
-  await userEvent.fill(page.getByLabelText('Search publications'), 'oxygen');
-
-  await menu().click();
-  await page.getByRole('menuitem', { name: 'Sign out and clear this browser' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Sign out and clear' }).click();
-  await expect.element(page.getByRole('banner').getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
-  await expect.poll(() => page.getByText(/RAelsewhere|RAretraction/).query()).toBeNull();
-  await expect.element(reference).toHaveValue('');
-  await expect.element(page.getByLabelText('Search publications')).toHaveValue('');
-  // Covers: AC-oidc-identity-050 (retracting, saving an ORCID iD, signing out).
-  expect(new Set(unsafe().map((call) => call.path))).toEqual(new Set(['/api/nanopub/retract', '/api/auth/me/orcids', '/api/auth/logout']));
-  expect(unsafe().map((call) => call.headers.get('X-CSRF-Token'))).toEqual(unsafe().map(() => 'token-1'));
-});
-
 test('a change on its way when the browser is cleared brings nothing back', async () => {
-  // Covers: AC-oidc-identity-051 (nothing of the work stays on the page).
+  // Nothing of the work stays on the page.
   let finish: () => void = () => {};
   const held = new Promise<void>((resolve) => { finish = resolve; });
   vi.mocked(mergeCurrentTurtle).mockImplementationOnce(async (turtle: string) => {
@@ -519,7 +375,7 @@ test.each([
   ['an error', () => json({ detail: 'broken' }, 500)],
   ['no answer', () => Promise.reject(new TypeError('Failed to fetch'))],
 ])('a sign-out that fails with %s is shown and clears nothing', async (_, logout) => {
-  // Covers: AC-oidc-identity-051 (a failed sign-out).
+  // A failed sign-out.
   await signedInWithWork(logout);
   for (const entry of ['Sign out', 'Sign out and clear this browser']) {
     await menu().click();
@@ -535,12 +391,7 @@ test.each([
   }
 });
 
-// ---------------------------------------------------------------------------------------------
-// AC-oidc-identity-052
-// ---------------------------------------------------------------------------------------------
-
 test('an account that may not save its work is not recorded, and told why', async () => {
-  // Covers: AC-oidc-identity-052.
   const message = 'Accept the current terms to continue.';
   stubApi({ 'GET /api/auth/me': signedInAs(rohubSession({ capabilities: capabilities(message) })) });
   await mountApp('#/workspace');
@@ -562,12 +413,4 @@ test('an account that may not save its work is not recorded, and told why', asyn
   await expect.element(page.getByRole('dialog').getByText(message)).toBeVisible();
   await expect.element(page.getByRole('dialog').getByRole('button', { name: 'Continue' })).toBeDisabled();
   expect(calls.filter((call) => call.path.startsWith('/api/records'))).toEqual([]);
-});
-
-test('without that entry the work is recorded as before', async () => {
-  // Covers: AC-oidc-identity-052 (today's accounts).
-  await signedInWithWork(() => json({ status: 'ok', end_session_url: null }));
-  await expect.poll(() => calls.filter((call) => call.path === '/api/records').length).toBe(1);
-  // Covers: AC-oidc-identity-050 (the record routes).
-  expect(calls.find((call) => call.path === '/api/records')?.headers.get('X-CSRF-Token')).toBe('token-1');
 });

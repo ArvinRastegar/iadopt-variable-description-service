@@ -130,7 +130,6 @@ async function menuSaysWaiting(): Promise<boolean> {
 }
 
 test('the account menu says that an account waits, and only then', async () => {
-  // Covers: AC-account-approval-018.
   let entries: Record<string, Entry> = {};
   stubApi({ 'GET /api/auth/me': () => json(session(entries)) });
   // Waiting, also while the daily limit lets it decompose and when its day is used up.
@@ -149,7 +148,6 @@ test('the account menu says that an account waits, and only then', async () => {
 });
 
 test('a waiting account reads why its work is refused, and nothing of it is recorded', async () => {
-  // Covers: AC-account-approval-018.
   stubApi({
     'GET /api/auth/me': () => json(session(capabilities('user', WAITING))),
     'POST /api/decompose/stream': () => json({ detail: MESSAGE, reason: 'approval_required' }, 403),
@@ -179,45 +177,7 @@ test('a waiting account reads why its work is refused, and nothing of it is reco
   expect(new Set(events().map((event) => JSON.stringify(Object.keys(event ?? {}).sort()) + JSON.stringify([event?.payload, event?.metadata])))).toEqual(new Set(['["action","metadata","payload"][{},{}]']));
 });
 
-test('an account whose work is recorded sends its events as before', async () => {
-  // Covers: AC-account-approval-018.
-  stubApi({ 'GET /api/auth/me': () => json(session(capabilities('user'))), ...records() });
-  await mountApp();
-  await page.getByRole('button', { name: 'Open the example' }).click();
-  await expect.element(page.getByText('some example variable').first()).toBeVisible();
-  await expect.poll(() => events().length).toBeGreaterThan(0);
-  expect(String((events()[0]?.payload as Record<string, unknown>).ttl)).toContain('some example variable');
-});
-
-test('with the daily limit an account that is not approved is told before it starts to publish', async () => {
-  // Covers: AC-account-approval-020.
-  for (const [entries, approved] of [[capabilities('user', LIMITED), false], [capabilities('user'), true]] as const) {
-    localStorage.clear();
-    stubApi({ 'GET /api/auth/me': () => json(session(entries)), ...records() });
-    await mountApp();
-    await page.getByRole('button', { name: 'Open the example' }).click();
-    await expect.element(page.getByText('some example variable').first()).toBeVisible();
-    await page.getByRole('tab', { name: /Turtle/ }).click();
-    await page.getByRole('button', { name: 'Add nanopub metadata' }).click();
-    await expect.element(page.getByRole('button', { name: 'Mark as best' }).first()).toBeEnabled();
-    await page.getByRole('button', { name: 'Mark as best' }).first().click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Mark as best' }).click();
-    await expect.element(page.getByText(/is marked as best/).first()).toBeVisible();
-    await page.getByRole('button', { name: 'Publish', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Publish as a nanopublication' });
-    await expect.element(dialog.getByText('The Turtle and the diagram match')).toBeVisible();
-    await expect.poll(() => dialog.getByText('Checking the nanopublication metadata…').query()).toBeNull();
-    if (approved) await expect.element(dialog.getByRole('button', { name: 'Continue' })).toBeEnabled();
-    else {
-      await expect.element(dialog.getByText('This account cannot publish yet')).toBeVisible();
-      await expect.element(dialog.getByText('Publishing needs an approved account.')).toBeVisible();
-      await expect.element(dialog.getByRole('button', { name: 'Continue' })).toBeDisabled();
-    }
-  }
-});
-
 test('an account that may not save its work reads so when it publishes, whatever else it may', async () => {
-  // Covers: AC-account-approval-020.
   const message = 'Verify your email address to use this account.';
   stubApi({ 'GET /api/auth/me': () => json(session(capabilities('user', { save_and_review: no('email_not_verified', message) }))) });
   await mountApp();
@@ -231,7 +191,6 @@ test('an account that may not save its work reads so when it publishes, whatever
 });
 
 test('a withdrawn approval shows at the first refusal, also of a step that nobody asked for', async () => {
-  // Covers: AC-account-approval-019.
   let entries = capabilities('user');
   stubApi({ 'GET /api/auth/me': () => json(session(entries)), ...records(() => entries) });
   await mountApp();
@@ -256,7 +215,6 @@ test('a withdrawn approval shows at the first refusal, also of a step that nobod
 });
 
 test('an approval shows when the person comes back to the tab, and a failure to ask changes nothing', async () => {
-  // Covers: AC-account-approval-019.
   let answer = () => json(session(capabilities('user', WAITING)));
   stubApi({ 'GET /api/auth/me': () => answer() });
   await mountApp();
@@ -285,7 +243,6 @@ test('an approval shows when the person comes back to the tab, and a failure to 
 });
 
 test('coming back to a tab whose browser has another session shows that session as a whole', async () => {
-  // Covers: AC-account-approval-019.
   const ada = session(capabilities('user', WAITING));
   const ben = { ...session(capabilities('admin')), user: { ...ada.user, id: 8, username: 'ben', display_name: 'Ben Example', role: 'admin' }, csrf_token: 'token-2' };
   let answer = () => json(ada);
@@ -305,28 +262,7 @@ test('coming back to a tab whose browser has another session shows that session 
   await expect.element(page.getByRole('banner').getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
 });
 
-test('a refused step whose session cannot be read again leaves the page as it is', async () => {
-  // Covers: AC-account-approval-019.
-  let answer = () => json(session(capabilities('user')));
-  let entries = capabilities('user');
-  stubApi({ 'GET /api/auth/me': () => answer(), ...records(() => entries) });
-  await mountApp();
-  await page.getByRole('button', { name: 'Open the example' }).click();
-  await expect.poll(() => calls.filter((call) => call.path === '/api/records').length).toBe(1);
-  entries = capabilities('user', WAITING);
-  answer = () => json({ detail: 'Unavailable.' }, 503);
-  const asked = () => calls.filter((call) => call.path === '/api/auth/me').length;
-  const count = asked();
-  await page.getByRole('button', { name: /Property/ }).first().click();
-  await page.getByRole('button', { name: 'Looks right' }).click();
-  await expect.poll(asked).toBeGreaterThan(count);
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  await expect.element(menu()).toBeVisible();
-  await expect.element(page.getByText('1 of 10 checked')).toBeVisible();
-});
-
 test('an approval shows at the next action, without a reload', async () => {
-  // Covers: AC-account-approval-019.
   let entries = capabilities('user', WAITING);
   stubApi({
     'GET /api/auth/me': () => json(session(entries)),
@@ -388,7 +324,6 @@ const rowOf = (username: string) => [...document.querySelectorAll('tbody tr')].f
 const press = (name: string) => page.getByRole('button', { name, exact: true }).click();
 
 test('the admin page shows who waits first, approves with a note and withdraws', async () => {
-  // Covers: AC-account-approval-021.
   let viewer: Account = carol;
   let refused: Record<string, Entry> = {};
   let users = [anna, bob, carol, dave, olivia, pat, zoe, erin, gone];

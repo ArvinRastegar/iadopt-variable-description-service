@@ -3,8 +3,7 @@ import { page } from 'vitest/browser';
 
 /*
  * Regression tests for what the review of the increment-1 implementation found on the admin page
- * (gate G-019). They add to the approved admin.accounts.browser.test.tsx and change nothing of it.
- * Covers: AC-accounts-roles-018. No request reaches a real API.
+ * (gate G-019). They add to admin.accounts.browser.test.tsx. No request reaches a real API.
  */
 
 const allowed = { allowed: true, reason: null, message: null };

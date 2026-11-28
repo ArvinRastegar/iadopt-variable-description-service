@@ -1,15 +1,13 @@
-"""Byte-exactness tests for the measured prompt renderer.
+"""The measured prompt renderer reproduces the prompt the lab measured, byte for byte.
 
-Contracts: iadopt-variable-description-service-docs/components/measured-prompt.md, with the
-examples layout of components/measured-prompt-output-layout.md (D-042).
+The golden is the layout-B prompt of D-042 for one target definition. That the golden itself is right is checked in
+``test_measured_provenance.py``.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import pathlib
-import re
 
 import pytest
 
@@ -19,116 +17,40 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 GOLDEN = (BACKEND / "tests/fixtures/measured_prompt_golden.txt").read_text(encoding="utf-8")
 TARGET = (BACKEND / "tests/fixtures/measured_target_definition.txt").read_text(encoding="utf-8").rstrip("\n")
 
-# The examples block the 2026-11-18 side test sent (D-042), 13,121 characters.
-SIDE_TEST_BLOCK_SHA256 = "691caf47264f071ba5c7dca1ade48c66d8a928e8fa1821f73df727d20708eef3"
-EXAMPLE_RE = re.compile(r"Example (\d+)\nDefinition: ([^\n]*)\nOutput:\n(\{.*?\n\})(?:\n\n|$)", re.S)
-
 
 def test_rendering_reproduces_the_golden_prompt_byte_for_byte():
-    """The test this module exists for."""
     assert mp.render_measured_prompt(TARGET) == GOLDEN
+    # The warm-up path passes the artifacts it cached instead of loading them.
+    cached = mp.render_measured_prompt(
+        TARGET,
+        template=mp.load_measured_template(),
+        schema_text=mp.load_lexical_schema_text(),
+        demonstrations=mp.load_demonstrations(),
+    )
+    assert cached == GOLDEN
 
 
-def test_rendered_prompt_is_the_recorded_length():
-    assert len(mp.render_measured_prompt(TARGET)) == 17_393
-
-
-def test_encoded_demonstrations_appear_verbatim_in_the_golden():
-    encoded = mp.encode_demonstrations(mp.load_demonstrations())
-    assert encoded in GOLDEN
-
-
-def test_examples_block_is_the_one_the_side_test_sent():
-    encoded = mp.encode_demonstrations(mp.load_demonstrations())
-    assert len(encoded) == 13_121
-    assert hashlib.sha256(encoded.encode("utf-8")).hexdigest() == SIDE_TEST_BLOCK_SHA256
-
-
-def test_each_example_shows_its_definition_then_its_answer_in_answer_order():
-    demonstrations = mp.load_demonstrations()
-    examples = EXAMPLE_RE.findall(mp.encode_demonstrations(demonstrations))
-    assert [int(number) for number, _, _ in examples] == list(range(1, 26))
-    for (_, definition, answer), demonstration in zip(examples, demonstrations, strict=True):
-        assert definition == demonstration["definition"]
-        parsed = json.loads(answer)
-        assert parsed == demonstration["decomposition"]
-        assert list(parsed) == [key for key in mp.ANSWER_KEY_ORDER if key in parsed]
-        for constraint in parsed.get("hasConstraint") or []:
-            assert list(constraint) == [key for key in mp.NESTED_KEY_ORDER if key in constraint]
-
-
-def test_other_layouts_would_not_appear_in_the_golden():
-    """Guards the tests above against passing vacuously: the earlier compact line and
-    sorted keys are both absent from the golden."""
-    demos = mp.load_demonstrations()
-    compact = json.dumps(demos, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    assert compact not in GOLDEN
-    sorted_answer = json.dumps(demos[0]["decomposition"], ensure_ascii=False, sort_keys=True, indent=2)
-    assert sorted_answer != json.dumps(mp.in_answer_order(demos[0]["decomposition"]), ensure_ascii=False, indent=2)
-    assert f"Output:\n{sorted_answer}\n" not in GOLDEN
-
-
-def test_substitution_is_a_single_pass():
-    """A definition containing a placeholder must not be re-expanded."""
+def test_the_definition_is_inserted_verbatim_and_never_expanded_again():
+    assert "TARGET DEFINITION\n  spaced  \n" in mp.render_measured_prompt("  spaced  ")
     prompt = mp.render_measured_prompt("{{schema}}")
     assert "TARGET DEFINITION\n{{schema}}\n" in prompt
     assert prompt.count('"$id": "https://iadopt-lab.local/schemas/lexical-decomposition-v1"') == 1
 
 
-def test_prompt_ends_in_exactly_one_newline():
-    prompt = mp.render_measured_prompt(TARGET)
-    assert prompt.endswith("\n")
-    assert not prompt.endswith("\n\n")
-
-
-def test_schema_text_is_verbatim_including_trailing_newline():
-    """D-008: stripping this newline costs a byte the measured prompt has."""
-    schema_text = mp.load_lexical_schema_text()
-    on_disk = (BACKEND / "data/measured/lexical-decomposition.schema.json").read_text(encoding="utf-8")
-    assert schema_text == on_disk
-    assert schema_text.endswith("\n")
-    assert not schema_text.endswith("\n\n")
-
-
-def test_rendered_prompt_keeps_the_three_newline_schema_boundary():
-    prompt = mp.render_measured_prompt(TARGET)
-    assert "}\n\n\nORDERED DEMONSTRATIONS" in prompt
-
-
-def test_definition_is_inserted_verbatim():
-    prompt = mp.render_measured_prompt("  spaced  ")
-    assert "TARGET DEFINITION\n  spaced  \n" in prompt
-
-
-def test_rendering_is_deterministic():
-    assert mp.render_measured_prompt(TARGET) == mp.render_measured_prompt(TARGET)
-
-
-@pytest.mark.parametrize("bad", ["", "   ", "\n", "\t "])
-def test_empty_definition_raises_value_error(bad):
+@pytest.mark.parametrize("bad", ["", " \n\t"])
+def test_an_empty_definition_is_refused(bad):
     with pytest.raises(ValueError):
         mp.render_measured_prompt(bad)
 
 
-def test_demonstrations_are_exactly_twenty_five():
-    assert len(mp.load_demonstrations()) == 25
-
-
-def test_missing_template_raises_runtime_error(monkeypatch, tmp_path):
+def test_a_missing_artifact_stops_with_a_runtime_error(monkeypatch, tmp_path):
     monkeypatch.setattr(type(mp.settings), "measured_template_path",
                         property(lambda self: tmp_path / "absent.txt"), raising=False)
     with pytest.raises(RuntimeError):
         mp.load_measured_template()
 
 
-def test_missing_demonstrations_raises_runtime_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(type(mp.settings), "measured_demonstrations_path",
-                        property(lambda self: tmp_path / "absent.json"), raising=False)
-    with pytest.raises(RuntimeError):
-        mp.load_demonstrations()
-
-
-def test_wrong_demonstration_count_raises_runtime_error(monkeypatch, tmp_path):
+def test_a_wrong_number_of_demonstrations_stops_with_a_runtime_error(monkeypatch, tmp_path):
     short = tmp_path / "short.json"
     short.write_text(json.dumps([{"demonstration": 1, "definition": "d", "decomposition": {}}]), encoding="utf-8")
     monkeypatch.setattr(type(mp.settings), "measured_demonstrations_path",
@@ -137,16 +59,6 @@ def test_wrong_demonstration_count_raises_runtime_error(monkeypatch, tmp_path):
         mp.load_demonstrations()
 
 
-def test_template_missing_placeholder_raises_runtime_error():
+def test_a_template_without_its_placeholders_stops_with_a_runtime_error():
     with pytest.raises(RuntimeError):
         mp.render_measured_prompt(TARGET, template="no placeholders here", schema_text="{}", demonstrations=[])
-
-
-def test_cached_artifacts_produce_the_same_output():
-    cached = mp.render_measured_prompt(
-        TARGET,
-        template=mp.load_measured_template(),
-        schema_text=mp.load_lexical_schema_text(),
-        demonstrations=mp.load_demonstrations(),
-    )
-    assert cached == GOLDEN

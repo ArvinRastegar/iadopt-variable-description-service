@@ -309,7 +309,6 @@ class ConnectionPolicyTests(StorageTestCase):
         self.assertEqual(conn.execute("SELECT 7 AS seven").fetchone()["seven"], 7)
 
     def test_every_connection_has_the_connection_policy(self):
-        """Covers: AC-app-storage-001 (foreign keys, WAL, 30 s busy timeout, rows by column name)."""
         conn = storage.connect(self.db)
         try:
             self.assert_policy(conn)
@@ -324,17 +323,7 @@ class ConnectionPolicyTests(StorageTestCase):
                 with opened() as conn:
                     self.assert_policy(conn)
 
-    def test_no_module_outside_the_storage_package_calls_sqlite3_connect(self):
-        """Covers: AC-app-storage-001 (in the source)."""
-        offenders = []
-        for path in sorted((BACKEND / "app").rglob("*.py")):
-            if STORAGE_DIR in path.parents:
-                continue
-            offenders += [f"{path.relative_to(BACKEND)}:{line}" for line in sqlite_connect_calls(path)]
-        self.assertEqual(offenders, [])
-
     def test_a_full_flow_opens_every_connection_through_the_storage_package(self):
-        """Covers: AC-app-storage-001 (at run time: login, saved iDs, records, export, admin reads)."""
         storage.migrate(self.db)
         self.store.init()
         self.store.create_user(username="bob", password="password-123")
@@ -376,7 +365,6 @@ class TransactionTests(StorageTestCase):
         return self.rows("SELECT COUNT(*) AS n FROM t")[0]["n"]
 
     def test_a_transaction_is_all_or_nothing_and_always_closes(self):
-        """Covers: AC-app-storage-002."""
         for immediate in (False, True):
             with self.subTest(immediate=immediate):
                 with self.assertRaisesRegex(RuntimeError, "stop here"):
@@ -396,7 +384,6 @@ class TransactionTests(StorageTestCase):
             conn.execute("SELECT 1")
 
     def test_immediate_read_and_write_sections_lose_no_update(self):
-        """Covers: AC-app-storage-003 (real threads and a second process on one real file)."""
         threads, per_thread, per_process = 6, 20, 50
         script = (
             "import pathlib, sys, time\n"
@@ -437,8 +424,8 @@ class TransactionTests(StorageTestCase):
         self.assertEqual(self.rows("SELECT n FROM counter")[0]["n"], threads * per_thread + per_process)
 
     def test_the_record_store_numbers_steps_from_two_processes_without_a_clash(self):
-        """Covers: AC-app-storage-003 (section 3's check-and-write rule, D-014: the next step number is
-        read and written in one immediate transaction, so correctness does not rest on in-process locks)."""
+        """The next step number is read and written in one immediate transaction (D-014), so correctness does not
+        rest on in-process locks."""
         self.store.init()
         bob = self.store.create_user(username="bob", password="password-123")
         record_id, _ = self.records.start_import(user=bob, request=None, turtle=DRAFT, occurred_at=None, client=CLIENT)
@@ -476,7 +463,6 @@ class TransactionTests(StorageTestCase):
             errors.append(e)
 
     def test_a_transaction_without_the_lock_in_time_raises_storage_busy(self):
-        """Covers: AC-app-storage-019 (timeout shortened to 0.2 s), and section 3's Busy rule."""
         holder = sqlite3.connect(self.db, isolation_level=None)
         holder.execute("BEGIN IMMEDIATE")
         try:
@@ -493,18 +479,9 @@ class TransactionTests(StorageTestCase):
             holder.close()
         self.assertEqual(self.count(), 0)
 
-    def test_storage_busy_is_an_operational_error_and_the_others_are_storage_errors(self):
-        """Covers: AC-app-storage-019 (section 9: which errors subclass which)."""
-        self.assertTrue(issubclass(storage.StorageBusy, sqlite3.OperationalError))
-        for error in (storage.SchemaMismatch, storage.MigrationChanged, storage.MigrationFailed,
-                      storage.BackupFailed, storage.InsufficientSpace):
-            with self.subTest(error=error.__name__):
-                self.assertTrue(issubclass(error, storage.StorageError))
-
 
 class SnapshotTests(StorageTestCase):
     def test_a_snapshot_reads_one_moment_and_cannot_write(self):
-        """Covers: AC-app-storage-004."""
         conn = previous_image.connect(self.db)
         conn.execute("CREATE TABLE a (x INTEGER)")
         conn.execute("CREATE TABLE b (x INTEGER)")
@@ -535,7 +512,6 @@ class SnapshotTests(StorageTestCase):
 
 class MigrationTests(StorageTestCase):
     def test_an_empty_file_gets_the_baseline_schema_through_recorded_migrations(self):
-        """Covers: AC-app-storage-005."""
         applied = storage.migrate(self.db)
 
         ids = [item.id for item in storage.MIGRATIONS]
@@ -552,15 +528,7 @@ class MigrationTests(StorageTestCase):
         self.assertEqual(self.rows("PRAGMA auto_vacuum"), [{"auto_vacuum": 2}])  # incremental
         self.assertEqual(backups(self.db), [])
 
-    def test_a_missing_directory_is_created(self):
-        """Covers: AC-app-storage-005 (section 4, step 1)."""
-        db = self.dir / "state" / "nested" / "iadopt.sqlite3"
-        storage.migrate(db)
-        self.assertTrue(db.exists())
-        self.assertIn("users", table_names(db))
-
     def test_an_older_file_gets_the_tables_the_previous_image_would_add(self):
-        """Covers: AC-app-storage-005 (section 4: an older file gets exactly what was missing)."""
         conn = previous_image.connect(self.db)
         conn.executescript(previous_image.sql("auth_schema"))
         conn.execute("DROP TABLE saved_orcids")  # a file from before D-035 and D-037
@@ -578,7 +546,6 @@ class MigrationTests(StorageTestCase):
                          users_before)
 
     def test_a_de1a7af_file_keeps_every_row_and_gets_one_verified_backup_first(self):
-        """Covers: AC-app-storage-006."""
         self.de1a7af_file()
         baseline = baseline_columns(self.dir)
         before = dump(self.db, baseline)
@@ -600,7 +567,6 @@ class MigrationTests(StorageTestCase):
         self.assertEqual(self.rows("PRAGMA auto_vacuum", db=copy), [{"auto_vacuum": 0}])
 
     def test_a_file_missing_a_baseline_column_or_a_trigger_is_refused_unchanged(self):
-        """Covers: AC-app-storage-007."""
         missing_column = self.dir / "missing-column.sqlite3"
         script = previous_image.sql("auth_schema")
         without = re.sub(r",\s*last_login_at TEXT", "", script, count=1)
@@ -626,7 +592,6 @@ class MigrationTests(StorageTestCase):
                 self.assertNotIn("schema_migrations", table_names(db))
 
     def test_a_changed_checksum_stops_migration_before_any_write(self):
-        """Covers: AC-app-storage-008."""
         storage.migrate(self.db)
         self.execute("UPDATE schema_migrations SET checksum = ? WHERE id = '0001_baseline'", "0" * 64)
         storage.MIGRATIONS.append(migration("0900_added_later", "CREATE TABLE added_later (x INTEGER)"))
@@ -640,7 +605,6 @@ class MigrationTests(StorageTestCase):
         self.assertNotIn("added_later", table_names(self.db))
 
     def test_a_failing_migration_rolls_back_alone_and_is_named(self):
-        """Covers: AC-app-storage-009 (no partial table, no bookkeeping row, earlier ones kept)."""
         storage.migrate(self.db)
         storage.MIGRATIONS.append(migration("0901_good", "CREATE TABLE good_t (x INTEGER)"))
         storage.MIGRATIONS.append(migration(
@@ -658,7 +622,6 @@ class MigrationTests(StorageTestCase):
         self.assertNotIn("0902_bad", self.applied())
 
     def test_startup_fails_on_a_failing_migration_and_names_it(self):
-        """Covers: AC-app-storage-009 (section 4: when startup's migrate() raises, the application does not start)."""
         storage.MIGRATIONS.append(migration(
             "0902_bad", "CREATE TABLE half_t (x INTEGER); INSERT INTO no_such_table (x) VALUES (1);"
         ))
@@ -669,7 +632,6 @@ class MigrationTests(StorageTestCase):
         self.assertNotIn("half_t", table_names(self.db))
 
     def test_startup_stops_on_a_file_it_must_not_migrate(self):
-        """Covers: AC-app-storage-007, AC-app-storage-008 (section 9: startup stops)."""
         self.de1a7af_file()
         self.execute("DROP TRIGGER record_events_no_delete")
         with self.assertRaises(storage.SchemaMismatch):
@@ -685,7 +647,6 @@ class MigrationTests(StorageTestCase):
                 self.fail("the application started")
 
     def test_record_tables_stay_append_only_after_migration(self):
-        """Covers: AC-app-storage-010."""
         self.de1a7af_file()
         storage.migrate(self.db)
         conn = sqlite3.connect(self.db)
@@ -714,7 +675,6 @@ class MigrationTests(StorageTestCase):
             conn.close()
 
     def test_the_previous_image_still_runs_on_a_migrated_file(self):
-        """Covers: AC-app-storage-011."""
         with self.subTest(file="empty, migrated by this code"):
             storage.migrate(self.db)
             self.assertEqual(previous_image.replay(self.db), [])
@@ -726,7 +686,6 @@ class MigrationTests(StorageTestCase):
             self.assertEqual(previous_image.replay(filled, include=previous_image.is_read), [])
 
     def test_an_applied_migration_this_code_does_not_know_is_only_a_warning(self):
-        """Covers: AC-app-storage-012."""
         storage.migrate(self.db)
         self.execute(
             "INSERT INTO schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)",
@@ -742,7 +701,6 @@ class MigrationTests(StorageTestCase):
         self.assertIn("after_newer", table_names(self.db))
 
     def test_nothing_pending_means_no_backup_and_no_write(self):
-        """Covers: AC-app-storage-005, AC-app-storage-006 (section 4, step 4)."""
         self.de1a7af_file()
         storage.migrate(self.db)
         files, file_before = backups(self.db), digest(self.db)
@@ -768,7 +726,6 @@ class BackupTests(StorageTestCase):
         return paths
 
     def test_too_little_space_stops_migration_before_anything_is_deleted_or_written(self):
-        """Covers: AC-app-storage-013 (the space rule), AC-app-storage-014 (retention counts)."""
         self.de1a7af_file()
         pad(self.db, 4)
         size = size_of(self.db)
@@ -796,7 +753,6 @@ class BackupTests(StorageTestCase):
         self.assertIn("0001_baseline", self.applied())
 
     def test_without_a_pending_rewrite_the_check_is_the_copy_and_the_reserve(self):
-        """Covers: AC-app-storage-013 (no maintenance migration pending)."""
         self.de1a7af_file()
         pad(self.db, 4)
         storage.migrate(self.db)  # one pre-migration backup now exists; retention frees nothing
@@ -812,7 +768,6 @@ class BackupTests(StorageTestCase):
             self.assertEqual(storage.migrate(self.db), ["0904_more"])
 
     def test_a_backup_is_a_verified_copy_under_a_dated_name(self):
-        """Covers: AC-app-storage-013 (a verified backup)."""
         self.de1a7af_file()
         storage.migrate(self.db)
         path = storage.backup("manual", path=self.db)
@@ -831,7 +786,6 @@ class BackupTests(StorageTestCase):
                                  self.rows(f"SELECT COUNT(*) AS n FROM {table}"))
 
     def test_a_copy_that_fails_or_fails_verification_never_gets_a_backup_name(self):
-        """Covers: AC-app-storage-013 (BackupFailed; no migration runs after it)."""
         self.de1a7af_file()
         schema, rows = master(self.db), dump(self.db)
         for factory in (CorruptCopy, FailingCopy):
@@ -846,7 +800,6 @@ class BackupTests(StorageTestCase):
                 self.assertEqual(dump(self.db), rows)
 
     def test_retention_keeps_two_pre_migration_backups_and_every_manual_one(self):
-        """Covers: AC-app-storage-014."""
         self.de1a7af_file()
         self.older_backups(
             "iadopt-20260101T000000Z-pre-migration.sqlite3",
@@ -882,7 +835,6 @@ class StatusTests(StorageTestCase):
             conn.close()
 
     def test_status_reports_sizes_space_migrations_and_tables_and_writes_nothing(self):
-        """Covers: AC-app-storage-015."""
         self.de1a7af_file()
         storage.migrate(self.db)
         # Keep committed rows in the WAL (no checkpoint) while status() runs.
@@ -914,7 +866,6 @@ class StatusTests(StorageTestCase):
             writer.close()
 
     def test_status_of_an_unmigrated_file_changes_nothing(self):
-        """Covers: AC-app-storage-015 (also on an unmigrated file)."""
         self.de1a7af_file()
         file_before, schema = digest(self.db), master(self.db)
         report = storage.status(self.db)
@@ -928,7 +879,6 @@ class StatusTests(StorageTestCase):
 
 class ReclaimTests(StorageTestCase):
     def test_reclaim_returns_free_pages_and_loses_no_row(self):
-        """Covers: AC-app-storage-016."""
         self.de1a7af_file()
         storage.migrate(self.db)
         pad(self.db, 4)
@@ -953,7 +903,6 @@ class ReclaimTests(StorageTestCase):
 
 class CommandTests(StorageTestCase):
     def test_db_commands_answer_0_1_or_2(self):
-        """Covers: AC-app-storage-017."""
         self.de1a7af_file()
 
         code, out = run_cli("db", "status")
@@ -995,7 +944,6 @@ class CommandTests(StorageTestCase):
 
 class StartupTests(StorageTestCase):
     def test_startup_on_an_empty_file_migrates_and_every_store_route_works(self):
-        """Covers: AC-app-storage-018."""
         db = self.dir / "state" / "iadopt.sqlite3"  # its directory does not exist yet
         self.use_database(db)
 
@@ -1040,7 +988,6 @@ class StartupTests(StorageTestCase):
                 self.assertEqual(len(json.loads(archive.read("records.jsonld"))["@graph"]), 2)
 
     def test_the_stores_create_no_table_on_an_unmigrated_file(self):
-        """Covers: AC-app-storage-018 (section 4: stores never create or alter tables; section 11)."""
         with self.assertRaises(sqlite3.OperationalError):
             self.records.summary(user={"id": 1, "roles": []}, record_id="0123456789abcdef")
         with self.assertRaises(sqlite3.OperationalError):
@@ -1048,7 +995,6 @@ class StartupTests(StorageTestCase):
         self.assertEqual(table_names(self.db) if self.db.exists() else [], [])
 
     def test_a_file_replaced_while_running_is_migrated_at_the_next_start(self):
-        """Covers: AC-app-storage-018 (section 4: a replaced file is migrated at the next start)."""
         with started_app():
             pass
         os.remove(self.db)

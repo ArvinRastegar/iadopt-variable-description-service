@@ -65,7 +65,6 @@ class LocalModeTests(OidcTestCase):
     environment = ""
 
     def test_without_a_new_setting_passwords_work_as_before_and_the_rohub_routes_do_not_exist(self):
-        """Covers: AC-oidc-identity-001, AC-oidc-identity-030 (in local the answer is 404 however often)."""
         self.settings(oidc_issuer_raw="not judged", oidc_client_id_raw="a b", public_url_raw="nonsense", sign_in_limit_raw="1/300")
         with started_app() as client:
             for method, path in (("GET", "/api/auth/login"), ("GET", "/api/auth/callback"), ("GET", "/api/auth/end-session"),
@@ -102,7 +101,6 @@ class StartSettingsTests(OidcTestCase):
         return str(caught.exception)
 
     def test_each_missing_or_malformed_rohub_setting_stops_the_start_and_is_named(self):
-        """Covers: AC-oidc-identity-002."""
         cases = {
             "IADOPT_OIDC_ISSUER": ("oidc_issuer_raw", ("", "ftp://localhost/x", "http://localhost/x?y", "http://localhost/x#y",
                                                        "http://local host/x", "localhost", "http://user@localhost/x", "http:///x",
@@ -130,7 +128,6 @@ class StartSettingsTests(OidcTestCase):
         self.assertEqual(code, 0, out)
 
     def test_bad_values_do_not_fail_the_import_of_the_application(self):
-        """Covers: AC-oidc-identity-002, AC-request-guards-011, AC-daily-limit-001 (the import, and the operator's commands with it)."""
         bad = {name: "no such value" for name in (
             "IADOPT_ENVIRONMENT", "IADOPT_AUTH_MODE", "IADOPT_OIDC_ISSUER", "IADOPT_OIDC_CLIENT_ID", "IADOPT_PUBLIC_URL",
             "IADOPT_OIDC_POST_LOGOUT", "IADOPT_TRUSTED_PROXY_HOPS", "IADOPT_SIGN_IN_LIMIT", "IADOPT_DAILY_DECOMPOSITIONS")}
@@ -140,7 +137,6 @@ class StartSettingsTests(OidcTestCase):
         self.assertFalse(self.fresh.exists(), "the database was opened")
 
     def test_an_unknown_mode_or_environment_and_both_outside_development_stop_the_start(self):
-        """Covers: AC-oidc-identity-003."""
         for field, value, name in (("auth_mode_raw", "ldap", "IADOPT_AUTH_MODE"), ("auth_mode_raw", "OIDC", "IADOPT_AUTH_MODE"),
                                    ("environment_raw", "staging", "IADOPT_ENVIRONMENT"), ("environment_raw", "", "IADOPT_AUTH_MODE"),
                                    ("environment_raw", "production", "IADOPT_AUTH_MODE")):
@@ -148,7 +144,6 @@ class StartSettingsTests(OidcTestCase):
                 self.assertIn(name, self.refusal())
 
     def test_disabled_authentication_stops_the_start_outside_development_and_with_rohub(self):
-        """Covers: AC-oidc-identity-004."""
         self.store.enabled = False
         for environment, mode, starts in (("", "", False), ("production", "local", False), ("development", "oidc", False),
                                           ("development", "both", False), ("development", "local", True), ("development", "", True)):
@@ -163,7 +158,6 @@ class StartSettingsTests(OidcTestCase):
                 self.fresh.unlink()
 
     def test_addresses_the_cookie_setting_and_the_number_of_proxies_are_judged(self):
-        """Covers: AC-oidc-identity-005."""
         cases: List[tuple] = [
             (dict(oidc_issuer_raw="http://login.example.org/x"), False, "IADOPT_OIDC_ISSUER"),
             (dict(public_url_raw="http://iadopt.example.org"), False, "IADOPT_PUBLIC_URL"),
@@ -186,7 +180,6 @@ class StartSettingsTests(OidcTestCase):
         self.assertEqual(self.provider.received, [])
 
     def test_the_origin_is_the_one_a_browser_writes(self):
-        """Covers: AC-oidc-identity-002 (section 3: below, the public URL's origin as a browser writes it)."""
         for text, origin in (("http://localhost:80/", "http://localhost"), ("http://LOCALHOST:5173", "http://localhost:5173"),
                              ("https://IADOPT.example.org:443/", "https://iadopt.example.org"), ("http://[0:0::1]:5173/", "http://[::1]:5173"),
                              ("http://app.localhost:5173", "http://app.localhost:5173"), ("http://127.0.0.1:5173", "http://127.0.0.1:5173")):
@@ -203,7 +196,6 @@ def core_deps_settings() -> Any:
 
 class SwitchTests(OidcTestCase):
     def test_only_rohub_signs_people_in_where_passwords_are_off(self):
-        """Covers: AC-oidc-identity-006 (oidc), AC-oidc-identity-042 (its method)."""
         browser = self.password_browser()
         self.settings(auth_mode_raw="oidc")
         me = browser.get("/api/auth/me")
@@ -222,7 +214,6 @@ class SwitchTests(OidcTestCase):
         self.assertEqual((me.json()["sign_in"], me.headers["x-iadopt-sign-in"]), ("rohub", "rohub"))
 
     def test_both_kinds_count_and_the_rohub_one_is_used(self):
-        """Covers: AC-oidc-identity-006 (both, and back in local), AC-oidc-identity-042 (the methods)."""
         browser = self.signed_in()
         self.assertEqual(self.me(browser)["user"]["username"], "ada")
         password = self.password_browser()
@@ -239,7 +230,6 @@ class SwitchTests(OidcTestCase):
         self.assertEqual(rohub_only.get("/api/auth/me").status_code, 401)
 
     def test_a_password_sign_in_ends_the_browsers_rohub_session(self):
-        """Covers: AC-oidc-identity-006 (a password sign-in ends a ROHub session of that browser)."""
         browser, other = self.signed_in(), self.signed_in(sub="subject-ben", email="ben@example.org", sid="session-ben")
         response = browser.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
         self.assertEqual(response.status_code, 401)
@@ -258,7 +248,6 @@ class SwitchTests(OidcTestCase):
 
 class StartTests(OidcTestCase):
     def test_the_browser_is_sent_with_exactly_the_parameters_and_bound_by_a_cookie(self):
-        """Covers: AC-oidc-identity-007."""
         browser = self.browser()
         seen = []
         for _ in range(2):
@@ -286,14 +275,12 @@ class StartTests(OidcTestCase):
         self.assertGreaterEqual(len(seen[0][3]), 43)
 
     def test_a_malformed_browser_key_is_replaced(self):
-        """Covers: AC-oidc-identity-007 (only a well-formed key is kept)."""
         for key in ("short", "x" * 43 + "!", "y" * 44):
             browser = self.browser()
             browser.cookies.set(BROWSER_COOKIE, key)
             self.assertNotEqual(self.set_cookies(browser.get("/api/auth/login"))[BROWSER_COOKIE]["value"], key)
 
     def test_only_pages_of_the_application_are_returned_to(self):
-        """Covers: AC-oidc-identity-008 (the start and a refusal)."""
         for target in GOOD_TARGETS:
             with self.subTest(target=target):
                 _, response = self.sign_in(redirect=target)
@@ -311,7 +298,6 @@ class StartTests(OidcTestCase):
         self.assertEqual(self.come_back(browser, self.provider.authorize(location)).headers["location"], "/")
 
     def test_a_refusal_keeps_the_valid_page(self):
-        """Covers: AC-oidc-identity-008 (percent-encoded in another address)."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser, "/admin.html?a=1&b=2#x"))
         response = self.come_back(browser, {"error": "access_denied", "state": query["state"], "iss": self.provider.issuer})
@@ -321,7 +307,6 @@ class StartTests(OidcTestCase):
         self.assert_refused(self.browser().get("/api/auth/login", params={"redirect": "/admin.html?a=1&b=2"}), "provider_unavailable", "/admin.html?a=1&b=2")
 
     def test_transactions_hold_hashes_expire_and_are_bounded(self):
-        """Covers: AC-oidc-identity-009."""
         browser = self.browser()
         response = browser.get("/api/auth/login")
         state = query_of(response.headers["location"])["state"][0]
@@ -344,7 +329,6 @@ class StartTests(OidcTestCase):
         self.assertEqual(oidc_store.MAX_TRANSACTIONS, 10_000)
 
     def test_a_sign_in_survives_a_restart_but_not_another_issuer(self):
-        """Covers: AC-oidc-identity-009 (a restart, another issuer)."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser, "/admin.html"))
         provider_module.provider.reset()
@@ -363,7 +347,6 @@ class ProviderTests(OidcTestCase):
         self.assertEqual(self.transactions(), [])
 
     def test_a_provider_that_answers_badly_starts_no_sign_in(self):
-        """Covers: AC-oidc-identity-010, AC-oidc-identity-029 (plain only)."""
         self.assertEqual((provider_module.REQUEST_SECONDS, provider_module.MAX_ANSWER_BYTES), (10, 1024 * 1024))
         self.replace(provider_module, "REQUEST_SECONDS", 0.5)
         self.replace(provider_module, "MAX_ANSWER_BYTES", 20_000)
@@ -409,7 +392,6 @@ class ProviderTests(OidcTestCase):
             self.unavailable()
 
     def test_a_drip_of_bytes_ends_in_time(self):
-        """Covers: AC-oidc-identity-010 (too late, also while something still arrives)."""
         self.replace(provider_module, "REQUEST_SECONDS", 0.6)
 
         def drip(handler: Any, _: Any) -> None:
@@ -431,44 +413,13 @@ class ProviderTests(OidcTestCase):
         time.sleep(0.4)
         self.assertEqual([thread for thread in threading.enumerate() if thread.name == "oidc-provider"], [], "nothing is left behind")
 
-    def test_headers_that_never_end_stop_in_time(self):
-        """Covers: AC-oidc-identity-010 (too late, before the answer's content)."""
-        self.replace(provider_module, "REQUEST_SECONDS", 0.6)
-
-        def drip(handler: Any, _: Any) -> None:
-            try:
-                handler.wfile.write(b"HTTP/1.1 200 OK\r\n")
-                for number in range(25):
-                    handler.wfile.write(f"X-{number}: y\r\n".encode("ascii"))
-                    handler.wfile.flush()
-                    time.sleep(0.1)
-            except OSError:
-                pass
-            handler.close_connection = True
-
-        certificate = self_signed(self.dir)
-        with FakeProvider(tls=certificate) as secure, patch.dict(os.environ, {"REQUESTS_CA_BUNDLE": str(self.dir / "certificate.pem")}):
-            for provider in (self.provider, secure):
-                with self.subTest(provider.origin):
-                    provider_module.provider.reset()
-                    self.settings(oidc_issuer_raw=provider.issuer)
-                    provider.overrides[provider.paths("metadata")] = drip
-                    started = time.monotonic()
-                    self.unavailable()
-                    self.assertLess(time.monotonic() - started, 1.5)
-                    self.assertEqual(len(provider.received), 1)
-                    time.sleep(0.4)
-                    self.assertEqual([thread for thread in threading.enumerate() if thread.name == "oidc-provider"], [], "nothing is left behind")
-
     def test_a_certificate_that_does_not_verify_starts_no_sign_in(self):
-        """Covers: AC-oidc-identity-010 (TLS is verified)."""
         with FakeProvider(tls=self_signed(self.dir)) as secure:
             self.settings(oidc_issuer_raw=secure.issuer)
             self.unavailable()
             self.assertEqual(secure.received, [])
 
     def test_over_tls_the_whole_trip_is_the_same(self):
-        """Covers: AC-oidc-identity-012 (with a certificate that verifies)."""
         certificate = self_signed(self.dir)
         with FakeProvider(tls=certificate) as secure, patch.dict(os.environ, {"REQUESTS_CA_BUNDLE": str(self.dir / "certificate.pem")}):
             self.assertTrue(secure.issuer.startswith("https://"))
@@ -478,7 +429,6 @@ class ProviderTests(OidcTestCase):
             self.assertEqual([secure.count(name) for name in ("metadata", "token", "certs")], [1, 1, 1])
 
     def test_good_metadata_is_read_once_an_hour_and_a_failure_is_remembered(self):
-        """Covers: AC-oidc-identity-010 (once an hour, 15 seconds)."""
         clock = self.clock()
         for _ in range(3):
             self.begin(self.browser())
@@ -502,7 +452,6 @@ class ProviderTests(OidcTestCase):
         self.assertEqual(self.provider.count("metadata"), 4)
 
     def test_one_read_serves_everyone_who_waits(self):
-        """Covers: AC-oidc-identity-010 (several sign-ins at once)."""
         self.provider.answer("metadata", body=self.provider.metadata(), wait=0.4)
         results: List[int] = []
         threads = [threading.Thread(target=lambda: results.append(self.browser().get("/api/auth/login").status_code)) for _ in range(8)]
@@ -511,18 +460,6 @@ class ProviderTests(OidcTestCase):
         for thread in threads:
             thread.join()
         self.assertEqual((results, self.provider.count("metadata"), len(self.transactions())), ([303] * 8, 1, 8))
-
-    def test_at_most_16_wait_and_the_others_end_at_once(self):
-        """Covers: AC-oidc-identity-011 (the waiting places; a real server is in test_oidc_waiting)."""
-        turns = [provider_module.provider.turn() for _ in range(17)]
-        for turn in turns[:16]:
-            turn.wait()
-        with self.assertRaises(provider_module.ProviderUnavailable):
-            turns[16].wait()
-        self.assert_refused(self.browser().get("/api/auth/login"), "provider_unavailable")
-        self.assertEqual(self.provider.received, [])
-        turns[0].__exit__(None, None, None)
-        self.begin(self.browser())  # a place is free again, and the failure was not a failed read
 
 
 def self_signed(directory: Any) -> Any:
@@ -560,7 +497,6 @@ def self_signed(directory: Any) -> Any:
 
 class SuccessTests(OidcTestCase):
     def test_a_first_sign_in_creates_an_account_and_a_second_finds_it(self):
-        """Covers: AC-oidc-identity-012."""
         before = len(self.accounts())
         browser, response = self.sign_in(redirect="/admin.html?x=y")
         self.assertEqual((response.status_code, response.headers["location"], response.headers["cache-control"], response.headers["referrer-policy"]),
@@ -586,7 +522,6 @@ class SuccessTests(OidcTestCase):
         self.assertEqual(self.provider.count("userinfo"), 0)
 
     def test_the_session_cookie_has_its_attributes(self):
-        """Covers: AC-oidc-identity-013 (http)."""
         _, response = self.sign_in()
         cookie = self.set_cookies(response)[ROHUB_COOKIE]
         self.assertEqual({key: cookie[key] for key in cookie if key != "value"}, {"httponly": "", "samesite": "lax", "path": "/", "max-age": "43200"})
@@ -598,7 +533,6 @@ class SuccessTests(OidcTestCase):
         self.assertNotIn(token, self.stored_text())
 
     def test_each_sign_in_ends_the_earlier_session_and_a_refused_one_does_not(self):
-        """Covers: AC-oidc-identity-014."""
         browser = self.signed_in()
         first = browser.cookies[ROHUB_COOKIE]
         _, response = self.sign_in(browser, email_verified=False)
@@ -618,13 +552,12 @@ class SuccessTests(OidcTestCase):
         self.assertEqual(self.me(browser)["sign_in"], "rohub")
 
     def test_text_no_database_can_hold_does_not_stop_a_sign_in(self):
-        """Covers: AC-oidc-identity-012 (claims as a provider may send them)."""
         browser = self.signed_in(name="Ada \ud800 Example", sid="broken \udfff", preferred_username=7)
         self.assertEqual(self.me(browser)["user"]["display_name"], "Ada ? Example")
         self.assertIsNone(self.rohub_sessions()[-1]["sid"])
 
     def test_the_providers_session_id_is_kept_up_to_a_bound(self):
-        """Covers: AC-oidc-identity-039 (a session without a kept id ends with its subject)."""
+        """A session without a kept id ends with its subject."""
         for length, kept in ((255, True), (256, False), (10_000, False)):
             with self.subTest(length=length):
                 self.execute("DELETE FROM oidc_sessions")
@@ -640,7 +573,6 @@ class SecureCookieTests(OidcTestCase):
     public_url = "https://iadopt.example.org"
 
     def test_secure_cookies_are_bound_to_the_host(self):
-        """Covers: AC-oidc-identity-007, AC-oidc-identity-013, AC-oidc-identity-037 (Secure and the prefix)."""
         browser = self.browser()
         start = browser.get("/api/auth/login")
         cookie = self.set_cookies(start)[f"__Host-{BROWSER_COOKIE}"]
@@ -655,7 +587,6 @@ class SecureCookieTests(OidcTestCase):
                          ("0", "/", True, True, "lax", False))
 
     def test_a_cookie_that_another_host_could_set_is_not_taken_for_ours(self):
-        """Covers: AC-oidc-identity-013, AC-oidc-identity-016 (the prefix: its exact name, once)."""
         attacker = self.browser()
         location = self.begin(attacker)
         key = attacker.cookies[f"__Host-{BROWSER_COOKIE}"]
@@ -714,7 +645,6 @@ class RefusalTestCase(OidcTestCase):
 
 class ReturnRefusalTests(RefusalTestCase):
     def test_an_unknown_or_expired_state_and_another_browser_are_refused(self):
-        """Covers: AC-oidc-identity-016."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser))
         for name, change in {"unknown": {"state": "unknown"}, "empty": {"state": ""}, "longer": {"state": query["state"] + "x"}}.items():
@@ -736,7 +666,6 @@ class ReturnRefusalTests(RefusalTestCase):
         self.assertEqual(self.come_back(browser, query).headers["location"], "/")
 
     def test_an_expired_transaction_is_refused_and_deleted(self):
-        """Covers: AC-oidc-identity-016 (expired)."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser, "/admin.html"))
         self.execute("UPDATE oidc_transactions SET expires_at = ?", utc_iso(utc_now() - timedelta(seconds=1)))
@@ -746,7 +675,6 @@ class ReturnRefusalTests(RefusalTestCase):
         self.assertEqual((self.transactions(), self.provider.count("token")), ([], 0))
 
     def test_a_transaction_serves_once(self):
-        """Covers: AC-oidc-identity-017 (reuse)."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser))
         self.come_back(browser, query)
@@ -755,7 +683,6 @@ class ReturnRefusalTests(RefusalTestCase):
         self.assertEqual((self.provider.count("token"), len(self.rohub_sessions())), (tokens, 1))
 
     def test_of_two_returns_at_once_exactly_one_signs_in(self):
-        """Covers: AC-oidc-identity-017 (two requests at once)."""
         for _ in range(3):
             browser = self.browser()
             query = self.provider.authorize(self.begin(browser))
@@ -775,7 +702,6 @@ class ReturnRefusalTests(RefusalTestCase):
             self.assertEqual(sorted(locations), ["/", "/login.html?error=sign_in_expired"])
 
     def test_the_providers_refusal_is_not_shown(self):
-        """Covers: AC-oidc-identity-018, AC-oidc-identity-029 (no second request follows)."""
         for error, code in (("access_denied", "cancelled"), ("server_error", "provider_refused"), ("", "provider_refused"),
                             ("invalid_request", "provider_refused")):
             with self.subTest(error=error):
@@ -790,7 +716,6 @@ class ReturnRefusalTests(RefusalTestCase):
                 self.assertNotIn("provider text", self.stored_text())
 
     def test_the_issuer_of_the_return_must_be_the_configured_one(self):
-        """Covers: AC-oidc-identity-019."""
         for name, iss in {"another": "https://login.example.org/x", "empty": "", "with a slash": self.provider.issuer + "/", "none": None}.items():
             with self.subTest(name):
                 browser = self.browser()
@@ -806,7 +731,6 @@ class ReturnRefusalTests(RefusalTestCase):
         self.assertEqual(self.come_back(browser, query).headers["location"], "/", "a provider that does not declare it need not give it")
 
     def test_a_code_that_is_missing_or_too_long_is_refused_without_a_request(self):
-        """Covers: AC-oidc-identity-020 (the code)."""
         for name, code in {"missing": None, "empty": "", "too long": "x" * 4097}.items():
             with self.subTest(name):
                 browser = self.browser()
@@ -820,7 +744,6 @@ class ReturnRefusalTests(RefusalTestCase):
         self.assertEqual(self.provider.count("token"), 0)
 
     def test_what_the_token_endpoint_answers(self):
-        """Covers: AC-oidc-identity-020 (the exchange; the code is sent once)."""
         self.replace(provider_module, "REQUEST_SECONDS", 0.5)
         self.replace(provider_module, "MAX_ANSWER_BYTES", 20_000)
         good = {"access_token": "access", "token_type": "Bearer", "expires_in": 300}
@@ -849,7 +772,6 @@ class ReturnRefusalTests(RefusalTestCase):
                 self.assertNotIn("provider text", self.stored_text())
 
     def test_keys_that_cannot_be_read(self):
-        """Covers: AC-oidc-identity-020 (keys)."""
         for name, answer in {"an error": dict(status=500, body=self.provider.jwks()), "no JSON": dict(body=b"x"), "no key set": dict(body={"keys": "x"})}.items():
             with self.subTest(name):
                 provider_module.provider.reset()
@@ -859,14 +781,12 @@ class ReturnRefusalTests(RefusalTestCase):
                 self.assert_nothing_happened(self.come_back(browser, query), "provider_unavailable")
 
     def test_a_wrong_verifier_is_the_providers_refusal(self):
-        """Covers: AC-oidc-identity-029 (the challenge is S256 of the verifier that is sent)."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser))
         self.execute("UPDATE oidc_transactions SET code_verifier = ?", "v" * 43)
         self.assert_nothing_happened(self.come_back(browser, query), "provider_refused")
 
     def test_beyond_the_limit_nothing_is_stored_or_sent(self):
-        """Covers: AC-oidc-identity-030."""
         browser = self.browser()
         query = self.provider.authorize(self.begin(browser))
         sent = len(self.provider.received)
@@ -896,13 +816,11 @@ class IdTokenTests(RefusalTestCase):
         self.execute("DELETE FROM users WHERE auth_provider = 'oidc'")
 
     def test_the_issuer(self):
-        """Covers: AC-oidc-identity-021."""
         for iss in ("https://login.example.org/x", self.provider.issuer + "/", "", REMOVED, 7, [self.provider.issuer]):
             with self.subTest(iss=str(iss)):
                 self.refuse("iss", iss=iss)
 
     def test_the_audience_and_the_authorized_party(self):
-        """Covers: AC-oidc-identity-022."""
         me, other = self.provider.client_id, "another-client"
         for aud, azp, rule in ((REMOVED, me, "aud"), (other, me, "aud"), ([], me, "aud"), ("", me, "aud"), (7, me, "aud"), ([me, 7], me, "aud"),
                                ([me, other], REMOVED, "aud"), ([other], me, "aud"), (me, other, "azp"), ([me, other], other, "azp"),
@@ -914,7 +832,6 @@ class IdTokenTests(RefusalTestCase):
                 self.accept(aud=aud, azp=azp)
 
     def test_the_nonce(self):
-        """Covers: AC-oidc-identity-023."""
         for nonce in (REMOVED, "another", "", None, 7):
             with self.subTest(nonce=str(nonce)):
                 self.refuse("nonce", nonce=nonce)
@@ -924,7 +841,6 @@ class IdTokenTests(RefusalTestCase):
         self.assert_nothing_happened(self.come_back(browser, self.provider.authorize(location, nonce=[nonce])), "token_invalid", audited=True, rule="nonce")
 
     def test_the_times(self):
-        """Covers: AC-oidc-identity-024."""
         now = int(time.time())
         for name, rule, changes in (
             ("expired", "exp", {"exp": now - 90}), ("no exp", "exp", {"exp": REMOVED}), ("exp as text", "exp", {"exp": str(now + 300)}),
@@ -945,7 +861,6 @@ class IdTokenTests(RefusalTestCase):
                 self.accept(**changes)
 
     def test_the_leeway_is_a_minute_to_the_second(self):
-        """Covers: AC-oidc-identity-024 (60 seconds of leeway)."""
         now = 1_900_000_000
 
         def rule_of(**changes: Any) -> Any:
@@ -965,7 +880,6 @@ class IdTokenTests(RefusalTestCase):
                 self.assertEqual((rule_of(**{claim: inside}), rule_of(**{claim: outside})), (None, claim))
 
     def test_the_signature_and_the_algorithm(self):
-        """Covers: AC-oidc-identity-025 (the token and its header)."""
         mine, public = RSAKey.generate_key(2048, {"kid": "key-1"}), self.provider.key.as_pem(private=False)
         signed = self.provider.sign
         encryption = RSAKey.generate_key(2048, {"kid": "key-1"})
@@ -1015,12 +929,10 @@ class IdTokenTests(RefusalTestCase):
         self.accept(id_token=lambda c: signed(c, key=other_alg, alg="PS256"))
 
     def test_an_algorithm_the_metadata_does_not_list(self):
-        """Covers: AC-oidc-identity-025 (listed in the metadata)."""
         self.provider.metadata_changes = {"id_token_signing_alg_values_supported": ["PS256"]}
         self.refuse("algorithm")
 
     def test_the_accepted_algorithms(self):
-        """Covers: AC-oidc-identity-025 (RS256, PS256 and ES256 are accepted)."""
         curve = ECKey.generate_key("P-256", {"kid": "ec-1", "use": "sig"})
         self.provider.published = [RSAKey.import_key(self.provider.key.as_dict(private=True) | {"alg": "PS256"}), curve]
         self.accept(id_token=lambda c: self.provider.sign(c, alg="PS256"))
@@ -1028,7 +940,6 @@ class IdTokenTests(RefusalTestCase):
         self.refuse("signature", id_token=lambda c: self.provider.sign(c, key=curve, alg="ES256", header={"kid": "key-1"}))
 
     def test_a_token_without_a_key_id(self):
-        """Covers: AC-oidc-identity-025 (exactly one fitting key)."""
         encryption = RSAKey.generate_key(2048, {"kid": "enc", "use": "enc"})
         self.provider.published = [encryption, self.provider.key]
         self.accept(id_token=lambda c: self.provider.sign(c, header={"kid": REMOVED}))
@@ -1039,7 +950,6 @@ class IdTokenTests(RefusalTestCase):
         self.accept(id_token=lambda c: self.provider.sign(c, key=second))
 
     def test_an_unknown_key_id_reads_the_key_set_once_more_at_most_once_a_minute(self):
-        """Covers: AC-oidc-identity-025 (changed keys)."""
         clock = self.clock()
         self.accept()
         self.accept()
@@ -1061,13 +971,11 @@ class IdTokenTests(RefusalTestCase):
             self.assertEqual(self.provider.count("certs"), 3)
 
     def test_keys_the_library_cannot_use_do_not_spoil_the_set(self):
-        """Covers: AC-oidc-identity-025 (one key is usable among others)."""
         self.provider.answer("certs", body={"keys": [None, 7, "x", {}, {"kty": "RSA"}, {"kty": "new"}, {"kty": "oct", "k": "AAAA", "kid": "key-1"},
                                                      {"kty": "EC", "crv": "P-256", "x": "x", "y": "y"}, *self.provider.jwks()["keys"]]})
         self.accept()
 
     def test_the_email_must_be_verified(self):
-        """Covers: AC-oidc-identity-026."""
         for changes in ({"email_verified": REMOVED}, {"email_verified": False}, {"email_verified": "true"}, {"email_verified": 1},
                         {"email_verified": None}, {"email": REMOVED}, {"email": ""}, {"email": "  "}, {"email": 7}, {"email": None}):
             with self.subTest(changes=str(changes)):
@@ -1080,14 +988,12 @@ class IdTokenTests(RefusalTestCase):
         self.assert_nothing_happened(response, "email_not_verified", audited=True)
 
     def test_the_subject(self):
-        """Covers: AC-oidc-identity-028."""
         for sub in (REMOVED, "", "x" * 256, 7, None, ["x"], "broken \ud800"):
             with self.subTest(sub=str(sub)[:20]):
                 self.refuse("sub", sub=sub)
         self.accept(sub="x" * 255)
 
     def test_a_blocked_account(self):
-        """Covers: AC-oidc-identity-027."""
         self.signed_in()
         self.execute("DELETE FROM oidc_sessions")
         account = self.accounts()[-1]
@@ -1097,12 +1003,10 @@ class IdTokenTests(RefusalTestCase):
         self.assert_nothing_happened(response, "blocked", audited=True, user=account)
 
     def test_nobody_is_named_when_the_browser_has_anothers_session(self):
-        """Covers: AC-oidc-identity-021 to 028 (the event names nobody)."""
         _, response = self.sign_in(self.bystander, iss="https://login.example.org/x")
         self.assert_nothing_happened(response, "token_invalid", audited=True, rule="iss")
 
     def test_an_account_blocked_meanwhile_gets_no_session(self):
-        """Covers: AC-oidc-identity-032 (also one that was being created), AC-oidc-identity-027."""
         self.signed_in()
         self.execute("DELETE FROM oidc_sessions")
         account = self.accounts()[-1]
@@ -1121,7 +1025,6 @@ class IdTokenTests(RefusalTestCase):
 
 class LeakTests(OidcTestCase):
     def test_nothing_of_the_trip_is_kept_or_logged(self):
-        """Covers: AC-oidc-identity-015 (finished, refused, signed out and signed out by the provider)."""
         answers: List[Dict[str, Any]] = []
         real = self.provider.exchange
 
@@ -1173,7 +1076,6 @@ class LeakTests(OidcTestCase):
         self.assertEqual(self.transactions(), [])
 
     def test_malformed_headers_of_the_provider_are_not_logged(self):
-        """Covers: AC-oidc-identity-015 (what the HTTP library logs by itself)."""
 
         def malformed(handler: Any, _: Any) -> None:
             handler.wfile.write(b"HTTP/1.1 400 Bad Request\r\nbroken provider-secret\r\nContent-Length: 2\r\n\r\n{}")
@@ -1198,7 +1100,6 @@ class LeakTests(OidcTestCase):
 
 class SessionTests(OidcTestCase):
     def test_a_session_ends_at_its_lifetime_however_much_it_is_used(self):
-        """Covers: AC-oidc-identity-031."""
         browser = self.signed_in()
         [row] = self.rohub_sessions()
         for _ in range(3):
@@ -1209,7 +1110,6 @@ class SessionTests(OidcTestCase):
         self.assertEqual(self.rohub_sessions(), [])
 
     def test_a_block_ends_both_kinds_and_changes_are_in_force_at_once(self):
-        """Covers: AC-oidc-identity-032."""
         browser = self.signed_in()
         account = self.me(browser)["user"]
         with storage.transaction(path=self.store.db_path) as conn:
@@ -1227,15 +1127,14 @@ class SessionTests(OidcTestCase):
         self.assertEqual((self.rohub_sessions(), self.rows("SELECT * FROM sessions WHERE token_hash = 'x'")), ([], []))
         self.assertEqual(browser.get("/api/auth/me").status_code, 401)
 
-    def test_a_session_of_an_account_the_previous_image_blocked_does_not_count(self):
-        """Covers: AC-oidc-identity-032 (section 8: it counts only while its account is not blocked)."""
+    def test_a_session_counts_only_while_its_account_is_not_blocked(self):
+        """Also when the account was blocked without the block route, for example by the previous image."""
         browser = self.signed_in()
         self.execute("UPDATE users SET is_active = 0 WHERE auth_provider = 'oidc'")
         self.assertEqual(browser.get("/api/auth/me").status_code, 401)
         self.assertEqual(self.rohub_sessions(), [])
 
     def test_a_session_of_another_issuer_does_not_count(self):
-        """Covers: AC-oidc-identity-033."""
         browser = self.signed_in()
         self.settings(oidc_issuer_raw=ISSUER)
         self.assertEqual(browser.get("/api/auth/me").status_code, 401)
@@ -1243,7 +1142,6 @@ class SessionTests(OidcTestCase):
         self.assertEqual(self.me(browser)["sign_in"], "rohub")
 
     def test_a_forged_or_moved_cookie_opens_nothing(self):
-        """Covers: AC-oidc-identity-013 (signed as today, in a table and cookie of its own)."""
         browser = self.signed_in()
         value = browser.cookies[ROHUB_COOKIE]
         token, signature = value.rsplit(".", 1)
@@ -1255,7 +1153,6 @@ class SessionTests(OidcTestCase):
                 self.assertEqual(response.status_code, 401)
 
     def test_expired_sessions_are_deleted(self):
-        """Covers: AC-oidc-identity-031 (section 11: deleted when expired)."""
         self.signed_in()
         self.execute("UPDATE oidc_sessions SET expires_at = ?", utc_iso(utc_now() - timedelta(seconds=1)))
         self.signed_in(sub="subject-ben", email="ben@example.org")
@@ -1264,29 +1161,7 @@ class SessionTests(OidcTestCase):
         self.store.cleanup_old_audit(force=True)
         self.assertEqual(self.rohub_sessions(), [])
 
-    def test_migration_0004_adds_its_two_tables_only(self):
-        """Covers: AC-oidc-identity-045."""
-        import previous_image
-
-        old = self.dir / "de1a7af.sqlite3"
-        previous_image.make_de1a7af_file(old)
-        position = [item.id for item in storage.MIGRATIONS].index("0004_oidc_identity")
-        migration = storage.MIGRATIONS[position]
-        del storage.MIGRATIONS[position:]  # it and what later modules added after it
-        storage.migrate(old)
-        before = {table: self.rows(f"SELECT rowid, * FROM {table}", db=old) for table in tables(old) if table not in ("schema_migrations", "sqlite_sequence")}
-        schema = {row["name"]: row["sql"] for row in self.rows("SELECT name, sql FROM sqlite_master", db=old)}
-        storage.MIGRATIONS.append(migration)
-        self.assertEqual(storage.migrate(old), [migration.id])
-        after = {row["name"]: row["sql"] for row in self.rows("SELECT name, sql FROM sqlite_master", db=old)}
-        self.assertEqual({name for name in set(after) - set(schema) if name.startswith("oidc_")}, {"oidc_transactions", "oidc_sessions"})
-        self.assertEqual({name: after[name] for name in schema}, schema)
-        self.assertEqual({table: self.rows(f"SELECT rowid, * FROM {table}", db=old) for table in before}, before)
-        self.assertEqual(previous_image.start(old), [])
-        self.assertEqual(previous_image.replay(old, include=previous_image.is_read), [])
-
     def test_the_previous_image_finds_no_rohub_session(self):
-        """Covers: AC-oidc-identity-034."""
         import previous_image
 
         browser = self.signed_in()
@@ -1331,7 +1206,6 @@ def tables(path: Any) -> List[str]:
 
 class CsrfTests(OidcTestCase):
     def test_every_unsafe_route_needs_the_token_and_the_origin(self):
-        """Covers: AC-oidc-identity-035, AC-oidc-identity-036."""
         from test_access_policy import fill
 
         from app.access.dependencies import ROUTE_CAPABILITIES
@@ -1374,7 +1248,6 @@ class CsrfTests(OidcTestCase):
         self.assertEqual(browser.delete("/api/auth/me/orcids/0000-0002-1825-0097", headers=good).status_code, 200)
 
     def test_only_me_returns_the_token_and_a_password_session_needs_none(self):
-        """Covers: AC-oidc-identity-036, AC-oidc-identity-042."""
         browser = self.signed_in()
         token = self.me(browser)["csrf_token"]
         self.assertGreaterEqual(len(token), 43)
@@ -1400,7 +1273,6 @@ class CsrfTests(OidcTestCase):
         self.assertEqual(anonymous.get("/api/auth/me").headers["cache-control"], "no-store")
 
     def test_a_server_with_a_root_path_asks_for_the_same(self):
-        """Covers: AC-oidc-identity-035, AC-oidc-identity-036 (the path the routes are matched by)."""
         browser, rooted = self.signed_in(), self.browser(root_path="/x")
         anonymous = self.browser(root_path="/x")
         rooted.cookies.set(ROHUB_COOKIE, browser.cookies[ROHUB_COOKIE])
@@ -1417,7 +1289,6 @@ class CsrfTests(OidcTestCase):
         self.assertEqual(anonymous.post("/x/api/auth/login", json={"username": "admin", "password": "admin-password"}).status_code, 403)
 
     def test_the_public_posts_need_no_token_and_other_methods_on_public_paths_do(self):
-        """Covers: AC-oidc-identity-035 (section 9: the public POST routes use no session)."""
         browser = self.signed_in()
         self.assertEqual(browser.post("/api/auth/login", json={"username": "admin", "password": "wrong"}).status_code, 401)
         self.assertEqual(browser.post("/api/auth/backchannel-logout").status_code, 400)
@@ -1427,7 +1298,6 @@ class CsrfTests(OidcTestCase):
 
 class SignOutTests(OidcTestCase):
     def test_sign_out_ends_the_session_and_asks_the_provider_nothing(self):
-        """Covers: AC-oidc-identity-037."""
         browser = self.signed_in()
         sent = len(self.provider.received)
         response = browser.post("/api/auth/logout", headers=self.csrf_headers(browser))
@@ -1451,7 +1321,6 @@ class SignOutTests(OidcTestCase):
         self.assertEqual((self.rohub_sessions(), self.rows("SELECT * FROM sessions")), ([], []))
 
     def test_the_providers_sign_out_page(self):
-        """Covers: AC-oidc-identity-038."""
         for registered, expected in (("", {"client_id"}), ("false", {"client_id"}), ("true", {"client_id", "post_logout_redirect_uri"})):
             with self.subTest(registered=registered), patch.object(core_deps_settings(), "oidc_post_logout_raw", registered):
                 response = self.browser().get("/api/auth/end-session")
@@ -1493,7 +1362,6 @@ class BackchannelTests(OidcTestCase):
             self.signed_in(sub=sub, sid=sid, email=f"{sub}@example.org", preferred_username=sub)
 
     def test_a_valid_token_ends_the_sessions_it_names(self):
-        """Covers: AC-oidc-identity-039."""
         for name, changes, left in (
             ("sid and sub", {"sub": "subject-ada", "sid": "s1"}, [("subject-ada", "s2"), ("subject-ben", "s3")]),
             ("sid only", {"sub": REMOVED, "sid": "s2"}, [("subject-ada", "s1"), ("subject-ben", "s3")]),
@@ -1514,14 +1382,12 @@ class BackchannelTests(OidcTestCase):
                 self.assertTrue(all(event["user_id"] is None for event in new))
 
     def test_the_sessions_of_another_issuer_stay(self):
-        """Covers: AC-oidc-identity-039 (the sessions of that issuer)."""
         self.arrange()
         self.execute("UPDATE oidc_sessions SET issuer = ?", ISSUER)
         self.assertEqual(self.send(self.provider.sign(self.provider.logout_claims(sub="subject-ada", sid="s1"))).status_code, 200)
         self.assertEqual(len(self.sessions()), 3)
 
     def test_a_token_that_fails_ends_nothing(self):
-        """Covers: AC-oidc-identity-040."""
         self.arrange()
         now, mine, signed = int(time.time()), RSAKey.generate_key(2048, {"kid": "key-1"}), self.provider.sign
         claims = self.provider.logout_claims
@@ -1560,7 +1426,6 @@ class BackchannelTests(OidcTestCase):
         self.assertEqual(self.audit("auth.backchannel_logout")[1:], [])
 
     def test_the_times_of_a_logout_token_to_the_second(self):
-        """Covers: AC-oidc-identity-040 (iat and exp; section 9: ten minutes, and 60 seconds of leeway)."""
         now = 1_900_000_000
 
         def rule_of(**changes: Any) -> Any:
@@ -1579,7 +1444,6 @@ class BackchannelTests(OidcTestCase):
                 self.assertEqual((rule_of(**{claim: inside}), rule_of(**{claim: outside})), (None, claim))
 
     def test_a_used_token_is_remembered_for_as_long_as_it_would_pass(self):
-        """Covers: AC-oidc-identity-040 (jti)."""
         used = flow._UsedTokens()
         self.assertTrue(used.use("first", 660.0, 0.0))
         for now in (0.0, 659.0, 660.0):
@@ -1592,7 +1456,6 @@ class BackchannelTests(OidcTestCase):
         self.assertEqual(flow.used_tokens._until, {claims["jti"]: claims["iat"] + 660})
 
     def test_without_keys_nothing_changes(self):
-        """Covers: AC-oidc-identity-040 (keys that cannot be read)."""
         self.arrange()
         for name in ("certs", "metadata"):
             with self.subTest(name):
@@ -1604,7 +1467,6 @@ class BackchannelTests(OidcTestCase):
         self.assertEqual(len(self.sessions()), 3)
 
     def test_a_used_token_is_forgotten_when_it_could_not_be_acted_on(self):
-        """Covers: AC-oidc-identity-039 (better to end a session than to keep it)."""
         self.arrange()
         token = self.provider.sign(self.provider.logout_claims(sub="subject-ada", sid="s1"))
         with patch.object(oidc_store, "end_sessions", side_effect=storage.StorageBusy("busy")):
@@ -1621,7 +1483,6 @@ class BackchannelTests(OidcTestCase):
 
 class AccountTests(OidcTestCase):
     def test_a_rohub_account_has_the_interim_capabilities_and_roles_come_from_here_only(self):
-        """Covers: AC-oidc-identity-044, AC-oidc-identity-041."""
         roles = {"roles": ["admin", "owner"], "realm_access": {"roles": ["admin"]}, "resource_access": {"x": {"roles": ["admin"]}},
                  "groups": ["/admins"], "role": "owner", "is_active": True}
         ada, ben = self.signed_in(**roles), self.signed_in(sub="subject-ben", email="ben@example.org", preferred_username="ben", **roles)

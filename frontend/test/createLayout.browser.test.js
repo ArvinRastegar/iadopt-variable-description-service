@@ -11,7 +11,8 @@ describe.only( 'createLayout', async () => {
   const turtles = inject( 'ttl' );
 
 
-  for await (const [ file, ttl ] of Object.entries( turtles ) ) {
+  // Each file is also provided under a Windows-style copy of its path (vitest.browser.config.js): test it once.
+  for await (const [ file, ttl ] of Object.entries( turtles ).filter( ( [ name ] ) => !name.includes( '\\' ) ) ) {
     test( `property-based tests for ${file}`, async () => {
 
       // parse and layout

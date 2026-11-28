@@ -79,7 +79,7 @@ describe('safeRedirect', () => {
     expect(safeRedirect(null)).toBe('/');
   });
 
-  // The rule of oidc-identity section 5 "Redirect targets". Covers: AC-oidc-identity-008 (its part for login.html).
+  // The rule of oidc-identity section 5 "Redirect targets", as login.html applies it.
   test.each([
     '/', '/#/workspace', '/index.html?x=1#/workspace', '/admin.html', '/admin.html?x=y', '/remote.html',
     // Every kind of name character; and `api` and `login.html` are refused as whole names only.

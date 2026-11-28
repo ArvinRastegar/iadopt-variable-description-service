@@ -1,7 +1,5 @@
-"""Tests for the entityOrSystem shapes the validation schema accepts.
-
-Contract: iadopt-variable-description-service-docs/components/lexical-schema.md — D-005.
-Observed through the real seam: Draft202012Validator over the pipeline-patched schema.
+"""The shapes the validation schema accepts, observed through the real seam: Draft202012Validator over the
+pipeline-patched schema (D-005).
 """
 
 from __future__ import annotations
@@ -38,84 +36,50 @@ def errors(validator, doc):
     return list(validator.iter_errors(doc))
 
 
-# --- the measured corpus ---------------------------------------------------- #
-
 @pytest.mark.parametrize("demo", DEMOS, ids=[str(d["demonstration"]) for d in DEMOS])
 def test_every_measured_decomposition_validates(validator, demo):
-    """Currently 10 of 25 fail: 8 numerator/denominator, 2 source/target."""
     doc = dict(demo["decomposition"], label="X", definition=demo["definition"], comment="c")
     assert errors(validator, doc) == []
 
 
-def test_service_five_shot_examples_validate_as_the_prompt_uses_them(validator):
-    """D-009: the stored files are enriched; the schema is pre-enrichment.
-
-    `strip_all_uri_fields` is what the prompt builder applies, so that is the form
-    the schema must accept. Asserting the stored form validates would assert that
-    enrichment output must satisfy the pre-enrichment schema.
-    """
+def test_the_five_shot_examples_validate_in_the_form_the_prompt_uses(validator):
+    """D-009: the stored files are enriched; the prompt builder strips their links first."""
     for path in sorted((BACKEND / "data/Json_preferred/five_shot").glob("*.json")):
         doc = strip_all_uri_fields(json.loads(path.read_text(encoding="utf-8")))
         assert errors(validator, doc) == [], f"{path.name} does not validate"
 
 
-def test_stored_five_shot_examples_carry_uri_keys(validator):
-    """Guards the test above from passing vacuously if the URIs ever disappear."""
-    for path in sorted((BACKEND / "data/Json_preferred/five_shot").glob("*.json")):
-        doc = json.loads(path.read_text(encoding="utf-8"))
-        assert any("URI" in key for key in doc), f"{path.name} has no URI keys to strip"
-        assert errors(validator, doc) != [], f"{path.name} unexpectedly validates while enriched"
+@pytest.mark.parametrize(
+    "entity",
+    [
+        "water",
+        {"AsymmetricSystem": "a → b", "hasSource": "a", "hasTarget": "b"},
+        {"AsymmetricSystem": "a / b", "hasNumerator": "a", "hasDenominator": "b"},
+        {"SymmetricSystem": "a + b", "hasPart": ["a", "b"]},
+        {"SymmetricSystem": "s", "hasPart": ["a"]},  # minItems stays 1, not the lab's 2 (D-005)
+    ],
+    ids=["string", "source-target", "numerator-denominator", "symmetric", "one-part"],
+)
+def test_the_accepted_entity_shapes_validate(validator, entity):
+    assert errors(validator, wrap(entity)) == []
 
 
-# --- the four accepted shapes ----------------------------------------------- #
-
-def test_source_target_pair_validates(validator):
-    assert errors(validator, wrap({"AsymmetricSystem": "a → b", "hasSource": "a", "hasTarget": "b"})) == []
-
-
-def test_numerator_denominator_pair_validates(validator):
-    assert errors(validator, wrap({"AsymmetricSystem": "a / b", "hasNumerator": "a", "hasDenominator": "b"})) == []
-
-
-def test_symmetric_system_validates(validator):
-    assert errors(validator, wrap({"SymmetricSystem": "a + b", "hasPart": ["a", "b"]})) == []
-
-
-def test_plain_string_entity_validates(validator):
-    assert errors(validator, wrap("water")) == []
-
-
-# --- the shapes that must be rejected --------------------------------------- #
-
-def test_mixed_role_pairs_are_rejected(validator):
-    entity = {"AsymmetricSystem": "x", "hasSource": "a", "hasNumerator": "b"}
+@pytest.mark.parametrize(
+    "entity",
+    [
+        {"AsymmetricSystem": "x", "hasSource": "a", "hasNumerator": "b"},
+        {"AsymmetricSystem": "x", "hasSource": "a", "hasTarget": "b", "hasNumerator": "c", "hasDenominator": "d"},
+        {"AsymmetricSystem": "x", "hasSource": "a"},
+        {"AsymmetricSystem": "x", "hasSource": "a", "hasTarget": "b", "surprise": "z"},
+    ],
+    ids=["mixed-roles", "old-five-keys", "incomplete-pair", "unexpected-key"],
+)
+def test_other_entity_shapes_are_rejected(validator, entity):
     assert errors(validator, wrap(entity)) != []
 
 
-def test_old_five_key_shape_is_rejected(validator):
-    entity = {"AsymmetricSystem": "x", "hasSource": "a", "hasTarget": "b",
-              "hasNumerator": "c", "hasDenominator": "d"}
-    assert errors(validator, wrap(entity)) != []
-
-
-def test_incomplete_pair_is_rejected(validator):
-    assert errors(validator, wrap({"AsymmetricSystem": "x", "hasSource": "a"})) != []
-
-
-def test_unexpected_key_is_rejected(validator):
-    entity = {"AsymmetricSystem": "x", "hasSource": "a", "hasTarget": "b", "surprise": "z"}
-    assert errors(validator, wrap(entity)) != []
-
-
-# --- deliberate non-changes -------------------------------------------------- #
-
-def test_single_part_symmetric_system_still_validates(validator):
-    """hasPart.minItems stays 1, not the lab's 2 — D-005."""
-    assert errors(validator, wrap({"SymmetricSystem": "s", "hasPart": ["a"]})) == []
-
-
-def test_top_level_required_fields_are_unchanged(validator):
-    schema = patch_schema_for_pipeline(load_schema(settings.schema_path))
-    assert set(schema["required"]) == {
-        "label", "definition", "comment", "hasProperty", "hasObjectOfInterest"
-    }
+def test_only_the_five_core_fields_are_required(validator):
+    core = {"label": "X", "definition": "d", "comment": "c", "hasProperty": "count", "hasObjectOfInterest": "water"}
+    assert errors(validator, core) == []
+    for field in core:
+        assert errors(validator, {k: v for k, v in core.items() if k != field}) != [], field

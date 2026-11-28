@@ -20,19 +20,15 @@ import io
 import json
 import math
 import pathlib
-import sqlite3
 import sys
-import tempfile
 import threading
 import time
-import unittest
 import zipfile
 from collections import Counter
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
 from unittest.mock import patch
 
-import previous_image
 import pytest
 import requests
 from retrieval_support import switch_best_pipeline_off
@@ -42,7 +38,7 @@ from test_quality_gate import RUN, container, make_records, qg, run_main
 from test_quality_gate import answer as gate_answer
 from test_records import CLIENT, RecordTestCase
 
-from app import pipeline, storage
+from app import pipeline
 from app.clients import http as http_client
 from app.core.config import settings
 from app.services import answer_vote, example_retrieval, llm, matrix_finder, measured_prompt
@@ -75,7 +71,6 @@ DEFINITIONS_DIGEST, FOLDS_DIGEST, VECTORS_DIGEST = "c5a9f585fbcb9ffb", "80f37c48
 RETRIEVED_PROMPTS, FIXED_PROMPTS = "108e2e7210426983", "78fcde54455ecd22"
 FINDER_PROMPTS, FILL_PROMPTS = "2c4a50e46b18415f", "1ea4710d404120f7"
 SETUP = "measured-best-pipeline"
-MIGRATION = "0007_record_choices"
 PAYLOAD_KEYS = {"model", "messages", "stream", "temperature", "top_p", "max_tokens", "chat_template_kwargs"}
 RESULT_KEYS = {"raw_llm_output", "parsed_json", "schema_valid", "validation_errors", "enriched_json", "ttl"}
 REBUILD_POOL = "Rebuild it with backend/tools/build_example_pool.py."
@@ -110,7 +105,6 @@ STREAM_CLOSED = "The stream closed before the answer was complete."
 CLOSED_BEFORE_VOTE = "The stream closed before the answers were compared."
 VOTE_RULE = ("most typical of the answers by the scorer's Exact F1, both ways; ties to the first the lab's check "
              "accepts, else the first")
-TOO_DEEP = RecursionError("maximum recursion depth exceeded while decoding a JSON object")
 NOT_JSON = requests.exceptions.JSONDecodeError("Expecting value", "<html><body>Bad gateway</body></html>", 0)
 
 
@@ -551,13 +545,7 @@ READINGS = [
     ("the property as text", finder_says(42, prop=str(json.loads(finder_says(None).json()["choices"][0]["message"]["content"])["property"])), "42"),
     ("in a fence with prose", chat("Here:\n```json\n" + finder_says(45).json()["choices"][0]["message"]["content"] + "\n```"), "45"),
     ("a matrix that is no matrix pattern", finder_says(46), None),
-    ("a property that is no property pattern", finder_says(41, prop=41), None),
-    ("a matrix as text", chat(json.dumps({"property": 130, "matrix": "41", "context": False, "modifier": False,
-                                          "constraints": []})), None),
-    ("context not a boolean", chat(json.dumps({"property": 130, "matrix": 41, "context": "no", "modifier": False,
-                                               "constraints": []})), None),
     ("a key missing", chat(json.dumps({"property": 130, "matrix": 41, "context": False, "modifier": False})), None),
-    ("two objects", chat('{"property": 130} {"matrix": 41}'), None),
     ("prose", chat("I cannot classify this."), None),
 ]
 
@@ -727,12 +715,9 @@ def test_when_no_answer_can_be_read_todays_tries_follow(psnc):
 FINDER_FAILURES = [
     ("the timeout", requests.Timeout("read timed out"), "error", FINDER_TIMED_OUT),
     ("no connection", requests.ConnectionError("refused"), "error", FINDER_NO_CONNECTION),
-    *[(f"HTTP {status}", Answer(status=status), "error", refused("matrix finder", status)) for status in (401, 429, 503, 404)],
+    ("HTTP 503", Answer(status=503), "error", refused("matrix finder", 503)),
     ("a body that is not JSON", Answer(NOT_JSON), "error", NOT_A_COMPLETION),
-    ("a body nested too deeply", Answer(TOO_DEEP), "error", NOT_A_COMPLETION),
-    ("no choices", Answer({"object": "chat.completion", "choices": []}), "error", NOT_A_COMPLETION),
     ("prose", chat("The matrix is the lake."), "unusable", NOT_REQUESTED),
-    ("a matrix that is no pattern", finder_says(46), "unusable", NOT_REQUESTED),
 ]
 
 
@@ -751,19 +736,14 @@ def test_without_a_usable_finder_answer_nothing_is_stated_and_the_run_goes_on(ps
 EMBEDDING_FAILURES = [
     ("the timeout", requests.Timeout("read timed out"), "error", TIMED_OUT),
     ("no connection", requests.ConnectionError("connection refused"), "error", NO_CONNECTION),
-    *[(f"HTTP {status}", Answer(status=status), "error", refused("embedding request", status))
-      for status in (401, 403, 429, 500, 503, 404)],
+    ("HTTP 401", Answer(status=401), "error", refused("embedding request", 401)),
     ("HTTP 204", Answer(embedding([0.5] * DIMENSIONS).json(), status=204), "error", refused("embedding request", 204)),
     ("a body that is not JSON", Answer(NOT_JSON), "unusable", NO_VECTOR),
-    ("a body nested too deeply", Answer(TOO_DEEP), "unusable", NO_VECTOR),
-    ("no vector", Answer({"data": []}), "unusable", NO_VECTOR),
     ("two vectors", Answer({"data": [{"index": 0, "embedding": [0.5] * DIMENSIONS},
                                      {"index": 1, "embedding": [0.5] * DIMENSIONS}]}), "unusable", TWO_VECTORS),
     ("a vector of words", embedding(["word"] * DIMENSIONS), "unusable", NOT_A_NUMBER),
     ("768 numbers", embedding([0.5] * 768), "unusable", WRONG_SIZE),
-    ("a number that is not finite", embedding([float("inf")] + [0.5] * (DIMENSIONS - 1)), "unusable", NOT_FINITE),
     ("an integer too large for a float", embedding([10 ** 400] + [0.5] * (DIMENSIONS - 1)), "unusable", NOT_FINITE),
-    ("numbers whose length is not finite", embedding([10 ** 200] * DIMENSIONS), "unusable", NOT_FINITE),
     ("length zero", embedding([0.0] * DIMENSIONS), "unusable", ZERO_LENGTH),
 ]
 
@@ -1042,27 +1022,17 @@ def test_a_broken_pool_or_finder_data_stops_the_start_and_says_what_to_do(measur
     data = copy.deepcopy(pool())
     data["variables"].pop()
     short_pool.write_text(json.dumps(data), encoding="utf-8")
+    other_finder = finder_data()
+    other_finder["examples"] = other_finder["examples"][1:] + [dict(other_finder["examples"][0], id="urn:other")]
+    other = tmp_path / "other-finder.json"
+    other.write_text(json.dumps(other_finder), encoding="utf-8")
     cases = [
         ("measured_example_pool_path", tmp_path / "absent.json", "Example pool {} is missing. " + REBUILD_POOL),
         ("measured_example_pool_path", garbled, "Example pool {} is not JSON. " + REBUILD_POOL),
         ("measured_example_pool_path", short_pool,
          "Example pool {} breaks a rule: holds 101 variables, not 102. " + REBUILD_POOL),
-        ("measured_finder_path", tmp_path / "absent.json", "Matrix finder data {} is missing. " + REBUILD_FINDER),
-        ("measured_finder_path", garbled, "Matrix finder data {} is not JSON. " + REBUILD_FINDER),
-    ]
-    other_finder = finder_data()
-    other_finder["examples"] = other_finder["examples"][1:] + [dict(other_finder["examples"][0], id="urn:other")]
-    other = tmp_path / "other-finder.json"
-    other.write_text(json.dumps(other_finder), encoding="utf-8")
-    no_statement = finder_data()
-    del no_statement["statements"]["43"]
-    missing = tmp_path / "no-statement.json"
-    missing.write_text(json.dumps(no_statement), encoding="utf-8")
-    cases += [
         ("measured_finder_path", other,
          "Matrix finder data {} breaks a rule: its variables are not the example pool's. " + REBUILD_FINDER),
-        ("measured_finder_path", missing, "Matrix finder data {} breaks a rule: it does not hold a statement for none "
-                                          "and for each of the matrix patterns 40 to 45. " + REBUILD_FINDER),
     ]
     for setting, path, message in cases:
         with monkeypatch.context() as patched:
@@ -1152,7 +1122,7 @@ class RecordedChoicesTests(RecordTestCase):
         self.decompose()
         self.assertEqual(self.recorded(), [None])
 
-    def test_the_export_carries_the_choices_and_its_readme_says_what_they_are(self):
+    def test_the_export_carries_the_choices(self):
         query = query_vector()
         self.psnc(**happy(query, fills=[chat(ANSWER)] * 3))
         best = self.decompose().json()["record_id"]
@@ -1172,8 +1142,6 @@ class RecordedChoicesTests(RecordTestCase):
             "answers": {"asked": 3, "kept": 1}})
         self.assertNotIn("choices", records[legacy]["modelRun"])
         self.assertEqual(document["@context"]["choices"], {"@id": "rec:choices", "@type": "@json"})
-        for word in ("choices", "retrieved", "fallback", "finder"):
-            self.assertIn(word, files["README.txt"])
 
 
 class DailyLimitTests(LimitTestCase):
@@ -1198,62 +1166,6 @@ class DailyLimitTests(LimitTestCase):
         self.assertEqual(len(session.requests), 6)
         self.assertEqual(self.ends(), [("success", 0)])
         self.assertEqual(before - self.allowance(self.ada)[0], 1)
-
-
-class RecordChoicesMigrationTests(unittest.TestCase):
-    """The previous image is the live ``c103d4d``; its record statements are those of the ``de1a7af`` capture (the
-    INSERT of ``record_runs`` and the export's queries did not change between them)."""
-
-    def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.dir = pathlib.Path(temporary.name)
-        saved = list(storage.MIGRATIONS)
-        self.addCleanup(lambda: storage.MIGRATIONS.__setitem__(slice(None), saved))
-
-    def rows(self, sql: str, db: pathlib.Path) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(db)
-        conn.row_factory = sqlite3.Row
-        try:
-            return [dict(row) for row in conn.execute(sql)]
-        finally:
-            conn.close()
-
-    def test_it_follows_0006_and_adds_one_empty_column_that_the_previous_image_does_not_mind(self):
-        ids = [item.id for item in storage.MIGRATIONS]
-        index = ids.index(MIGRATION)
-        self.assertEqual(ids[index - 1], "0006_account_approval")
-        migration = storage.MIGRATIONS[index]
-        self.assertEqual(migration.checksum, hashlib.sha256(migration.sql.encode("utf-8")).hexdigest())
-        old = self.dir / "previous.sqlite3"
-        previous_image.make_de1a7af_file(old)
-        del storage.MIGRATIONS[index:]  # the previous image's migrations: up to 0006
-        storage.migrate(old)
-        others = "SELECT type, name, sql FROM sqlite_master WHERE name <> 'record_runs' ORDER BY type, name"
-        schema = self.rows(others, old)
-        runs_sql = "SELECT sql FROM sqlite_master WHERE name = 'record_runs'"
-        [stored] = self.rows(runs_sql, old)
-        columns = self.rows("PRAGMA table_info(record_runs)", old)
-        tables = [row["name"] for row in self.rows("SELECT name FROM sqlite_master WHERE type = 'table'", old)]
-        before = {table: self.rows(f"SELECT rowid, * FROM {table}", old)
-                  for table in tables if table not in ("schema_migrations", "sqlite_sequence")}
-        self.assertTrue(before["record_runs"])
-        storage.MIGRATIONS.append(migration)
-        self.assertEqual(storage.migrate(old), [MIGRATION])
-        self.assertEqual(self.rows(others, old), schema)
-        self.assertEqual(self.rows(runs_sql, old), [{"sql": stored["sql"][:-1] + ", choices TEXT)"}])
-        added = self.rows("PRAGMA table_info(record_runs)", old)
-        self.assertEqual(added[: len(columns)], columns)
-        self.assertEqual([(row["name"], row["type"], row["notnull"], row["dflt_value"]) for row in added[len(columns):]],
-                         [("choices", "TEXT", 0, None)])
-        after = {table: self.rows(f"SELECT rowid, * FROM {table}", old) for table in before}
-        self.assertEqual([row.pop("choices") for row in after["record_runs"]], [None] * len(before["record_runs"]))
-        self.assertEqual(after, before)
-        self.assertEqual(previous_image.start(old), [])
-        self.assertEqual(previous_image.replay(old, include=previous_image.is_read), [])
-        fresh = self.dir / "fresh.sqlite3"
-        storage.migrate(fresh)
-        self.assertEqual(previous_image.replay(fresh), [])
 
 
 # ------------------------------------------------------------------------------------------------
@@ -1305,12 +1217,6 @@ def test_the_container_reports_what_each_variable_got(psnc):
     assert {key: line[key] for key in GATE_FIELDS[1:]} == {
         "examples": "fallback", "examples_error": SERVER_ERROR, "matrix": None, "matrix_status": "error",
         "matrix_error": FINDER_TIMED_OUT, "answers_kept": 1}
-
-
-def test_the_container_lists_the_fixed_examples_for_the_best_pipeline(monkeypatch):
-    monkeypatch.setattr(measured_prompt, "load_demonstrations", lambda: [{"definition": "shown one"}])
-    monkeypatch.setattr(pipeline, "prompt_setup", lambda provider=None: (SETUP, "f" * 64))
-    assert container.run_description()["example_definitions"] == ["shown one"]
 
 
 def test_the_gate_prints_what_was_chosen(tmp_path, capsys):

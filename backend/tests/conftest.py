@@ -43,6 +43,20 @@ for _name in (
 
 
 @pytest.fixture(autouse=True)
+def _cheap_password_hashes(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """New password hashes take 1,000 PBKDF2 rounds instead of 390,000 (about 0.09 s each).
+
+    Verification still reads the rounds from the stored hash, so the algorithm under test is the same. The owner's
+    sign-in tests keep the real count: they check that a refusal does the same work as a sign-in.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] != "test_owner_sign_in":
+        from app import auth
+
+        monkeypatch.setattr(auth, "PASSWORD_ITERATIONS", 1_000)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _best_pipeline_off(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Today's prompt and one fill answer, without the best pipeline's extra requests, outside its own tests."""
     from retrieval_support import BEST_PIPELINE_TESTS, switch_best_pipeline_off

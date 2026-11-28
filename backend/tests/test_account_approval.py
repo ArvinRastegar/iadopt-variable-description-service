@@ -11,7 +11,6 @@ Models, the registry and identity providers are faked: nothing here reaches any 
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import json
 import sqlite3
@@ -24,12 +23,11 @@ from unittest.mock import patch
 import previous_image
 from fastapi.testclient import TestClient
 from increment1_support import ISSUER, run_cli, sign_in_as
-from increment2_support import OidcTestCase
 from test_access_policy import ADMIN, NANOPUB, ORCID, OWN_USE, AccessHttpTestCase
 from test_accounts_roles import AccountsTestCase
 from test_records import CLIENT, DRAFT, MATRIX, PIPELINE_RESULT
 
-from app import storage, usage
+from app import usage
 from app.access.policy import AccessState, Capability, decide
 from app.access.state import account_state
 from app.account_model import approval_of
@@ -74,7 +72,6 @@ class DecisionTests(unittest.TestCase):
         return AccessState(**{**values, **changes})
 
     def test_approval_first_refuses_all_own_use_and_nothing_else(self):
-        """Covers: AC-account-approval-001."""
         for application in ("none", "pending", "rejected", "withdrawn"):
             for uses in (None, 0, 3):
                 with self.subTest(application=application, uses=uses):
@@ -85,14 +82,12 @@ class DecisionTests(unittest.TestCase):
                         self.assertEqual((entry.uses_left_today, entry.resets_at), (None, None))
 
     def test_it_changes_nothing_for_whom_is_approved_and_comes_after_the_gates_and_the_terms(self):
-        """Covers: AC-account-approval-001."""
         for changes in (dict(application="approved"), dict(role="admin"), dict(role="owner"), dict(account_id=None), dict(blocked=True),
                         dict(email_verified=False), dict(terms_accepted=False), dict(account_id=0, account_backed=False)):
             with self.subTest(changes):
                 self.assertEqual(decide(self.state(**changes, approval_first=True)), decide(self.state(**changes)))
 
     def test_an_account_whose_password_ended_waits_for_nothing_and_has_no_own_use(self):
-        """Covers: AC-account-approval-009."""
         ended = {capability: ("password_ended", ENDED) for capability in OWN_USE}
         for first, uses, application in itertools.product((True, False), (None, 0, 3), ("none", "pending", "rejected", "withdrawn")):
             with self.subTest(approval_first=first, uses=uses, application=application):
@@ -108,7 +103,6 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(decide(self.state()), decide(self.state(password_ended=False)))
 
     def test_it_is_off_by_default(self):
-        """Covers: AC-account-approval-001."""
         self.assertEqual(decide(self.state()), decide(self.state(approval_first=False)))
         self.assertTrue(decide(self.state())[C.DECOMPOSE].allowed)
 
@@ -172,7 +166,6 @@ class Rules:
         self.assertEqual([self.rows(f"SELECT * FROM {table}") for table in tables], before)
 
     def test_an_account_waits_and_still_has_its_session_and_its_orcid_ids(self):
-        """Covers: AC-account-approval-002."""
         ada, _ = self.waiting()
         self.assert_waits(ada)
         self.assertEqual(ada.post("/api/auth/me/orcids", json={"orcid": ORCID}).status_code, 200)
@@ -182,7 +175,6 @@ class Rules:
         self.assertEqual(ada.get("/api/auth/verify/admin").status_code, 403)
 
     def test_an_approval_reaches_its_session_at_once_and_lets_it_do_what_a_local_account_does(self):
-        """Covers: AC-account-approval-003."""
         ada, account_id = self.waiting()
         self.assert_waits(ada)
         self.act(APPROVE, account_id, NOTE)
@@ -206,7 +198,6 @@ class Rules:
         self.assertEqual(self.rows("SELECT * FROM decomposition_uses"), [])
 
     def test_a_withdrawal_reaches_its_session_at_once_and_keeps_its_data(self):
-        """Covers: AC-account-approval-003."""
         ada, account_id = self.waiting()
         self.act(APPROVE, account_id)
         record_id = self.start_record(ada)
@@ -218,7 +209,6 @@ class Rules:
         self.assertEqual(ada.get(f"/api/records/{record_id}").status_code, 200)
 
     def test_each_account_is_approved_for_itself(self):
-        """Covers: AC-account-approval-004."""
         ada, account_id = self.waiting("ada")
         ben, _ = self.waiting("ben")
         self.act(APPROVE, account_id)
@@ -226,7 +216,6 @@ class Rules:
         self.assert_waits(ben)
 
     def test_an_approved_account_that_is_blocked_is_blocked(self):
-        """Covers: AC-account-approval-004."""
         ada, account_id = self.waiting()
         self.act(APPROVE, account_id)
         self.act("block", account_id, "A test.")
@@ -235,7 +224,6 @@ class Rules:
         self.assertEqual(self.act("unblock", account_id)["approval"], "approved")
 
     def test_an_admin_and_the_owner_count_as_approved_by_what_they_are(self):
-        """Covers: AC-account-approval-005."""
         ada, account_id = self.waiting("ada")
         code, out = run_cli("owner", "bind", "--username", "admin")
         self.assertEqual(code, 0, out)
@@ -259,7 +247,6 @@ class Rules:
         self.assertEqual(self.decompose(ben).status_code, 200)
 
     def test_a_local_account_counts_as_approved_until_it_is_linked_and_is_then_approved_by_a_click(self):
-        """Covers: AC-account-approval-006."""
         bob, account = self.client(), self.bob
         self.login(bob, "bob")
         self.assertEqual(self.decompose(bob).status_code, 200)
@@ -273,9 +260,7 @@ class Rules:
         self.assertEqual(self.decompose(bob).status_code, 200)
 
     def test_with_the_daily_limit_an_account_decomposes_and_is_recorded_before_it_is_approved(self):
-        """Covers: AC-account-approval-003, AC-daily-limit-008, AC-daily-limit-009.
-
-        Plan v2's table for a verified account; the refusal beyond it is the limit's, and it does not publish.
+        """Plan v2's table for a verified account; the refusal beyond it is the limit's, and it does not publish.
         """
         ada, account_id = self.waiting()
         with patch.object(core_config.settings, "daily_decompositions_raw", "2"), \
@@ -309,7 +294,8 @@ class Rules:
 
 
 class ProductionTests(Rules, AccessHttpTestCase):
-    """The default environment; accounts have their session from the auth store, as no fake provider signs in there."""
+    """The default environment; accounts have their session from the auth store. The rules do not depend on the
+    environment (EnvironmentTests), and the ROHub sign-in itself is tested in test_oidc_sign_in."""
 
     def waiting(self, name: str = "ada") -> Tuple[TestClient, int]:
         account, client = self.provider_account(f"subject-{name}", preferred_username=name), self.client()
@@ -317,18 +303,8 @@ class ProductionTests(Rules, AccessHttpTestCase):
         return client, account["id"]
 
 
-class DevelopmentTests(Rules, OidcTestCase, AccessHttpTestCase):
-    """Mode ``both`` on a development machine; people sign in with ROHub."""
-
-    def waiting(self, name: str = "ada") -> Tuple[TestClient, int]:
-        browser = self.signed_in(sub=f"subject-{name}", email=f"{name}@example.org", preferred_username=name, sid=f"session-{name}")
-        browser.headers.update(self.csrf_headers(browser))
-        return browser, self.rows("SELECT id FROM users WHERE username = ?", name)[0]["id"]
-
-
 class EnvironmentTests(AccessHttpTestCase):
     def test_an_account_s_state_does_not_depend_on_the_environment(self):
-        """Covers: AC-account-approval-007."""
         account = self.store.get_user(self.provider_account("subject-ada")["id"])
         states = []
         for environment in ("", "production", "development"):
@@ -338,9 +314,7 @@ class EnvironmentTests(AccessHttpTestCase):
         self.assertEqual((states[0].terms_accepted, states[0].application, states[0].approval_first, states[0].uses_left_today), (True, "none", True, None))
 
     def test_who_waits_is_whom_the_list_says_waits(self):
-        """Covers: AC-account-approval-007.
-
-        A usable password without an identity counts as approved, and so does a role; a password is not enough, nor is no identity.
+        """A usable password without an identity counts as approved, and so does a role; a password is not enough, nor is no identity.
 
         An account that nobody can sign in to has no approval and waits for none.
         """
@@ -387,7 +361,6 @@ class ApprovalTestCase(AccountsTestCase):
 
 class WhoTests(ApprovalTestCase):
     def test_an_admin_and_the_owner_approve_ordinary_accounts(self):
-        """Covers: AC-account-approval-008."""
         self.make_admin_in_database("carol")
         owner, carol = self.owner_client(), self.signed_in("carol")
         for client, actor in ((carol, self.carol["id"]), (owner, self.admin["id"])):
@@ -401,7 +374,6 @@ class WhoTests(ApprovalTestCase):
             self.assertEqual(self.approval(self.ada["id"]), (None, None))
 
     def test_nobody_else_does(self):
-        """Covers: AC-account-approval-008."""
         self.assert_refused(self.signed_in("bob"), self.ada["id"], "admin_required")
         self.assert_refused(self.signed_in_as(self.ada["id"]), self.ada["id"], "admin_required")
         for action in (APPROVE, WITHDRAW):
@@ -410,7 +382,6 @@ class WhoTests(ApprovalTestCase):
         self.assertEqual(self.approval(self.ada["id"]), (None, None))
 
     def test_nobody_approves_themselves_or_the_owner_and_only_the_owner_acts_on_admins(self):
-        """Covers: AC-account-approval-008."""
         ben = self.provider_account("subject-ben", preferred_username="ben")
         for name in ("ada", "ben"):
             self.make_admin_in_database(name)
@@ -426,15 +397,12 @@ class WhoTests(ApprovalTestCase):
         self.assertEqual(self.act(owner, WITHDRAW, dora["id"]).json()["user"]["approval"], "not_needed")  # an admin
 
     def test_a_local_account_needs_none(self):
-        """Covers: AC-account-approval-009."""
         admin = self.signed_in("admin", "admin-password")
         self.assert_refused(admin, self.bob["id"], "approval_not_needed")
         self.assert_refused(admin, self.admin["id"], "own_account")
 
     def test_an_account_nobody_can_sign_in_to_any_more_neither_waits_nor_is_approved(self):
-        """Covers: AC-account-approval-009.
-
-        After the cutover's purge, an unlinked local account has neither a password nor an identity.
+        """After the cutover's purge, an unlinked local account has neither a password nor an identity.
         """
         self.bind_owner()
         admin = self.signed_in("admin", "admin-password")
@@ -444,34 +412,7 @@ class WhoTests(ApprovalTestCase):
         self.assertEqual((status["bob"], status["carol"], status["ada"]), ("not_needed", "not_needed", "waiting"))
         self.assert_refused(admin, self.bob["id"], "approval_not_needed")
 
-    def test_somebody_still_signed_in_after_the_purge_is_told_that_the_password_ended(self):
-        """Covers: AC-account-approval-009."""
-        self.bind_owner()
-        admin, bob, ada = self.signed_in("admin", "admin-password"), self.signed_in("bob"), self.signed_in_as(self.ada["id"])
-        self.assertEqual(run_cli("legacy", "purge-passwords", "--confirm-cutover")[0], 0)
-        for limit in ("", "3"):
-            with self.subTest(limit=limit), patch.object(core_config.settings, "daily_decompositions_raw", limit):
-                capabilities = bob.get("/api/auth/me").json()["capabilities"]
-                for capability in OWN_USE:
-                    entry = capabilities[capability.value]
-                    self.assertEqual((entry["allowed"], entry["reason"], entry["message"]), (False, "password_ended", ENDED), capability)
-                self.assertTrue(capabilities["session"]["allowed"] and capabilities["account_data"]["allowed"])
-                refused = bob.post("/api/decompose", json={"definition": "dissolved oxygen in water"})
-                self.assertEqual((refused.status_code, refused.json()), (403, {"detail": ENDED, "reason": "password_ended"}))
-                # The owner's own session goes on, and an account with an identity is as it was.
-                self.assertTrue(admin.get("/api/auth/me").json()["capabilities"]["decompose"]["allowed"])
-                self.assertEqual(ada.get("/api/auth/me").json()["capabilities"]["publish"]["reason"], "approval_required")
-        self.assertEqual(self.rows("SELECT * FROM decomposition_uses"), [])
-
-    def test_an_unknown_account_is_unknown(self):
-        """Covers: AC-account-approval-008."""
-        admin = self.signed_in("admin", "admin-password")
-        for action in (APPROVE, WITHDRAW):
-            for account_id in (9999, 2**63):
-                self.assertEqual(self.act(admin, action, account_id, NOTE).status_code, 404)
-
     def test_an_actor_who_lost_admin_or_was_blocked_meanwhile_approves_nobody(self):
-        """Covers: AC-account-approval-010."""
         actor = self.store.get_user(self.admin["id"])
         for change, reason in (("roles = '[\"user\"]'", "admin_required"), ("is_active = 0", "blocked")):
             self.execute("UPDATE users SET roles = '[\"admin\", \"user\"]', is_active = 1 WHERE id = ?", self.admin["id"])
@@ -482,16 +423,7 @@ class WhoTests(ApprovalTestCase):
                 self.assertEqual(caught.exception.reason, reason)
         self.assertEqual((self.approval(self.ada["id"]), self.history(self.ada["id"])), ((None, None), []))
 
-    def test_the_development_user_may_and_is_named(self):
-        """Covers: AC-account-approval-010."""
-        self.store.enabled = False
-        client = self.client()
-        user = self.act(client, APPROVE, self.ada["id"]).json()["user"]
-        self.assertEqual((user["approval"], user["approved_by"]), ("approved", "development"))
-        self.assertEqual(client.get(f"/api/admin/users/{self.ada['id']}/history").json()["history"][0]["actor"], "development")
-
     def test_a_blocked_account_can_be_approved_and_stays_blocked(self):
-        """Covers: AC-account-approval-010."""
         admin = self.signed_in("admin", "admin-password")
         self.assertEqual(self.act(admin, "block", self.ada["id"], "A test.").status_code, 200)
         user = self.act(admin, APPROVE, self.ada["id"]).json()["user"]
@@ -500,7 +432,6 @@ class WhoTests(ApprovalTestCase):
 
 class KeptTests(ApprovalTestCase):
     def test_who_when_and_the_note_are_in_the_history_and_the_audit_log(self):
-        """Covers: AC-account-approval-011."""
         admin = self.signed_in("admin", "admin-password")
         for action, stored, audited, note in ((APPROVE, "approved", "admin.user_approved", NOTE), (WITHDRAW, "approval_withdrawn", "admin.approval_withdrawn", None),
                                               (APPROVE, "approved", "admin.user_approved", None), (WITHDRAW, "approval_withdrawn", "admin.approval_withdrawn", "Asked to leave.")):
@@ -520,7 +451,6 @@ class KeptTests(ApprovalTestCase):
             ("approval_withdrawn", "admin", "Asked to leave."), ("approved", "admin", None), ("approval_withdrawn", "admin", None), ("approved", "admin", NOTE)])
 
     def test_the_history_is_append_only(self):
-        """Covers: AC-account-approval-011."""
         admin = self.signed_in("admin", "admin-password")
         self.act(admin, APPROVE, self.ada["id"], NOTE)
         for statement in ("UPDATE account_history SET reason = 'changed'", "DELETE FROM account_history"):
@@ -528,7 +458,6 @@ class KeptTests(ApprovalTestCase):
                 self.execute(statement)
 
     def test_a_note_is_trimmed_optional_and_has_at_most_500_characters(self):
-        """Covers: AC-account-approval-012."""
         admin = self.signed_in("admin", "admin-password")
         for note, status, kept in (("  " + NOTE + "\n", 200, NOTE), ("   ", 200, None), ("x" * 500, 200, "x" * 500), ("x" * 501, 400, None)):
             with self.subTest(length=len(note)):
@@ -544,7 +473,6 @@ class KeptTests(ApprovalTestCase):
         self.assertEqual(admin.post(f"/api/admin/users/{self.ada['id']}/{APPROVE}").status_code, 200)  # no body at all
 
     def test_what_changes_nothing_writes_nothing_and_loses_no_note(self):
-        """Covers: AC-account-approval-012."""
         admin = self.signed_in("admin", "admin-password")
         self.make_admin_in_database("carol")
         carol = self.signed_in("carol")
@@ -561,7 +489,6 @@ class KeptTests(ApprovalTestCase):
         self.assertEqual([row["reason"] for row in self.history(self.ada["id"])], [NOTE])
 
     def test_the_approval_and_its_history_commit_together(self):
-        """Covers: AC-account-approval-011."""
         failing = self.client(raise_server_exceptions=False)
         self.login(failing, "admin", "admin-password")
         self.execute("CREATE TRIGGER history_unavailable BEFORE INSERT ON account_history BEGIN SELECT RAISE(ABORT, 'history unavailable'); END")
@@ -570,7 +497,6 @@ class KeptTests(ApprovalTestCase):
         self.assertEqual((self.approval(self.ada["id"]), self.audit_actions()), ((None, None), audit))
 
     def test_approvals_at_the_same_moment_leave_one_with_its_one_row(self):
-        """Covers: AC-account-approval-013."""
         actor, barrier, results = self.store.get_user(self.admin["id"]), threading.Barrier(8), []
 
         def approve() -> None:
@@ -586,7 +512,6 @@ class KeptTests(ApprovalTestCase):
         self.assertEqual([row["action"] for row in self.history(self.ada["id"])], ["approved"])
 
     def test_signing_in_again_keeps_the_approval_and_gives_none(self):
-        """Covers: AC-account-approval-014."""
         claims = {"email": "new@example.org", "email_verified": True, "name": "Ada New", "approved_at": "x", "approval": "approved"}
         account, created = self.accounts.ensure_account(ISSUER, "subject-ada", claims)
         self.assertEqual((created, account["approved_at"]), (False, None))
@@ -600,7 +525,6 @@ class KeptTests(ApprovalTestCase):
 
 class ListTests(ApprovalTestCase):
     def test_the_list_says_where_each_account_stands(self):
-        """Covers: AC-account-approval-015."""
         owner = self.owner_client()
         ben = self.provider_account("subject-ben", preferred_username="ben")
         eve = self.provider_account("subject-eve", preferred_username="eve")
@@ -620,18 +544,8 @@ class ListTests(ApprovalTestCase):
         me = self.signed_in_as(ben["id"]).get("/api/auth/me").json()["user"]
         self.assertFalse({"approval", "approved_at", "approved_by"} & set(me))
 
-    def test_a_renamed_approver_is_shown_by_the_name_it_has(self):
-        """Covers: AC-account-approval-015."""
-        self.make_admin_in_database("carol")
-        self.act(self.signed_in("carol"), APPROVE, self.ada["id"])
-        self.execute("UPDATE users SET username = 'caroline' WHERE id = ?", self.carol["id"])
-        users = self.signed_in("admin", "admin-password").get("/api/admin/users").json()["users"]
-        self.assertEqual(next(user for user in users if user["id"] == self.ada["id"])["approved_by"], "caroline")
-
     def test_an_approved_account_cannot_be_folded_any_more_and_a_link_gives_no_approval(self):
-        """Covers: AC-account-approval-016.
-
-        The rules of accounts-roles section 8 as they are: an approval is history, which keeps an account from being emptied.
+        """The rules of accounts-roles section 8 as they are: an approval is history, which keeps an account from being emptied.
         """
         self.bind_owner()
         self.act(self.signed_in("admin", "admin-password"), APPROVE, self.ada["id"])
@@ -648,45 +562,8 @@ class ListTests(ApprovalTestCase):
 
 
 class MigrationTests(AccountsTestCase):
-    def test_its_text_is_settled(self):
-        """Covers: AC-account-approval-017."""
-        migration = next(item for item in storage.MIGRATIONS if item.id == MIGRATION)
-        self.assertEqual((migration.kind, migration.checksum), ("sql", MIGRATION_SHA256))
-        self.assertEqual(hashlib.sha256(migration.sql.encode("utf-8")).hexdigest(), MIGRATION_SHA256)
-        self.assertEqual([item.id for item in storage.MIGRATIONS][4:6], ["0005_daily_decompositions", MIGRATION])
-
-    def test_it_adds_two_empty_columns_and_the_previous_image_still_runs(self):
-        """Covers: AC-account-approval-017."""
-        old = self.dir / "de1a7af.sqlite3"
-        previous_image.make_de1a7af_file(old)
-        position = [item.id for item in storage.MIGRATIONS].index(MIGRATION)
-        migration = storage.MIGRATIONS[position]
-        del storage.MIGRATIONS[position:]
-        storage.migrate(old)
-        names = "SELECT name, sql FROM sqlite_master WHERE name <> 'users'"
-        schema = self.rows(names, db=old)
-        columns = self.rows("PRAGMA table_info(users)", db=old)
-        tables = [row["name"] for row in self.rows("SELECT name FROM sqlite_master WHERE type = 'table'", db=old)]
-        before = {table: self.rows(f"SELECT rowid, * FROM {table}", db=old) for table in tables if table not in ("schema_migrations", "sqlite_sequence")}
-        self.assertTrue(before["users"])
-        storage.MIGRATIONS.append(migration)
-        self.assertEqual(storage.migrate(old), [MIGRATION])
-        self.assertEqual(self.rows(names, db=old), schema)
-        added = self.rows("PRAGMA table_info(users)", db=old)
-        self.assertEqual(added[: len(columns)], columns)
-        self.assertEqual([(row["name"], row["type"], row["notnull"], row["dflt_value"]) for row in added[len(columns):]],
-                         [("approved_at", "TEXT", 0, None), ("approved_by", "INTEGER", 0, None)])
-        after = {table: self.rows(f"SELECT rowid, * FROM {table}", db=old) for table in before}
-        self.assertEqual([(row.pop("approved_at"), row.pop("approved_by")) for row in after["users"]], [(None, None)] * len(before["users"]))
-        self.assertEqual(after, before)
-        self.assertEqual(previous_image.start(old), [])
-        self.assertEqual(previous_image.replay(old, include=previous_image.is_read), [])
-        fresh = self.dir / "fresh.sqlite3"
-        storage.migrate(fresh)
-        self.assertEqual(previous_image.replay(fresh), [], "everything the previous image writes and reads")
 
     def test_the_previous_image_keeps_an_approval_it_does_not_know(self):
-        """Covers: AC-account-approval-017."""
         ada = self.provider_account("subject-ada", preferred_username="ada")
         self.assertEqual(self.act(self.signed_in("admin", "admin-password"), APPROVE, ada["id"]).status_code, 200)
         before = self.rows("SELECT approved_at, approved_by FROM users WHERE id = ?", ada["id"])

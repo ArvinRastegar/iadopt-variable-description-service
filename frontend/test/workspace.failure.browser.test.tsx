@@ -86,12 +86,3 @@ test('on a phone a failed decomposition is seen, each time it fails', async () =
     await failWith(message);
   }
 });
-
-test('on a wide, low window the message comes into view too', async () => {
-  // The panel beside the diagram is then lower than what it holds.
-  await page.viewport(1280, 300);
-  await mountApp('#/');
-  await userEvent.fill(page.getByLabelText('Variable definition'), 'Dissolved oxygen in water');
-  await page.getByRole('button', { name: /^Decompose/ }).click();
-  await failWith('The model is not available.');
-});

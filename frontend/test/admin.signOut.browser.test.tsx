@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 test('the admin page signs out to where the answer says, else to the sign-in page, and shows a failure', async () => {
-  // Covers: AC-oidc-identity-051 (the admin page), AC-oidc-identity-050 (its unsafe requests).
+  // The admin page; its unsafe requests.
   const calls: Array<{ method: string; path: string; token: string | null }> = [];
   let answer: () => Response | Promise<Response> = () => json({ status: 'ok', end_session_url: '/api/auth/end-session' });
   vi.stubGlobal('fetch', vi.fn(async (url: string, options: RequestInit = {}) => {

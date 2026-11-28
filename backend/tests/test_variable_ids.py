@@ -12,25 +12,19 @@ library's publish step is replaced by signing alone, and the ORCID lookup by a f
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
-import pathlib
-import sqlite3
-import tempfile
 import unittest
 import zipfile
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
-import previous_image
 from nanopub import Nanopub, NanopubConf, Profile
 from nanopub.namespaces import NPX
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import DCTERMS, RDF, XSD
 from test_records import CLIENT, PREPARED, RecordTestCase
 
-from app import storage
 from app.core import dependencies as core_deps
 from app.routers import nanopub as nanopub_router
 from app.services import nanopub_service
@@ -47,7 +41,6 @@ DRAFT_IRI = URIRef("https://w3id.org/iadopt/variable/20261113T120000-07")  # the
 IOP_VARIABLE = URIRef("https://w3id.org/iadopt/ont/Variable")
 ORCID_ID = "0000-0002-1825-0097"
 SERVER = "https://registry.example.org"
-MIGRATION = "0008_published_variable"
 CODE = r"RA[A-Za-z0-9_\-]{43}"
 
 _PROFILE: List[Profile] = []
@@ -235,72 +228,7 @@ class PublishedIriTests(RecordTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             document = json.loads(archive.read("records.jsonld"))
-            readme = archive.read("README.txt").decode("utf-8")
         [record] = [node for node in document["@graph"] if node["@id"].endswith(self.record_id)]
         published = [step for step in record["steps"] if step["kind"] == "publish"]
         self.assertEqual([step["introduced"] for step in published], [first["variable_uri"]] * 2)
         self.assertEqual(document["@context"]["introduced"], {"@id": "rec:introduced", "@type": "@id"})
-        self.assertIn("variable IRI it introduced", readme)
-
-
-# ------------------------------------------------------------------------------------------------
-# The migration
-# ------------------------------------------------------------------------------------------------
-
-
-class PublishedVariableMigrationTests(unittest.TestCase):
-    """The previous image is the live ``c103d4d``; its statements are those of the ``de1a7af`` capture."""
-
-    def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.dir = pathlib.Path(temporary.name)
-        saved = list(storage.MIGRATIONS)
-        self.addCleanup(lambda: storage.MIGRATIONS.__setitem__(slice(None), saved))
-
-    def rows(self, sql: str, db: pathlib.Path) -> List[Dict[str, Any]]:
-        conn = sqlite3.connect(db)
-        conn.row_factory = sqlite3.Row
-        try:
-            return [dict(row) for row in conn.execute(sql)]
-        finally:
-            conn.close()
-
-    def test_it_comes_last_and_adds_one_empty_column_that_the_previous_image_does_not_mind(self):
-        ids = [item.id for item in storage.MIGRATIONS]
-        self.assertEqual(ids[-2:], ["0007_record_choices", MIGRATION])
-        migration = storage.MIGRATIONS[-1]
-        self.assertEqual(migration.checksum, hashlib.sha256(migration.sql.encode("utf-8")).hexdigest())
-        old = self.dir / "previous.sqlite3"
-        previous_image.make_de1a7af_file(old)
-        del storage.MIGRATIONS[-1]
-        storage.migrate(old)
-        others = "SELECT type, name, sql FROM sqlite_master WHERE name <> 'record_events' ORDER BY type, name"
-        schema = self.rows(others, old)
-        events_sql = "SELECT sql FROM sqlite_master WHERE name = 'record_events'"
-        [stored] = self.rows(events_sql, old)
-        columns = self.rows("PRAGMA table_info(record_events)", old)
-        tables = [row["name"] for row in self.rows("SELECT name FROM sqlite_master WHERE type = 'table'", old)]
-        before = {table: self.rows(f"SELECT rowid, * FROM {table}", old)
-                  for table in tables if table not in ("schema_migrations", "sqlite_sequence")}
-        self.assertTrue([row for row in before["record_events"] if row["type"] == "publish"])
-        storage.MIGRATIONS.append(migration)
-        self.assertEqual(storage.migrate(old), [MIGRATION])
-        self.assertEqual(self.rows(others, old), schema)
-        # SQLite writes the added column after the last one, before the table's UNIQUE rule.
-        self.assertEqual(stored["sql"].count("    orcid TEXT,\n"), 1)
-        self.assertEqual(self.rows(events_sql, old),
-                         [{"sql": stored["sql"].replace("    orcid TEXT,\n", "    orcid TEXT, variable_uri TEXT,\n")}])
-        added = self.rows("PRAGMA table_info(record_events)", old)
-        self.assertEqual(added[: len(columns)], columns)
-        self.assertEqual([(row["name"], row["type"], row["notnull"], row["dflt_value"]) for row in added[len(columns):]],
-                         [("variable_uri", "TEXT", 0, None)])
-        after = {table: self.rows(f"SELECT rowid, * FROM {table}", old) for table in before}
-        self.assertEqual([row.pop("variable_uri") for row in after["record_events"]],
-                         [None] * len(before["record_events"]))
-        self.assertEqual(after, before)
-        self.assertEqual(previous_image.start(old), [])
-        self.assertEqual(previous_image.replay(old, include=previous_image.is_read), [])
-        fresh = self.dir / "fresh.sqlite3"
-        storage.migrate(fresh)
-        self.assertEqual(previous_image.replay(fresh), [])

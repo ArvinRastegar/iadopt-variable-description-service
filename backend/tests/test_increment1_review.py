@@ -60,7 +60,6 @@ class StorageReviewTests(TempDatabaseTestCase):
             shutil.copyfile(self.db, self.dir / "backups" / name)
 
     def test_reclaim_beside_a_long_reader_holds_writers_up_only_briefly(self):
-        """Covers: AC-app-storage-016 (section 6: safe while the backend runs)."""
         storage.migrate(self.db)
         done = threading.Event()
         opened = threading.Event()
@@ -90,7 +89,6 @@ class StorageReviewTests(TempDatabaseTestCase):
             reclaiming.join()
 
     def test_refused_starts_keep_the_good_backups(self):
-        """Covers: AC-app-storage-007, AC-app-storage-014 (a refused file never replaces good backups)."""
         kept = ["iadopt-20260101T000000Z-pre-migration.sqlite3", "iadopt-20260201T000000Z-pre-migration.sqlite3"]
         self.older_backups(*kept)
         self.execute("DROP TRIGGER record_events_no_delete")
@@ -100,7 +98,6 @@ class StorageReviewTests(TempDatabaseTestCase):
         self.assertEqual(self.backups(), kept)
 
     def test_the_leftover_of_an_interrupted_backup_does_not_stop_a_start(self):
-        """Covers: AC-app-storage-013 (its space counts and it goes before the copy)."""
         (self.dir / "backups").mkdir()
         (self.dir / "backups" / ".0123abcd.partial").write_bytes(b"x" * 8 * MiB)
         with free_space(2 * self.db.stat().st_size + storage.SPACE_RESERVE_BYTES - 4 * MiB):
@@ -109,7 +106,6 @@ class StorageReviewTests(TempDatabaseTestCase):
         self.assertRegex(made, r"^iadopt-\d{8}T\d{6}Z-pre-migration\.sqlite3$")
 
     def test_a_wal_left_behind_is_untouched_by_reads_and_refusals(self):
-        """Covers: AC-app-storage-008, AC-app-storage-013, AC-app-storage-015 (nothing is written)."""
         storage.migrate(self.db)
         crash = (
             "import os, sqlite3, sys\n"
@@ -136,13 +132,11 @@ class StorageReviewTests(TempDatabaseTestCase):
         self.assertEqual(self.files(), files)
 
     def test_backups_of_several_processes_never_replace_each_other(self):
-        """Covers: AC-app-storage-014 (manual backups are never removed, also within one second)."""
         script = "import pathlib, sys\nfrom app import storage\nprint(storage.backup('manual', path=pathlib.Path(sys.argv[1])).name)\n"
         made = run_together(script, 3, str(self.db))
         self.assertEqual(sorted(made), self.backups())
 
     def test_several_processes_migrating_at_once_make_one_backup(self):
-        """Covers: AC-app-storage-006, AC-app-storage-014."""
         script = "import pathlib, sys\nfrom app import storage\nprint(len(storage.migrate(pathlib.Path(sys.argv[1]))))\n"
         applied = run_together(script, 3, str(self.db))
         self.assertEqual(sorted(applied), ["0", "0", str(len(storage.MIGRATIONS))])
@@ -161,7 +155,6 @@ class AccountsReviewTests(TempDatabaseTestCase):
         return [self.rows(f"SELECT * FROM {table}") for table in ("users", "account_identities", "account_history", "owner_binding")]
 
     def test_the_cutover_commands_need_a_bound_owner(self):
-        """Covers: AC-accounts-roles-006, AC-accounts-roles-012 to -014 (no admin is lost before there is an owner)."""
         provider, _ = self.accounts.ensure_account(ISSUER, "subject", {})
         before = self.data()
         for argv in (
@@ -174,7 +167,6 @@ class AccountsReviewTests(TempDatabaseTestCase):
         self.assertEqual(self.data(), before)
 
     def test_an_admin_who_loses_the_role_while_a_request_waits_changes_nothing(self):
-        """Covers: AC-accounts-roles-003, AC-accounts-roles-009 (the actor is read in the transaction too)."""
         requests = {
             "block": ("POST", f"/api/admin/users/{self.bob['id']}/block", {"reason": "A reason."}),
             "reset": ("PATCH", f"/api/admin/users/{self.bob['id']}", {"password": "new-password-123"}),
@@ -203,7 +195,6 @@ class AccountsReviewTests(TempDatabaseTestCase):
                     )
 
     def test_an_issuer_with_spaces_is_no_issuer(self):
-        """Covers: AC-accounts-roles-010, AC-accounts-roles-012 (a mistyped link would never be found again)."""
         for issuer in (f"{ISSUER} ", f" {ISSUER}", f"{ISSUER}\n", "https://login.example.org/ realm"):
             with self.subTest(issuer=issuer):
                 with self.assertRaises(ValueError):
@@ -215,7 +206,6 @@ class AccountsReviewTests(TempDatabaseTestCase):
         self.assertEqual(self.accounts.account_for_identity(ISSUER, "bob-subject")["id"], self.bob["id"])
 
     def test_an_id_sqlite_cannot_hold_is_an_unknown_account(self):
-        """Covers: AC-accounts-roles-017 (an unknown account answers 404)."""
         admin = self.client()
         self.login(admin, "admin", "admin-password")
         user_id = "9" * 30
@@ -224,7 +214,6 @@ class AccountsReviewTests(TempDatabaseTestCase):
         self.assertEqual(admin.patch(f"/api/admin/users/{user_id}", json={"email": "x@example.org"}).status_code, 404)
 
     def test_usernames_are_unique_ignoring_case_beyond_ascii(self):
-        """Covers: AC-accounts-roles-010 (suffixes, ignoring case)."""
         names = [self.accounts.ensure_account(ISSUER, str(number), {"preferred_username": name})[0]["username"]
                  for number, name in enumerate(("Ünal", "ünal", "ÜNAL"))]
         self.assertEqual(names, ["Ünal", "ünal-2", "ÜNAL-3"])

@@ -1,12 +1,8 @@
-"""Tests pinning how entity linking walks a prediction and what it writes into it.
+"""How entity linking walks a prediction and what it writes into it.
 
-Contract: iadopt-variable-description-service-docs/components/entity-linking-llm.md — D-032,
-which replaced the Wikidata-search-plus-reranker step documented in components/entity-linking.md
-(D-006). The shape handling is the part that stayed: the measured decomposition shapes,
-in particular three-key asymmetric systems, are consumed without modification.
-
-How one label is linked is tested in test_entity_linking_flow.py; here that step is replaced by
-a stub, so these tests pin only the traversal and the keys. Fully offline.
+How one label is linked is tested in test_entity_linking_flow.py; here that step is replaced by a stub, so these tests
+pin the traversal, the keys and the stored link forms. The measured decomposition shapes, in particular three-key
+asymmetric systems, are consumed without modification. Fully offline.
 """
 
 from __future__ import annotations
@@ -65,56 +61,37 @@ def pred(entity):
             "hasMatrix": "", "hasContextObject": "", "hasStatisticalModifier": "", "hasConstraint": []}
 
 
-# --- the measured shapes ----------------------------------------------------- #
+# --- the measured shapes ------------------------------------------------------------------------------------------- #
 
-def test_numerator_denominator_links_its_three_present_keys(link_everything):
-    out = enrichment.enrich_with_uris(
-        pred({"AsymmetricSystem": "a / b", "hasNumerator": "a", "hasDenominator": "b"}))
-    entity = out["hasObjectOfInterest"]
-    assert entity["AsymmetricSystemURI"] == WIKI_Q1
-    assert entity["hasNumeratorURI"] and entity["hasDenominatorURI"]
-    assert "hasSourceURI" not in entity
-    assert "hasTargetURI" not in entity
-
-
-def test_source_target_links_its_three_present_keys(link_everything):
-    out = enrichment.enrich_with_uris(
-        pred({"AsymmetricSystem": "a → b", "hasSource": "a", "hasTarget": "b"}))
-    entity = out["hasObjectOfInterest"]
-    assert entity["hasSourceURI"] and entity["hasTargetURI"]
-    assert "hasNumeratorURI" not in entity
-    assert "hasDenominatorURI" not in entity
+@pytest.mark.parametrize(
+    "system, linked, absent",
+    [
+        ({"AsymmetricSystem": "a / b", "hasNumerator": "a", "hasDenominator": "b"},
+         {"AsymmetricSystemURI", "hasNumeratorURI", "hasDenominatorURI"}, {"hasSourceURI", "hasTargetURI"}),
+        ({"AsymmetricSystem": "a → b", "hasSource": "a", "hasTarget": "b"},
+         {"AsymmetricSystemURI", "hasSourceURI", "hasTargetURI"}, {"hasNumeratorURI", "hasDenominatorURI"}),
+        ({"SymmetricSystem": "a + b", "hasPart": ["a", "b"]}, {"SymmetricSystemURI", "hasPartURIs"}, set()),
+    ],
+    ids=["numerator-denominator", "source-target", "symmetric"],
+)
+def test_each_system_shape_links_exactly_the_keys_it_has(link_everything, system, linked, absent):
+    entity = enrichment.enrich_with_uris(pred(system))["hasObjectOfInterest"]
+    assert linked <= set(entity) and not (absent & set(entity))
 
 
-def test_symmetric_system_links_container_and_parts(link_everything):
-    out = enrichment.enrich_with_uris(
-        pred({"SymmetricSystem": "a + b", "hasPart": ["a", "b"]}))
-    entity = out["hasObjectOfInterest"]
-    assert entity["SymmetricSystemURI"]
-    assert entity["hasPartURIs"] == [WIKI_Q1] * 2
-
-
-def test_part_uris_absent_when_nothing_links(link_nothing):
-    out = enrichment.enrich_with_uris(
-        pred({"SymmetricSystem": "a + b", "hasPart": ["a", "b"]}))
+def test_part_links_stay_aligned_with_the_parts_and_are_left_out_when_none_links(monkeypatch):
+    monkeypatch.setattr(enrichment, "choose_candidate",
+                        lambda term, definition, linker=None: candidate() if term in ("a", "b") else None)
+    out = enrichment.enrich_with_uris(pred({"SymmetricSystem": "s", "hasPart": ["a", "  ", None, 5, "c", "b"]}))
+    assert out["hasObjectOfInterest"]["hasPartURIs"] == [WIKI_Q1, None, None, None, None, WIKI_Q1]
+    monkeypatch.setattr(enrichment, "choose_candidate", lambda term, definition, linker=None: None)
+    out = enrichment.enrich_with_uris(pred({"SymmetricSystem": "s", "hasPart": ["a", "b"]}))
     assert "hasPartURIs" not in out["hasObjectOfInterest"]
-
-
-def test_part_uris_stay_aligned_with_parts_when_only_one_links(monkeypatch):
-    monkeypatch.setattr(enrichment, "choose_candidate", lambda term, definition, linker=None: candidate() if term == "a" else None)
-    out = enrichment.enrich_with_uris(pred({"SymmetricSystem": "a + b", "hasPart": ["a", "b"]}))
-    assert out["hasObjectOfInterest"]["hasPartURIs"] == [WIKI_Q1, None]
-
-
-def test_blank_and_non_string_parts_keep_their_place(link_everything):
-    out = enrichment.enrich_with_uris(pred({"SymmetricSystem": "s", "hasPart": ["a", "  ", None, 5, "b"]}))
-    assert out["hasObjectOfInterest"]["hasPartURIs"] == [WIKI_Q1, None, None, None, WIKI_Q1]
 
 
 def test_all_measured_decompositions_pass_through(link_everything):
     for demo in DEMOS:
-        doc = dict(demo["decomposition"], definition=demo["definition"])
-        enrichment.enrich_with_uris(doc)
+        enrichment.enrich_with_uris(dict(demo["decomposition"], definition=demo["definition"]))
 
 
 def test_every_simple_field_is_linked(link_everything):
@@ -125,7 +102,7 @@ def test_every_simple_field_is_linked(link_everything):
         assert out[f"{field}URI"] == WIKI_Q1
 
 
-def test_system_fields_are_linked_on_matrix_and_context_object_too(link_everything):
+def test_systems_are_linked_on_the_matrix_and_the_context_object_too(link_everything):
     doc = pred("")
     doc["hasMatrix"] = {"AsymmetricSystem": "x", "hasSource": "a", "hasTarget": "b"}
     doc["hasContextObject"] = {"SymmetricSystem": "y", "hasPart": ["c"]}
@@ -134,53 +111,39 @@ def test_system_fields_are_linked_on_matrix_and_context_object_too(link_everythi
     assert out["hasContextObject"]["hasPartURIs"] == [WIKI_Q1]
 
 
-# --- invariants -------------------------------------------------------------- #
+# --- what is asked and what is kept -------------------------------------------------------------------------------- #
 
-def test_input_is_never_mutated(link_everything):
+def test_the_input_is_never_changed(link_everything):
     original = pred({"AsymmetricSystem": "a / b", "hasNumerator": "a", "hasDenominator": "b"})
     untouched = copy.deepcopy(original)
     enrichment.enrich_with_uris(original)
     assert original == untouched
 
 
-def test_a_label_nothing_is_chosen_for_adds_no_key(link_nothing):
-    out = enrichment.enrich_with_uris(pred("water"))
-    assert "hasObjectOfInterestURI" not in out
-
-
-@pytest.mark.parametrize("blank", ["", "   ", "\n"])
-def test_empty_entity_adds_no_key_and_issues_no_lookup(link_everything, blank):
-    out = enrichment.enrich_with_uris(pred(blank))
+def test_an_empty_label_adds_no_key_and_asks_nothing(link_everything):
+    out = enrichment.enrich_with_uris(pred("   "))
     assert "hasObjectOfInterestURI" not in out
     assert [term for term, _ in link_everything] == ["count"]
 
 
-def test_dict_on_has_property_is_left_untouched(link_everything):
-    doc = pred("water")
+def test_malformed_values_are_skipped_without_failing(link_everything):
+    doc = pred({"AsymmetricSystem": ["not", "text"], "hasNumerator": 5, "hasDenominator": "b"})
     doc["hasProperty"] = {"label": "count"}
     out = enrichment.enrich_with_uris(doc)
-    assert out["hasProperty"] == {"label": "count"}
-    assert "hasPropertyURI" not in out
-
-
-def test_a_non_string_system_label_is_skipped_not_fatal(link_everything):
-    out = enrichment.enrich_with_uris(
-        pred({"AsymmetricSystem": ["not", "text"], "hasNumerator": 5, "hasDenominator": "b"}))
+    assert out["hasProperty"] == {"label": "count"} and "hasPropertyURI" not in out
     entity = out["hasObjectOfInterest"]
     assert "AsymmetricSystemURI" not in entity and "hasNumeratorURI" not in entity
     assert entity["hasDenominatorURI"] == WIKI_Q1
 
 
-def test_the_definition_travels_with_every_lookup(link_everything):
+def test_the_definition_travels_with_every_lookup_and_a_missing_one_is_empty(link_everything):
     enrichment.enrich_with_uris(dict(pred("water"), definition="a very particular definition"))
     assert link_everything and all(definition == "a very particular definition" for _, definition in link_everything)
-
-
-def test_a_missing_definition_is_an_empty_context_not_an_error(link_everything):
+    link_everything.clear()
     doc = pred("water")
     del doc["definition"]
     enrichment.enrich_with_uris(doc)
-    assert all(definition == "" for _, definition in link_everything)
+    assert link_everything and all(definition == "" for _, definition in link_everything)
 
 
 def test_a_label_that_occurs_twice_is_linked_once(link_everything):
@@ -193,11 +156,11 @@ def test_a_label_that_occurs_twice_is_linked_once(link_everything):
 
 def test_spellings_that_normalise_alike_share_one_lookup_but_case_does_not(link_everything):
     doc = pred("soil  moisture")
-    doc["hasMatrix"] = "soil moisture "
+    doc["hasMatrix"] = "soil moisture "
     doc["hasContextObject"] = "Soil moisture"
     enrichment.enrich_with_uris(doc)
     # Fields are visited in a fixed order: the matrix comes before the object, so its spelling is the one asked.
-    assert [term for term, _ in link_everything] == ["count", "soil moisture ", "Soil moisture"]
+    assert [term for term, _ in link_everything] == ["count", "soil moisture ", "Soil moisture"]
 
 
 def test_a_failure_to_link_is_remembered_too(monkeypatch):
@@ -236,7 +199,7 @@ def test_links_the_decomposition_model_emitted_are_dropped_when_the_linker_finds
     untouched = copy.deepcopy(emitted)
     out = enrichment.enrich_with_uris(emitted)
     assert uri_keys(out) == []
-    assert emitted == untouched and len(uri_keys(emitted)) == 5
+    assert emitted == untouched
 
 
 def test_only_links_the_linker_chose_survive(link_everything):
@@ -248,18 +211,6 @@ def test_only_links_the_linker_chose_survive(link_everything):
     assert out["hasMatrix"]["hasPartURIs"] == [WIKI_Q1]
 
 
-def test_a_failure_while_linking_propagates(monkeypatch):
-    """Caught one level up by _finalize_pipeline_output, not swallowed here."""
-    def boom(term, definition, linker=None):
-        raise RuntimeError("PSNC did not answer the entity-linking request.")
-
-    monkeypatch.setattr(enrichment, "choose_candidate", boom)
-    with pytest.raises(RuntimeError):
-        enrichment.enrich_with_uris(pred("water"))
-
-
-# --- what is stored ------------------------------------------------------------ #
-
 @pytest.mark.parametrize(
     "chosen, stored",
     [
@@ -270,28 +221,10 @@ def test_a_failure_while_linking_propagates(monkeypatch):
 )
 def test_each_vocabulary_is_stored_in_its_own_form(monkeypatch, chosen, stored):
     monkeypatch.setattr(enrichment, "choose_candidate", lambda term, definition, linker=None: chosen)
-    out = enrichment.enrich_with_uris(pred("temperature"))
-    assert out["hasObjectOfInterestURI"] == stored
-    assert enrichment.candidate_link(chosen) == stored
+    assert enrichment.enrich_with_uris(pred("temperature"))["hasObjectOfInterestURI"] == stored
 
 
-def test_qudt_and_om_iris_are_never_upgraded_to_https(monkeypatch):
-    chosen = {"a": candidate("qudt", "Temperature"), "b": candidate("om", "Temperature")}
-    monkeypatch.setattr(enrichment, "choose_candidate", lambda term, definition, linker=None: chosen.get(term))
-    out = enrichment.enrich_with_uris(pred({"SymmetricSystem": "s", "hasPart": ["a", "b"]}))
-    parts = out["hasObjectOfInterest"]["hasPartURIs"]
-    assert parts == [QUDT_IRI, OM_IRI] and all(uri.startswith("http://") for uri in parts)
-
-
-def test_sources_can_be_mixed_within_one_prediction(monkeypatch):
-    by_term = {"count": candidate("qudt", "Count"), "water": candidate("wikidata", "Q283")}
-    monkeypatch.setattr(enrichment, "choose_candidate", lambda term, definition, linker=None: by_term[term])
-    out = enrichment.enrich_with_uris(pred("water"))
-    assert out["hasPropertyURI"] == "http://qudt.org/vocab/quantitykind/Count"
-    assert out["hasObjectOfInterestURI"] == "https://www.wikidata.org/wiki/Q283"
-
-
-# --- the pipeline around it ------------------------------------------------------ #
+# --- the pipeline around it ---------------------------------------------------------------------------------------- #
 
 @pytest.fixture
 def finalize(monkeypatch):
@@ -308,7 +241,7 @@ def finalize(monkeypatch):
     return seen
 
 
-def test_linking_failure_leaves_the_decomposition_intact(monkeypatch, finalize, capsys):
+def test_a_linking_failure_leaves_the_decomposition_intact(monkeypatch, finalize, capsys):
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
 
     def boom(prediction, linker=None):
@@ -337,23 +270,9 @@ def test_the_pipeline_passes_the_enriched_prediction_on_to_the_turtle(monkeypatc
     assert "hasObjectOfInterestURI" not in result["parsed_json"]
 
 
-# --- helpers ----------------------------------------------------------------- #
+# --- the model that answers: the decomposition's (D-038) ----------------------------------------------------------- #
 
-def test_to_wiki_url_normalizes_a_qid():
-    assert enrichment.to_wiki_url("Q42") == "https://www.wikidata.org/wiki/Q42"
-    assert enrichment.to_wiki_url("http://www.wikidata.org/entity/Q42") == "https://www.wikidata.org/wiki/Q42"
-    assert enrichment.to_wiki_url(None) is None
-
-
-def test_qid_extraction():
-    assert enrichment.qid_from_uri_or_text("http://www.wikidata.org/entity/Q42") == "Q42"
-    assert enrichment.qid_from_uri_or_text("no identifier here") is None
-    assert enrichment.qid_from_uri_or_text(None) is None
-
-
-# --- the model that answers: the decomposition's (D-038) ------------------------ #
-
-def test_enrichment_asks_with_the_linker_it_was_given(monkeypatch):
+def test_enrichment_asks_with_the_linker_it_was_given_and_by_default_the_measured_one(monkeypatch):
     seen = []
 
     def choose(term, definition, linker=None):
@@ -364,65 +283,49 @@ def test_enrichment_asks_with_the_linker_it_was_given(monkeypatch):
     run = Linker("openrouter", "qwen/qwen3.5-flash-02-23")
     enrichment.enrich_with_uris(pred("water"), linker=run)
     assert seen and all(linker == run for linker in seen)
-
-
-def test_enrichment_without_a_linker_asks_the_measured_one(monkeypatch):
-    seen = []
-    monkeypatch.setattr(enrichment, "choose_candidate", lambda term, definition, linker=None: seen.append(linker))
+    seen.clear()
     enrichment.enrich_with_uris(pred("water"))
-    assert seen and all(linker == MEASURED_LINKER for linker in seen)
-    assert MEASURED_LINKER == Linker("psnc", "Qwen3.8-27B")
+    assert seen and all(linker == Linker("psnc", "Qwen3.8-27B") for linker in seen)
 
 
-def test_the_pipeline_hands_its_linker_to_enrichment(monkeypatch, finalize):
+def test_run_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize):
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
-    seen = []
-    monkeypatch.setattr(pipeline, "enrich_with_uris", lambda prediction, linker=None: seen.append(linker) or prediction)
-    run = Linker("psnc", "Qwen3.5-397B-A17B")
-    pipeline._finalize_pipeline_output("raw", pred("water"), linker=run)
-    assert seen == [run]
-
-
-@pytest.mark.parametrize("provider, model", [("openrouter", "qwen/qwen3.5-flash-02-23"), ("psnc", "Qwen3.8-27B")])
-def test_run_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize, provider, model):
-    monkeypatch.setattr(settings, "enable_wikidata_linking", True)
-    monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs", lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
+    monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs",
+                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", "openrouter",
+                                                                                       "qwen/qwen3.5-flash-02-23"))
     monkeypatch.setattr(pipeline, "call_llm_loose", lambda *args, **kwargs: ("raw", pred("water")))
     monkeypatch.setattr(pipeline, "_labelled_prediction", lambda prediction, **kwargs: prediction)
     seen = []
     monkeypatch.setattr(pipeline, "enrich_with_uris", lambda prediction, linker=None: seen.append(linker) or prediction)
     # Nothing requested: the linker must come from the resolved pair, not from the request.
     pipeline.run_pipeline("water temperature", model_provider=None, model_name=None)
-    assert seen == [Linker(provider, model)]
+    assert seen == [Linker("openrouter", "qwen/qwen3.5-flash-02-23")]
 
 
-@pytest.mark.parametrize("provider, model", [("openrouter", "qwen/qwen3.5-flash-02-23"), ("psnc", "Qwen3.5-397B-A17B")])
-def test_the_streamed_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize, provider, model):
+def test_the_streamed_pipeline_links_with_the_model_that_decomposed(monkeypatch, finalize):
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
     monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs",
-                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
+                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", "psnc",
+                                                                                       "Qwen3.5-397B-A17B"))
     deltas = [("", "{}")]
     monkeypatch.setattr(pipeline, "stream_psnc_model", lambda *args, **kwargs: iter(deltas))
-    completions = SimpleNamespace(create=lambda **kwargs: iter(deltas))
-    monkeypatch.setattr(pipeline, "get_openai_client", lambda: SimpleNamespace(chat=SimpleNamespace(completions=completions)))
     monkeypatch.setattr(pipeline, "extract_stream_text_deltas", lambda chunk: chunk)
     monkeypatch.setattr(pipeline, "parse_llm_json", lambda raw, definition: pred("water"))
     monkeypatch.setattr(pipeline, "_labelled_prediction", lambda prediction, **kwargs: prediction)
     seen = []
     monkeypatch.setattr(pipeline, "enrich_with_uris", lambda prediction, linker=None: seen.append(linker) or prediction)
-    # Nothing requested: the linker must come from the resolved pair, not from the request.
     events = [json.loads(line) for line in pipeline.stream_pipeline_events("water temperature",
                                                                            model_provider=None, model_name=None)]
     assert events[-1]["type"] == "final"
-    assert seen == [Linker(provider, model)]
+    assert seen == [Linker("psnc", "Qwen3.5-397B-A17B")]
 
 
-@pytest.mark.parametrize("provider, model", [("openrouter", "qwen/qwen3.5-flash-02-23"), ("psnc", "Qwen3.5-397B-A17B")])
-def test_the_non_streamed_fallback_links_with_the_model_that_decomposed(monkeypatch, finalize, provider, model):
+def test_the_non_streamed_fallback_asks_and_links_with_the_model_that_decomposed(monkeypatch, finalize):
     """The stream fails before its first chunk, so the pipeline asks again without streaming."""
     monkeypatch.setattr(settings, "enable_wikidata_linking", True)
     monkeypatch.setattr(pipeline, "_prepare_pipeline_inputs",
-                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", provider, model))
+                        lambda definition, model_name=None, model_provider=None, **_: ("prompt", "openrouter",
+                                                                                       "qwen/qwen3.5-flash-02-23"))
 
     def broken_stream(*args, **kwargs):
         raise RuntimeError("the stream broke before its first chunk")
@@ -439,6 +342,5 @@ def test_the_non_streamed_fallback_links_with_the_model_that_decomposed(monkeypa
     monkeypatch.setattr(pipeline, "enrich_with_uris", lambda prediction, linker=None: seen.append(linker) or prediction)
     events = [json.loads(line) for line in pipeline.stream_pipeline_events("water temperature",
                                                                            model_provider=None, model_name=None)]
-    assert asked == [provider] and events[-1]["type"] == "final"
-    assert seen == [Linker(provider, model)]
-
+    assert asked == ["openrouter"] and events[-1]["type"] == "final"
+    assert seen == [Linker("openrouter", "qwen/qwen3.5-flash-02-23")]

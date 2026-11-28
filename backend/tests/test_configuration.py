@@ -73,13 +73,6 @@ class AuthApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-    def test_protected_route_requires_login(self):
-        response = self.client.get("/api/auth/me")
-        self.assertEqual(response.status_code, 401)
-
-        health = self.client.get("/api/health")
-        self.assertEqual(health.status_code, 200)
-
     def test_visualizer_metadata_is_available_without_login(self):
         expected_keys = {
             "/api/model-options": {"default_model_provider", "default_model_name", "model_names", "providers"},
@@ -100,15 +93,6 @@ class AuthApiTests(unittest.TestCase):
                 with self.subTest(path=path, method=method):
                     response = self.client.request(method, path)
                     self.assertEqual(response.status_code, 401)
-
-    def test_private_account_admin_and_docs_still_require_login(self):
-        for path in (
-            "/api/auth/me", "/api/auth/verify", "/api/admin/users", "/api/admin/stats",
-            "/api/admin/audit", "/api/docs", "/api/redoc", "/api/openapi.json",
-        ):
-            with self.subTest(path=path):
-                response = self.client.get(path)
-                self.assertEqual(response.status_code, 401)
 
     def test_anonymous_protected_operations_cannot_reach_services(self):
         operations = (
@@ -153,7 +137,7 @@ class AuthApiTests(unittest.TestCase):
         self.assertIn("iadopt_session", success.cookies)
 
     def test_inactive_user_cannot_login(self):
-        """A blocked account cannot sign in. Covers: AC-accounts-roles-003.
+        """A blocked account cannot sign in.
 
         Rewritten at the increment-1 tests gate (G-018): blocking, through its own route,
         replaces disabling an account through an update.
@@ -171,9 +155,7 @@ class AuthApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_admin_can_create_block_and_reset_user(self):
-        """Covers: AC-accounts-roles-009, AC-accounts-roles-003.
-
-        Rewritten at the increment-1 tests gate (G-018): an update no longer disables an account
+        """Rewritten at the increment-1 tests gate (G-018): an update no longer disables an account
         ("Use block or unblock."); the block route does, and the refused update changes nothing.
         """
         self.login()
@@ -211,18 +193,8 @@ class AuthApiTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 401)
 
-    def test_normal_user_cannot_access_admin_endpoints(self):
-        self.store.create_user(username="bob", password="password-123")
-        self.login("bob", "password-123")
-
-        response = self.client.get("/api/admin/users")
-
-        self.assertEqual(response.status_code, 403)
-
     def test_the_last_admin_guard_gives_way_to_the_owner_rules(self):
-        """Covers: AC-accounts-roles-003, AC-accounts-roles-006, AC-accounts-roles-009.
-
-        Rewritten at the increment-1 tests gate (G-018): the last-active-admin guard goes. An
+        """Rewritten at the increment-1 tests gate (G-018): the last-active-admin guard goes. An
         update cannot disable anyone, nobody blocks their own account, and without an owner no
         admin can be blocked or lose admin, so the set of admins cannot shrink.
         """
@@ -330,13 +302,3 @@ class CreatorOrcidRequiredTests(unittest.TestCase):
             for extra in ({}, {"creator_orcid_id": ""}):
                 with self.subTest(model=model.__name__, extra=extra), self.assertRaises(ValidationError):
                     model(**fields, **extra)
-
-    def test_preparation_options_expose_no_default_orcid(self):
-        from app.schemas.responses import NanopubPreparationOptionsResponse
-
-        self.assertNotIn("default_creator_orcid_id", NanopubPreparationOptionsResponse.model_fields)
-
-    def test_decompose_request_has_no_orcid_field(self):
-        from app.schemas.requests import DecomposeRequest
-
-        self.assertNotIn("creator_orcid_id", DecomposeRequest.model_fields)

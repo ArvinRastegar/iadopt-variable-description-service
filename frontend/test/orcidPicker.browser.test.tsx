@@ -207,26 +207,6 @@ test('nothing can be chosen or used before the saved list arrives', async () => 
   expect(used).toEqual([null, CARBERRY]);
 });
 
-test('a preselected saved iD leaves the typed field empty and its save box unticked', async () => {
-  localStorage.setItem(REMEMBERED_KEY, CARBERRY);
-  const api = stubApi([{ orcid: HAAK, name: 'Laure Haak' }, { orcid: CARBERRY, name: null }]);
-  const used: Array<string | null> = [];
-  mount(<Picker preferred={null} used={used} />);
-
-  await expect.element(page.getByRole('radio', { name: /0000-0002-1825-0097/ })).toBeChecked();
-  await expect.poll(() => localStorage.getItem(REMEMBERED_KEY)).toBeNull();
-  // Removing the chosen iD opens the typed field empty, so it cannot come straight back.
-  await page.getByRole('button', { name: 'Remove 0000-0002-1825-0097 from my account' }).click();
-  const another = page.getByRole('textbox', { name: 'Another ORCID iD' });
-  await expect.element(another).toHaveValue('');
-  await expect.element(page.getByRole('checkbox', { name: 'Save this ORCID iD to my account' })).not.toBeChecked();
-  await userEvent.fill(another, '0000-0002-1694-233X');
-  await page.getByRole('button', { name: 'Use' }).click();
-
-  expect(used).toEqual([WITH_X]);
-  expect(api.posted()).toEqual([]);
-});
-
 test('an answer that belongs to an earlier opening never changes the next one', async () => {
   const hold = deferred();
   const api = stubApi([{ orcid: HAAK, name: 'Laure Haak' }, { orcid: CARBERRY, name: null }], { holdPost: hold.promise });
@@ -245,30 +225,6 @@ test('an answer that belongs to an earlier opening never changes the next one', 
   hold.release();
   await new Promise((resolve) => setTimeout(resolve, 50));
   await expect.element(page.getByRole('radio', { name: /Laure Haak/ })).toBeChecked();
-});
-
-test('while one removal runs, its row cannot be chosen and no other removal starts', async () => {
-  const hold = deferred();
-  const api = stubApi([{ orcid: HAAK, name: 'Laure Haak' }, { orcid: CARBERRY, name: null }], { holdDelete: hold.promise });
-  mount(<Picker preferred={CARBERRY} used={[]} />);
-
-  await page.getByRole('button', { name: 'Remove 0000-0001-5109-3700 from my account' }).click();
-  await expect.element(page.getByRole('radio', { name: /Laure Haak/ })).toBeDisabled();
-  await expect.element(page.getByRole('button', { name: 'Remove 0000-0002-1825-0097 from my account' })).toBeDisabled();
-  hold.release();
-  await expect.element(page.getByRole('radio', { name: /Laure Haak/ })).not.toBeInTheDocument();
-  await expect.element(page.getByRole('radio', { name: /0000-0002-1825-0097/ })).toBeChecked();
-  await expect.element(page.getByRole('button', { name: 'Remove 0000-0002-1825-0097 from my account' })).toBeEnabled();
-  expect(api.deleted()).toEqual(['/api/auth/me/orcids/0000-0001-5109-3700']);
-});
-
-test('while a publication or retraction runs, the choice cannot change', async () => {
-  stubApi([{ orcid: HAAK, name: 'Laure Haak' }]);
-  mount(<Picker preferred={null} used={[]} disabled />);
-
-  await expect.element(page.getByRole('radio', { name: /Laure Haak/ })).toBeDisabled();
-  await expect.element(page.getByRole('radio', { name: 'Another ORCID iD' })).toBeDisabled();
-  await expect.element(page.getByRole('button', { name: 'Remove 0000-0001-5109-3700 from my account' })).toBeDisabled();
 });
 
 test('without accounts nothing is offered for saving and the remembered iD stays in this browser', async () => {

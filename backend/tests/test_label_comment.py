@@ -1,6 +1,5 @@
-"""Tests for the second-call label/comment generator.
+"""The second call that supplies a label and a comment, with a fallback that never fails a decomposition (D-002).
 
-Contract: iadopt-variable-description-service-docs/components/label-comment.md — D-002.
 Stubbed at the provider helper seam; no network.
 """
 
@@ -32,79 +31,49 @@ def stub_call(monkeypatch):
     return make
 
 
-def test_well_formed_response_is_used(stub_call):
-    stub_call('{"label": "DOC concentration", "comment": "Dissolved organic carbon in water."}')
+def test_a_well_formed_answer_is_used_after_one_request(stub_call):
+    calls = stub_call('{"label": "DOC concentration", "comment": "Dissolved organic carbon in water."}')
     assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == (
         "DOC concentration", "Dissolved organic carbon in water."
     )
+    assert len(calls) == 1
 
 
-def test_fenced_response_is_parsed(stub_call):
+def test_a_fenced_answer_is_read(stub_call):
     stub_call('```json\n{"label": "L", "comment": "C"}\n```')
     assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == ("L", "C")
 
 
-def test_empty_response_falls_back(stub_call):
-    stub_call("")
-    assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == lc.fallback_label_and_comment(DEFN)
+@pytest.mark.parametrize(
+    "response, raises",
+    [("", None), ("not json at all", None), (None, RuntimeError("transport exploded"))],
+    ids=["empty", "not-json", "call-fails"],
+)
+def test_an_unusable_answer_or_a_failed_call_falls_back_without_failing(stub_call, response, raises):
+    stub_call(response, raises=raises)
+    assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == (DEFN, DEFN)
 
 
-def test_malformed_json_falls_back(stub_call):
-    stub_call("not json at all")
-    assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == lc.fallback_label_and_comment(DEFN)
+@pytest.mark.parametrize("answer", ['{"comment": "C"}', '{"label": "   ", "comment": "C"}'])
+def test_a_missing_or_blank_label_falls_back_for_that_field_only(stub_call, answer):
+    stub_call(answer)
+    assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == (DEFN, "C")
 
 
-def test_missing_label_falls_back_per_field(stub_call):
-    stub_call('{"comment": "A good comment."}')
-    label, comment = lc.generate_label_and_comment(DEFN, **CALL_KWARGS)
-    assert comment == "A good comment."
-    assert label == lc.fallback_label_and_comment(DEFN)[0]
-
-
-@pytest.mark.parametrize("bad", ['""', '"   "', "123", "{}"])
-def test_unusable_label_falls_back(stub_call, bad):
-    stub_call('{"label": %s, "comment": "C"}' % bad)
-    label, comment = lc.generate_label_and_comment(DEFN, **CALL_KWARGS)
-    assert comment == "C"
-    assert label == lc.fallback_label_and_comment(DEFN)[0]
-
-
-def test_exception_from_the_call_never_propagates(stub_call):
-    stub_call(raises=RuntimeError("transport exploded"))
-    assert lc.generate_label_and_comment(DEFN, **CALL_KWARGS) == lc.fallback_label_and_comment(DEFN)
-
-
-def test_provider_helper_is_called_exactly_once(stub_call):
-    calls = stub_call('{"label": "L", "comment": "C"}')
-    lc.generate_label_and_comment(DEFN, **CALL_KWARGS)
-    assert len(calls) == 1
-
-
-def test_overlong_model_label_is_truncated(stub_call):
+def test_an_overlong_model_label_is_cut(stub_call):
     stub_call('{"label": "%s", "comment": "C"}' % ("word " * 40))
     label, _ = lc.generate_label_and_comment(DEFN, **CALL_KWARGS)
     assert len(label) <= lc.MAX_LABEL_CHARS
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "\n"])
-def test_empty_definition_raises(bad):
+def test_an_empty_definition_is_refused():
     with pytest.raises(ValueError):
-        lc.generate_label_and_comment(bad, **CALL_KWARGS)
+        lc.generate_label_and_comment(" \n", **CALL_KWARGS)
     with pytest.raises(ValueError):
-        lc.fallback_label_and_comment(bad)
+        lc.fallback_label_and_comment(" \n")
 
 
-def test_fallback_is_deterministic():
-    assert lc.fallback_label_and_comment(DEFN) == lc.fallback_label_and_comment(DEFN)
-
-
-def test_fallback_for_short_definition_is_the_definition():
-    label, comment = lc.fallback_label_and_comment(DEFN)
-    assert label == DEFN
-    assert comment == DEFN
-
-
-def test_fallback_for_long_definition_is_bounded_and_clean():
+def test_the_fallback_label_of_a_long_definition_is_bounded_and_clean():
     long = ("a statistical unit which is defined as a grouping of homogeneous "
             "neighboring building blocks in an urban area, measured annually. ") * 3
     label, comment = lc.fallback_label_and_comment(long)
@@ -114,6 +83,5 @@ def test_fallback_for_long_definition_is_bounded_and_clean():
     assert comment == long
 
 
-def test_prompt_inserts_the_definition_in_one_pass():
-    prompt = lc.build_label_comment_prompt("{definition}")
-    assert prompt.count("{definition}") == 1
+def test_the_prompt_inserts_the_definition_in_one_pass():
+    assert lc.build_label_comment_prompt("{definition}").count("{definition}") == 1

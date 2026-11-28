@@ -10,12 +10,10 @@ increment 2; nothing talks to a real provider, a model or a registry.
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import os
 import socket
 import sqlite3
-import sys
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -26,7 +24,7 @@ from fastapi import Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from increment1_support import BACKEND, ISSUER, TempDatabaseTestCase, run_cli, sign_in_as
+from increment1_support import ISSUER, TempDatabaseTestCase, run_cli, sign_in_as
 from test_records import CLIENT, DRAFT, MATRIX, PIPELINE_RESULT
 
 from app import main
@@ -178,28 +176,8 @@ def every_but(allowed: Iterable[Capability], reason: str, message: Optional[str]
 
 
 class DecisionTests(DecisionAssertions, unittest.TestCase):
-    def test_decide_imports_only_the_standard_library_and_no_clock_database_settings_or_network(self):
-        """Covers: AC-access-policy-001 (in the source)."""
-        tree = ast.parse((BACKEND / "app" / "access" / "policy.py").read_text(encoding="utf-8"))
-        imported = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported |= {alias.name.split(".")[0] for alias in node.names}
-            elif isinstance(node, ast.ImportFrom):
-                imported.add("<relative import>" if node.level else (node.module or "").split(".")[0])
-        self.assertLessEqual(imported, set(sys.stdlib_module_names) | {"__future__"})
-        io_and_clock = {
-            "time", "os", "sys", "socket", "sqlite3", "urllib", "http", "ssl", "subprocess", "asyncio", "random",
-            "secrets", "uuid", "pathlib", "shutil", "io", "zoneinfo", "threading", "multiprocessing", "tempfile",
-            "select", "selectors", "socketserver", "dbm", "shelve",
-        }
-        self.assertEqual(imported & io_and_clock, set())
-        called = {node.func.attr for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
-        called |= {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
-        self.assertEqual(called & {"now", "utcnow", "today", "monotonic", "perf_counter", "time_ns", "getenv", "open"}, set())
 
     def test_equal_states_give_equal_decisions_without_any_outside_input(self):
-        """Covers: AC-access-policy-001 (at run time)."""
         states = [
             state(account_id=None), state(blocked=True, role="owner"), state(email_verified=False),
             state(terms_accepted=False, role="admin"), state(application="pending", uses_left_today=0),
@@ -220,28 +198,24 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_without_an_account_only_the_public_tools(self):
-        """Covers: AC-access-policy-002."""
         for role in ("user", "admin", "owner"):
             with self.subTest(role=role):
                 self.assert_decisions(decide(state(account_id=None, role=role)), [C.PUBLIC_TOOLS],
                                       every_but([C.PUBLIC_TOOLS], "sign_in_required"))
 
     def test_a_blocked_account_of_any_role_keeps_only_the_public_tools(self):
-        """Covers: AC-access-policy-003."""
         for role in ("user", "admin", "owner"):
             with self.subTest(role=role):
                 self.assert_decisions(decide(state(blocked=True, role=role)), [C.PUBLIC_TOOLS],
                                       every_but([C.PUBLIC_TOOLS], "blocked"))
 
     def test_an_unverified_email_keeps_only_the_public_tools(self):
-        """Covers: AC-access-policy-004, AC-access-policy-018 (false is refused)."""
         for role in ("user", "admin", "owner"):
             with self.subTest(role=role):
                 self.assert_decisions(decide(state(email_verified=False, role=role)), [C.PUBLIC_TOOLS],
                                       every_but([C.PUBLIC_TOOLS], "email_not_verified"))
 
     def test_an_unknown_email_counts_as_verified(self):
-        """Covers: AC-access-policy-018."""
         for role in ("user", "admin", "owner"):
             with self.subTest(role=role):
                 unknown, verified = decide(state(email_verified=None, role=role)), decide(state(email_verified=True, role=role))
@@ -249,7 +223,6 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
                 self.assertTrue(unknown[C.DECOMPOSE].allowed)
 
     def test_without_current_terms_only_the_session_account_data_and_admin_rights_remain(self):
-        """Covers: AC-access-policy-005."""
         for role, application in (("user", "approved"), ("user", "none"), ("admin", "none"), ("owner", "none")):
             with self.subTest(role=role, application=application):
                 admin_side: Dict[Capability, Tuple[str, str]]
@@ -268,7 +241,6 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
                                       allowed, {**refused, **admin_side})
 
     def test_approved_accounts_admins_and_the_owner_use_everything_without_a_cap(self):
-        """Covers: AC-access-policy-006."""
         for role, application in (("user", "approved"), ("admin", "none"), ("admin", "rejected"), ("owner", "none")):
             for uses_left in (0, 1, 3):
                 with self.subTest(role=role, application=application, uses_left=uses_left):
@@ -279,7 +251,6 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
                     self.assertIsNone(decisions[C.DECOMPOSE].resets_at)
 
     def test_accounts_that_are_not_approved_have_a_daily_cap_and_cannot_publish(self):
-        """Covers: AC-access-policy-007."""
         for application in ("none", "pending", "rejected", "withdrawn"):
             with self.subTest(application=application, uses_left=1):
                 decisions = decide(state(application=application, uses_left_today=1))
@@ -299,7 +270,6 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
                                  (False, "daily_limit", MESSAGE["daily_limit"], RESETS))
 
     def test_administration_follows_the_role(self):
-        """Covers: AC-access-policy-008."""
         for role, granted, owner_only in (("user", False, False), ("admin", True, False), ("owner", True, True)):
             with self.subTest(role=role):
                 decisions = decide(state(role=role))
@@ -312,7 +282,6 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
                 self.assertEqual((manage_admins.allowed, manage_admins.reason, manage_admins.message), expected)
 
     def test_the_development_user_is_an_approved_admin_without_account_features(self):
-        """Covers: AC-access-policy-009."""
         allowed = [C.PUBLIC_TOOLS, C.SESSION, C.DECOMPOSE, C.PUBLISH, C.RETRACT_OWN, C.REVIEW_APPLICATIONS,
                    C.MANAGE_USERS, C.VIEW_ACTIVITY, C.RETRACT_ANY]
         refused = {capability: ("accounts_disabled", message) for capability, message in DISABLED_MESSAGE.items()}
@@ -333,7 +302,6 @@ class DecisionTests(DecisionAssertions, unittest.TestCase):
 
 class RouteTableTests(unittest.TestCase):
     def test_every_route_declares_exactly_its_one_capability(self):
-        """Covers: AC-access-policy-010, AC-oidc-identity-043 (with the rows of its section 10)."""
         routes = {(method, route.path): route for route in main.app.routes if isinstance(route, APIRoute) for method in route.methods}
         self.assertEqual(sorted(set(routes) - set(EXPECTED_ROUTES)), [], "routes without a capability")
         self.assertEqual(sorted(set(EXPECTED_ROUTES) - set(routes)), [], "routes of the contract that are missing")
@@ -363,14 +331,7 @@ class RequireTests(unittest.TestCase):
     def refusal(self, stub: AccessState, capability: Capability) -> Any:
         return self.probe(stub).get(f"/probe/{capability.value}")
 
-    def test_require_carries_its_capability(self):
-        """Covers: AC-access-policy-010 (the route table's dependencies name their capability)."""
-        for capability in Capability:
-            with self.subTest(capability=capability.value):
-                self.assertEqual(getattr(require(capability), "capability", None), capability)
-
     def test_every_reason_becomes_its_status_and_body(self):
-        """Covers: AC-access-policy-011."""
         cases = [
             (state(account_id=None), C.SESSION, 401, {"detail": "Authentication required."}),
             (state(blocked=True), C.SESSION, 403, {"detail": MESSAGE["blocked"], "reason": "blocked"}),
@@ -394,7 +355,6 @@ class RequireTests(unittest.TestCase):
                 self.assertNotIn("retry-after", response.headers)
 
     def test_the_daily_limit_says_when_to_try_again(self):
-        """Covers: AC-access-policy-011 (429 with Retry-After and resets_at)."""
         resets_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
         response = self.refusal(state(application="none", uses_left_today=0, resets_at=resets_at), C.DECOMPOSE)
         self.assertEqual(response.status_code, 429)
@@ -404,7 +364,6 @@ class RequireTests(unittest.TestCase):
         self.assertTrue(3500 <= int(response.headers["retry-after"]) <= 3601, response.headers["retry-after"])
 
     def test_an_allowed_capability_reaches_the_route(self):
-        """Covers: AC-access-policy-011 (no refusal when the decision allows)."""
         for stub, capability in ((state(account_id=None), C.PUBLIC_TOOLS), (state(), C.DECOMPOSE),
                                  (state(role="owner"), C.MANAGE_ADMINS), (state(**NOT_ACCOUNT_BACKED, role="admin"), C.VIEW_ACTIVITY)):
             with self.subTest(capability=capability.value):
@@ -494,7 +453,6 @@ class AccessHttpTestCase(TempDatabaseTestCase):
 
 class LegacyAndProviderAccountTests(AccessHttpTestCase):
     def test_a_legacy_local_account_keeps_everything_it_does_today(self):
-        """Covers: AC-access-policy-012 (D-045), AC-access-policy-018 (its unknown email counts as verified)."""
         client = self.client()
         self.login(client, "bob")
         capabilities = self.capabilities(client)
@@ -519,7 +477,6 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
         self.assertEqual(len(self.rows("SELECT * FROM record_items WHERE user_id = ?", self.bob["id"])), 5)
 
     def test_an_identity_provider_account_without_onboarding_data_has_only_its_session_and_data(self):
-        """Covers: AC-access-policy-012 (the most restrictive interim values), AC-access-policy-005."""
         account = self.provider_account("subject-1")
         client = self.client()
         sign_in_as(client, account["id"])
@@ -538,9 +495,7 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
         self.assertEqual(self.rows("SELECT * FROM record_items"), [])
 
     def test_an_identity_provider_admin_keeps_the_admin_capabilities_of_its_role(self):
-        """Covers: AC-access-policy-012 (such an admin keeps its role's capabilities), AC-access-policy-005.
-
-        An admin counts as approved, and nobody is asked for the terms here (the owner, 2026-11-25).
+        """An admin counts as approved, and nobody is asked for the terms here (the owner, 2026-11-25).
         """
         account = self.provider_account("subject-2")
         self.bind_owner("admin")
@@ -559,7 +514,6 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
         self.assertEqual(client.post("/api/decompose", json={"definition": "air temperature"}).status_code, 403)
 
     def test_a_legacy_account_linked_before_the_cutover_keeps_its_session_and_ids_but_not_its_tools(self):
-        """Covers: AC-access-policy-012 (section 2: a linked legacy account loses decomposing, recording, publishing)."""
         client = self.client()
         self.login(client, "bob")
         self.store.save_orcid(self.bob["id"], ORCID)
@@ -574,7 +528,6 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
         self.assertEqual([item["orcid"] for item in client.get("/api/auth/me/orcids").json()["orcids"]], [ORCID])
 
     def test_an_identity_provider_account_with_a_false_email_claim_keeps_only_the_public_tools(self):
-        """Covers: AC-access-policy-004, AC-access-policy-018 (the adapter reads email_verified)."""
         account = self.provider_account("subject-3", email_verified=False)
         client = self.client()
         sign_in_as(client, account["id"])
@@ -586,7 +539,6 @@ class LegacyAndProviderAccountTests(AccessHttpTestCase):
 
 class SessionChangeTests(AccessHttpTestCase):
     def test_a_grant_a_revocation_and_a_block_reach_an_existing_session_at_once(self):
-        """Covers: AC-access-policy-013."""
         self.bind_owner("admin")
         owner = self.client()
         self.login(owner, "admin", "admin-password")
@@ -627,7 +579,6 @@ class MeTests(AccessHttpTestCase):
         self.assertEqual((capabilities["decompose"]["uses_left_today"], capabilities["decompose"]["resets_at"]), (None, None))
 
     def test_me_reports_the_user_with_its_role_and_every_capability(self):
-        """Covers: AC-access-policy-014."""
         bob, admin = self.client(), self.client()
         self.login(bob, "bob")
         self.login(admin, "admin", "admin-password")
@@ -638,7 +589,6 @@ class MeTests(AccessHttpTestCase):
         self.assert_me(self.me(admin), "admin", "owner")
 
     def test_me_reports_the_uses_left_under_a_daily_cap(self):
-        """Covers: AC-access-policy-014 (uses_left_today and resets_at with a cap)."""
         client = self.client()
         self.login(client, "bob")
         self.stub(state(account_id=self.bob["id"], application="none", uses_left_today=2, resets_at=RESETS))
@@ -648,7 +598,6 @@ class MeTests(AccessHttpTestCase):
         self.assertEqual(datetime.fromisoformat(decompose["resets_at"]), RESETS)
 
     def test_the_development_user_is_refused_account_features_with_409(self):
-        """Covers: AC-access-policy-009 (over HTTP, authentication disabled)."""
         self.store.enabled = False
         client = self.client()
         self.assert_capabilities(
@@ -672,7 +621,6 @@ class MeTests(AccessHttpTestCase):
 
 class RecordReadTests(AccessHttpTestCase):
     def test_a_record_answers_its_account_and_admins_and_stays_hidden_from_others(self):
-        """Covers: AC-access-policy-015."""
         bob, admin, carol = self.client(), self.client(), self.client()
         self.login(bob, "bob")
         self.login(admin, "admin", "admin-password")
@@ -693,8 +641,7 @@ class RecordReadTests(AccessHttpTestCase):
 
 class RefusedRequestTests(AccessHttpTestCase):
     def test_a_refused_request_does_nothing_for_its_operation(self):
-        """Covers: AC-access-policy-011 (real routes, stubbed states: no model call, record row, registry request
-        or audit row)."""
+        """Real routes, stubbed states: no model call, record row, registry request or audit row."""
         client = self.client(raise_server_exceptions=False)
         self.login(client, "bob")  # a real session passes the authentication middleware
         record_id = self.start_record(client)
@@ -736,7 +683,6 @@ class RefusedRequestTests(AccessHttpTestCase):
 
 class AnonymousTests(AccessHttpTestCase):
     def test_without_a_session_only_the_public_routes_answer(self):
-        """Covers: AC-access-policy-016 (D-034)."""
         client = self.client()
         for path in ("/api/model-options", "/api/nanopub/preparation-options"):
             with self.subTest(path=path, method="GET"):

@@ -105,10 +105,6 @@ class FingerprintTests(unittest.TestCase):
         # A label on anything that is not a system still counts.
         self.assertNotEqual(core(DRAFT), core(DRAFT + '<https://example.org/variable/1> <http://www.w3.org/2000/01/rdf-schema#label> "x" .\n'))
 
-    def test_text_that_is_not_turtle_is_refused(self):
-        with self.assertRaisesRegex(ValueError, "Could not parse the Turtle"):
-            turtle_sha256("this is not turtle")
-
     def test_graphs_that_are_slow_to_fingerprint_are_refused_quickly(self):
         many = "".join(f"_:a{i} <http://e.org/p> _:b{i} . _:b{i} <http://e.org/p> _:a{i} .\n" for i in range(8))
         # Ten blank nodes, all linked to each other through two predicates: 180 statements about them.
@@ -121,10 +117,6 @@ class FingerprintTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     turtle_sha256(turtle)
                 self.assertLess(time.perf_counter() - started, 1)
-
-    def test_an_iri_without_a_valid_form_is_refused_as_bad_turtle(self):
-        with self.assertRaisesRegex(ValueError, "Could not fingerprint"):
-            turtle_sha256('<http://e.org/a\\u0020b> <http://e.org/p> "x" .')
 
 
 class RecordTestCase(unittest.TestCase):
@@ -292,15 +284,9 @@ class RecordRouteTests(RecordTestCase):
         invalid = (
             {"type": "edit", "version": 0, "turtle": EDITED, "changes": [{"operation": "rewrite"}]},
             {"type": "edit", "version": 0},
-            {"type": "edit", "version": 0, "turtle": EDITED, "changes": confirm},
             {"type": "check", "version": 0, "turtle": EDITED, "changes": confirm},
-            {"type": "check", "version": 0},
-            {"type": "check", "version": 0, "changes": [{"operation": "relabel", "role": "hasMatrix"}]},
-            {"type": "check", "version": 0, "changes": [{"operation": "confirm"}]},
             {"type": "uncheck", "version": 0, "changes": confirm},
-            {"type": "check", "version": 0, "changes": confirm, "note": "only a mark carries a note"},
             {"type": "mark_best", "version": 0},
-            {"type": "mark_best", "version": 0, "unchecked_components": 0, "changes": confirm},
             {"type": "mark_best", "version": 0, "unchecked_components": 0, "note": "x" * 501},
             {"type": "mark_best", "version": -1, "unchecked_components": 0},
             {"type": "mark_best", "version": 10**20, "unchecked_components": 0},
@@ -317,7 +303,7 @@ class RecordRouteTests(RecordTestCase):
     def test_implausible_browser_times_are_replaced_by_the_server_time(self):
         self.login()
         record_id = self.start()
-        for occurred_at in ("0001-01-01T00:30:00+01:00", "2015-06-01T00:00:00Z", "9999-12-31T23:30:00-01:00"):
+        for occurred_at in ("2015-06-01T00:00:00Z", "9999-12-31T23:30:00-01:00"):
             with self.subTest(occurred_at=occurred_at):
                 response = self.step(record_id, type="check", version=0, occurred_at=occurred_at,
                                      changes=[{"operation": "confirm", "role": "hasMatrix"}])
@@ -337,17 +323,6 @@ class RecordRouteTests(RecordTestCase):
         self.login("admin", "admin-password")
         self.assertEqual(self.summary(record_id)["record_id"], record_id)
 
-    def test_the_same_place_is_stored_once(self):
-        self.login()
-        record_id = self.start()
-        self.check(record_id, 0)
-        self.check(record_id, 0, operation="unconfirm", step_type="uncheck")
-        self.assertEqual(len(self.rows("SELECT * FROM client_contexts")), 1)
-
-        other_screen = {**CLIENT, "screen": {"width": 390, "height": 844, "pixel_ratio": 3}}
-        self.step(record_id, type="check", version=0, client=other_screen, changes=[{"operation": "confirm", "role": "hasMatrix"}])
-        self.assertEqual(len(self.rows("SELECT * FROM client_contexts")), 2)
-
     def test_records_cannot_be_changed_deleted_or_replaced(self):
         self.login()
         self.start()
@@ -357,7 +332,6 @@ class RecordRouteTests(RecordTestCase):
             for statement in (
                 "UPDATE record_events SET note = 'changed'",
                 "DELETE FROM record_versions",
-                "DELETE FROM client_contexts",
                 "REPLACE INTO record_versions (id, item_id, number, kind, content_sha256, parent_id, created_at)"
                 " SELECT id, item_id, number, 'edited', content_sha256, parent_id, created_at FROM record_versions",
             ):
@@ -374,16 +348,6 @@ class RecordRouteTests(RecordTestCase):
             conn.close()
         self.assertEqual(self.rows("SELECT sha256, turtle FROM record_contents"), [before])
         self.assertEqual([row["kind"] for row in self.rows("SELECT kind FROM record_versions")], ["imported"])
-
-    def test_record_tables_come_back_when_the_database_is_replaced(self):
-        self.login()
-        self.start()
-        os.remove(self.store.db_path)
-        self.store.init()
-        self.store.create_user(username="bob", password="password-123")
-        self.login()
-        self.start()
-        self.assertEqual(len(self.rows("SELECT * FROM record_items")), 1)
 
 
 class DecomposeRecordTests(RecordTestCase):

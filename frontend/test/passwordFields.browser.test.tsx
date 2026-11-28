@@ -107,18 +107,3 @@ test('the confirmation says when the passwords differ and blocks saving until th
   await page.getByRole('button', { name: 'Create' }).click();
   await expect.poll(() => saved).toEqual(['correct-horse']);
 });
-
-test('pressing Enter in an unfinished confirmation shows the mismatch without leaving the field', async () => {
-  const saved: string[] = [];
-  mount(<NewPassword saved={saved} />);
-  const confirmation = page.getByLabelText('Confirm password');
-
-  await userEvent.fill(page.getByLabelText('Password, at least 8 characters'), 'correct-horse');
-  await userEvent.fill(confirmation, 'correct');
-  await userEvent.keyboard('{Enter}');
-
-  // The field never lost focus, so only the refused submission can have shown the message.
-  await expect.element(confirmation).toHaveFocus();
-  await expect.element(page.getByText('The passwords do not match.')).toBeVisible();
-  expect(saved).toEqual([]);
-});

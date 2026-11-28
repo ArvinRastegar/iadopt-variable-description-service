@@ -33,7 +33,6 @@ class WaitingTests(OidcTestCase):
         return f"http://127.0.0.1:{server.servers[0].sockets[0].getsockname()[1]}"
 
     def test_while_the_provider_hangs_the_other_routes_answer(self):
-        """Covers: AC-oidc-identity-011."""
         self.replace(provider_module, "REQUEST_SECONDS", 4.0)
         self.provider.answer("metadata", body=self.provider.metadata(), wait=6.0)
         cookie = {PASSWORD_COOKIE: self.password_browser().cookies[PASSWORD_COOKIE]}
@@ -68,7 +67,6 @@ class WaitingTests(OidcTestCase):
         self.assertTrue(answer.headers["location"].startswith(self.provider.issuer))
 
     def test_access_log_lines_of_the_trip_hold_no_query(self):
-        """Covers: AC-oidc-identity-046."""
         lines: List[str] = []
 
         class Keep(logging.Handler):

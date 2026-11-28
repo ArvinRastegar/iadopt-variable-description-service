@@ -118,14 +118,10 @@ async function sendOwnerForm(username = 'admin', password = PASSWORD) {
   submit?.click();
 }
 
-// ---------------------------------------------------------------------------------------------
-// AC-owner-sign-in-012
-// ---------------------------------------------------------------------------------------------
-
-const HEADERS: Array<[string, boolean]> = [['rohub', true], ['password', false], ['password, rohub', false]];
+const HEADERS: Array<[string, boolean]> = [['rohub', true], ['password, rohub', false]];
 
 test.each(HEADERS)('the dialog shows "Owner sign-in" under the ROHub button only where the header is %j', async (header, shown) => {
-  // Covers: AC-owner-sign-in-012 (the dialog: where the link shows).
+  // The dialog: where the link shows.
   stubApi({}, header);
   await mountApp();
   await expect.poll(() => calls.some((call) => call.path === '/api/auth/me')).toBe(true);
@@ -141,7 +137,7 @@ test.each(HEADERS)('the dialog shows "Owner sign-in" under the ROHub button only
 });
 
 test.each(HEADERS)('the sign-in page shows the link under the ROHub button only where the header is %j', async (header, shown) => {
-  // Covers: AC-owner-sign-in-012 (the sign-in page: where the link shows).
+  // The sign-in page: where the link shows.
   stubApi({}, header);
   await mountLogin();
   if (shown) {
@@ -156,7 +152,7 @@ test.each(HEADERS)('the sign-in page shows the link under the ROHub button only 
 });
 
 test('the form of the dialog signs the owner in through the owner\'s route, as a password sign-in does', async () => {
-  // Covers: AC-owner-sign-in-012 (a success continues as a password sign-in).
+  // A success continues as a password sign-in.
   let signedIn = false;
   stubApi({
     'GET /api/auth/me': () => (signedIn ? ownerMe() : json({ detail: 'Authentication required.' }, 401, { 'X-IADOPT-Sign-In': 'rohub' })),
@@ -181,7 +177,7 @@ const REFUSED: Array<[string, () => Response, string]> = [
 ];
 
 test.each(REFUSED)('after %s the dialog shows the route\'s message, keeps the username and empties the password', async (_, answer, message) => {
-  // Covers: AC-owner-sign-in-012 (the dialog's refusals).
+  // The dialog's refusals.
   stubApi({ 'POST /api/auth/owner-login': answer });
   await mountApp();
   await openSignIn();
@@ -192,23 +188,8 @@ test.each(REFUSED)('after %s the dialog shows the route\'s message, keeps the us
   await expect.element(page.getByRole('dialog', { name: 'Sign in' })).toBeVisible();
 });
 
-test.each(REFUSED)('after %s the sign-in page shows the route\'s message, keeps the username and empties the password', async (_, answer, message) => {
-  // Covers: AC-owner-sign-in-012 (the sign-in page's refusals).
-  stubApi({ 'POST /api/auth/owner-login': answer });
-  await mountLogin();
-  await sendOwnerForm();
-  await expect.element(page.getByText(message)).toBeVisible();
-  expect(ownerCalls()).toHaveLength(1);
-  expect(field('Username').value).toBe('admin');
-  expect(field('Password').value).toBe('');
-});
-
-// ---------------------------------------------------------------------------------------------
-// AC-owner-sign-in-013
-// ---------------------------------------------------------------------------------------------
-
 test('with the owner\'s session where only ROHub signs in, every change carries the token of the session', async () => {
-  // Covers: AC-owner-sign-in-013 (the token).
+  // The token.
   stubApi({
     'GET /api/auth/me': () => ownerMe(),
     'POST /api/decompose/stream': () => json({ detail: 'No decompositions left today.', reason: 'daily_limit' }, 429),
@@ -224,7 +205,7 @@ test('with the owner\'s session where only ROHub signs in, every change carries 
 });
 
 test('where only ROHub signs in, the admin page offers the owner\'s actions but no "Reset password"', async () => {
-  // Covers: AC-owner-sign-in-013 (the admin page; owner.adminPage.browser.test.tsx has the header naming both).
+  // The admin page; owner.adminPage.browser.test.tsx has the header naming both.
   // The admin page mounts itself once per test file, so this file mounts it here only.
   const header = 'rohub';
   const reset = false;

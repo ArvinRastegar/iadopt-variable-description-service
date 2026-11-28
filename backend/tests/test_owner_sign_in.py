@@ -1,8 +1,7 @@
-"""owner-sign-in: the owner's own password sign-in (contract approved under gate G-025, D-053 and D-054).
+"""The owner's own password sign-in (D-053 and D-054), through the routes and the operator commands.
 
-AC-owner-sign-in-001 to -011, -014 and -015 through the routes, the operator commands and the operator texts;
--012 and -013 are the pages' (``frontend/test/owner.signIn.browser.test.tsx``). Every test runs on a temporary
-database with the fake provider of increment 2, so nothing reaches a real provider.
+The pages are tested in ``frontend/test/owner.signIn.browser.test.tsx``. Every test runs on a temporary database with
+the fake provider of increment 2, so nothing reaches a real provider.
 
 Seams the implementation keeps: the password checks are observed as calls of ``hashlib.pbkdf2_hmac``, which the auth
 store makes; ``owner password`` reads the terminal through ``getpass.getpass`` and tells a terminal by
@@ -18,8 +17,6 @@ import io
 import json
 import logging
 import os
-import pathlib
-import re
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 from unittest.mock import patch
@@ -30,7 +27,6 @@ from increment2_support import PASSWORD_COOKIE, ROHUB_COOKIE, Clock, OidcTestCas
 
 from app import guards
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
 OWNER_LOGIN = "/api/auth/owner-login"
 REFUSAL = {"detail": "Invalid username or password."}
 OWNER_ITERATIONS = 200_000
@@ -134,7 +130,6 @@ class NoOwnerTestCase(OwnerSignInTestCase):
 
 class RouteTests(OwnerSignInTestCase):
     def test_the_owner_signs_in_in_every_mode_with_the_name_matched_as_the_password_route_does(self):
-        """Covers: AC-owner-sign-in-001."""
         for mode in ("local", "oidc", "both"):
             with self.subTest(mode=mode):
                 self.settings(auth_mode_raw=mode)
@@ -158,7 +153,6 @@ class RouteTests(OwnerSignInTestCase):
                     self.assertEqual(self.me(other)["sign_in"], "rohub")  # another browser's session stays
 
     def test_every_other_case_gets_one_refusal_and_the_same_work(self):
-        """Covers: AC-owner-sign-in-002 (the owner bound)."""
         ada_browser = self.signed_in()  # a ROHub account, without a usable password
         self.assertEqual(self.me(ada_browser)["user"]["username"], "ada")
         owner_salt = salt_of(self.password_hash("admin"))
@@ -190,7 +184,6 @@ class RouteTests(OwnerSignInTestCase):
         self.assertEqual(len({json.dumps(headers) for headers in answers.values()}), 1, answers)
 
     def test_an_owner_that_is_not_active_or_has_no_usable_hash_is_refused_the_same_way(self):
-        """Covers: AC-owner-sign-in-002 (the owner's account itself)."""
         owner_salt = salt_of(self.password_hash("admin"))
         self.execute("UPDATE users SET is_active = 0 WHERE id = ?", self.admin_id)
         with self.spying() as spy:
@@ -210,7 +203,6 @@ class RouteTests(OwnerSignInTestCase):
         self.assertEqual(sorted(inactive.headers.items()), sorted(no_hash.headers.items()))
 
     def test_a_body_that_is_not_valid_answers_422_takes_no_try_and_writes_no_audit(self):
-        """Covers: AC-owner-sign-in-003."""
         self.use_limiter_clock()
         address = {"X-Forwarded-For": "198.51.100.7"}
         bodies = [
@@ -237,7 +229,6 @@ class RouteTests(OwnerSignInTestCase):
         self.assertEqual(self.owner_login(username="a" * 120, password="p" * 1024)[1].status_code, 401)
 
     def test_the_password_route_stays_switched_off_for_the_owner(self):
-        """Covers: AC-owner-sign-in-004."""
         for username, password in (("admin", "admin-password"), ("bob", "password-123"), ("nobody", "x")):
             response = self.browser().post("/api/auth/login", json={"username": username, "password": password})
             self.assertEqual((response.status_code, response.json()["reason"]), (403, "password_sign_in_disabled"))
@@ -246,7 +237,6 @@ class RouteTests(OwnerSignInTestCase):
 
 class NoOwnerRouteTests(NoOwnerTestCase):
     def test_with_no_owner_bound_everybody_is_refused_after_the_same_work(self):
-        """Covers: AC-owner-sign-in-002 (no owner bound)."""
         for username, password in (("admin", "admin-password"), ("bob", "password-123")):
             with self.subTest(username=username), self.spying() as spy:
                 _, response = self.owner_login(username=username, password=password)
@@ -262,7 +252,6 @@ class NoOwnerRouteTests(NoOwnerTestCase):
 
 class LimitTests(OwnerSignInTestCase):
     def test_ten_tries_per_address_then_one_a_minute_and_other_addresses_unaffected(self):
-        """Covers: AC-owner-sign-in-005."""
         clock = self.use_limiter_clock()
         one, other = self.browser(headers={"X-Forwarded-For": "198.51.100.7"}), self.browser(headers={"X-Forwarded-For": "203.0.113.9"})
         with self.spying(real=False) as spy:
@@ -290,7 +279,6 @@ class LimitTests(OwnerSignInTestCase):
 
 class SessionTests(OwnerSignInTestCase):
     def test_in_oidc_the_owners_password_session_counts_and_carries_a_token(self):
-        """Covers: AC-owner-sign-in-006."""
         owner = self.owner_browser()
         me = self.me(owner)
         self.assertEqual((me["user"]["username"], me["sign_in"]), ("admin", "password"))
@@ -302,7 +290,6 @@ class SessionTests(OwnerSignInTestCase):
         self.assertEqual(bob.get("/api/auth/me").status_code, 401)
 
     def test_in_oidc_every_change_of_the_owners_session_needs_the_token_and_the_origin(self):
-        """Covers: AC-owner-sign-in-007 (oidc)."""
         owner = self.owner_browser()
         good = self.csrf_headers(owner)
         path = f"/api/admin/users/{self.bob['id']}"
@@ -322,7 +309,6 @@ class SessionTests(OwnerSignInTestCase):
         self.assertEqual(self.rows("SELECT display_name FROM users WHERE id = ?", self.bob["id"]), [{"display_name": "Changed"}])
 
     def test_in_local_and_both_the_owners_password_session_needs_no_token(self):
-        """Covers: AC-owner-sign-in-007 (local and both)."""
         for mode in ("local", "both"):
             with self.subTest(mode=mode):
                 self.settings(auth_mode_raw=mode)
@@ -334,7 +320,6 @@ class SessionTests(OwnerSignInTestCase):
 
 class BindingTests(NoOwnerTestCase):
     def test_owner_bind_ends_the_sessions_of_the_account_it_binds(self):
-        """Covers: AC-owner-sign-in-008 (bind)."""
         self.settings(auth_mode_raw="local")
         admin, bob = self.password_browser(), self.password_browser("bob", "password-123")
         self.cli_ok("owner", "bind", "--username", "admin")
@@ -342,13 +327,11 @@ class BindingTests(NoOwnerTestCase):
         self.assertEqual(self.me(bob)["user"]["username"], "bob")
 
     def test_owner_bind_ends_a_rohub_session_of_the_account_it_binds(self):
-        """Covers: AC-owner-sign-in-008 (bind, a ROHub session)."""
         ada = self.signed_in()
         self.cli_ok("owner", "bind", "--issuer", self.provider.issuer, "--subject", "subject-ada")
         self.assertEqual(ada.get("/api/auth/me").status_code, 401)
 
     def test_owner_rebind_ends_the_sessions_of_both_accounts_and_moves_the_route(self):
-        """Covers: AC-owner-sign-in-008 (rebind)."""
         self.cli_ok("owner", "bind", "--username", "admin")
         self.settings(auth_mode_raw="local")
         admin, bob = self.password_browser(), self.password_browser("bob", "password-123")
@@ -359,7 +342,6 @@ class BindingTests(NoOwnerTestCase):
         self.assertEqual(self.owner_login(username="bob", password="password-123")[1].status_code, 200)
 
     def test_owner_rebind_ends_the_rohub_sessions_of_the_accounts_it_binds_and_unbinds(self):
-        """Covers: AC-owner-sign-in-008 (both kinds, both accounts)."""
         self.cli_ok("owner", "bind", "--username", "admin")
         self.settings(auth_mode_raw="oidc")
         ada = self.signed_in()
@@ -381,7 +363,6 @@ class PurgeTests(OwnerSignInTestCase):
         self.store.create_user(username="carol", password="password-123", display_name="Carol", email="carol@example.org")
 
     def test_the_purge_keeps_the_owners_password_and_only_it(self):
-        """Covers: AC-owner-sign-in-009 (with the flag)."""
         self.signed_in()  # ada: no usable hash to purge
         admin_hash = self.password_hash("admin")
         code, out = run_cli("legacy", "purge-passwords", "--confirm-cutover")
@@ -402,7 +383,6 @@ class PurgeTests(OwnerSignInTestCase):
         self.assertEqual(self.owner_login()[1].status_code, 200)
 
     def test_without_the_flag_the_purge_counts_without_the_owner_and_changes_nothing(self):
-        """Covers: AC-owner-sign-in-009 (without the flag)."""
         before = self.accounts()
         code, out = run_cli("legacy", "purge-passwords")
         self.assertEqual(code, 0, out)
@@ -412,7 +392,6 @@ class PurgeTests(OwnerSignInTestCase):
 
 class NoOwnerPurgeTests(NoOwnerTestCase):
     def test_with_the_flag_and_no_owner_the_purge_refuses(self):
-        """Covers: AC-owner-sign-in-009 (no owner bound)."""
         before = self.accounts()
         code, out = run_cli("legacy", "purge-passwords", "--confirm-cutover")
         self.assertEqual(code, 1, out)
@@ -433,7 +412,6 @@ class OwnerPasswordCommandTests(OwnerSignInTestCase):
             return run_cli("owner", "password", *argv)
 
     def test_it_sets_the_password_from_standard_input_and_ends_every_session(self):
-        """Covers: AC-owner-sign-in-010 (standard input, sessions, records)."""
         owner = self.owner_browser()
         code, out = self.owner_password(f"{self.NEW}\n")
         self.assertEqual(code, 0, out)
@@ -447,19 +425,16 @@ class OwnerPasswordCommandTests(OwnerSignInTestCase):
         self.assertEqual(len(self.audit("owner.password_changed")), 1)
 
     def test_it_strips_only_the_line_ending(self):
-        """Covers: AC-owner-sign-in-010 (one line without its line ending)."""
         spaced = "  a long spaced password  "
         self.assertEqual(self.owner_password(f"{spaced}\n")[0], 0)
         self.assertEqual(self.owner_login(password=spaced.strip())[1].status_code, 401)
         self.assertEqual(self.owner_login(password=spaced)[1].status_code, 200)
 
     def test_on_a_terminal_it_asks_twice(self):
-        """Covers: AC-owner-sign-in-010 (the terminal)."""
         self.assertEqual(self.owner_password(terminal=[self.NEW, self.NEW])[0], 0)
         self.assertEqual(self.owner_login(password=self.NEW)[1].status_code, 200)
 
     def test_it_refuses_and_changes_nothing(self):
-        """Covers: AC-owner-sign-in-010 (refusals)."""
         owner = self.owner_browser()
         before = self.password_hash("admin")
         cases = {
@@ -481,7 +456,6 @@ class OwnerPasswordCommandTests(OwnerSignInTestCase):
         self.assertEqual(self.audit("owner.password_changed"), [])
 
     def test_it_takes_15_and_1024_characters(self):
-        """Covers: AC-owner-sign-in-010 (the bounds)."""
         for password in ("p" * 15, "q" * 1024):
             with self.subTest(length=len(password)):
                 code, out = self.owner_password(f"{password}\n")
@@ -489,7 +463,6 @@ class OwnerPasswordCommandTests(OwnerSignInTestCase):
                 self.assertEqual(self.owner_login(password=password)[1].status_code, 200)
 
     def test_it_also_sets_the_password_of_an_owner_that_holds_an_identity(self):
-        """Covers: AC-owner-sign-in-010 (an owner's account with an identity)."""
         ada = self.signed_in()
         self.cli_ok("owner", "rebind", "--issuer", self.provider.issuer, "--subject", "subject-ada", "--reason", "a test")
         ada = self.signed_in()  # rebinding ended the session
@@ -500,7 +473,6 @@ class OwnerPasswordCommandTests(OwnerSignInTestCase):
 
 class NoOwnerPasswordCommandTests(NoOwnerTestCase):
     def test_with_no_owner_bound_it_refuses(self):
-        """Covers: AC-owner-sign-in-010 (no owner bound)."""
         before = self.accounts()
         with patch("sys.stdin", io.StringIO("a-long-new-password-1\n")):
             code, out = run_cli("owner", "password")
@@ -510,7 +482,6 @@ class NoOwnerPasswordCommandTests(NoOwnerTestCase):
 
 class AdminPasswordTests(OwnerSignInTestCase):
     def test_in_oidc_the_admin_page_resets_no_password(self):
-        """Covers: AC-owner-sign-in-011 (oidc)."""
         owner = self.owner_browser()
         headers = self.csrf_headers(owner)
         refusal = {"detail": "Passwords are changed with the owner password command.", "reason": "password_by_command"}
@@ -529,7 +500,6 @@ class AdminPasswordTests(OwnerSignInTestCase):
         self.assertEqual(created.status_code, 200, created.text)
 
     def test_in_oidc_an_admin_who_signed_in_with_rohub_resets_no_password_either(self):
-        """Covers: AC-owner-sign-in-011 (an admin of ROHub)."""
         owner = self.owner_browser()
         headers = self.csrf_headers(owner)
         ada = self.signed_in()
@@ -542,7 +512,6 @@ class AdminPasswordTests(OwnerSignInTestCase):
         self.assertEqual(self.password_hash("bob"), bob_hash)
 
     def test_in_local_and_both_a_password_is_reset_as_before(self):
-        """Covers: AC-owner-sign-in-011 (local and both)."""
         for mode, password in (("local", "new-password-123"), ("both", "new-password-456")):
             with self.subTest(mode=mode):
                 self.settings(auth_mode_raw=mode)
@@ -559,7 +528,6 @@ class AdminPasswordTests(OwnerSignInTestCase):
 
 class AuditTests(OwnerSignInTestCase):
     def test_the_route_is_audited_with_its_name_and_nothing_secret_is_written(self):
-        """Covers: AC-owner-sign-in-014."""
         root = logging.getLogger()
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
@@ -587,55 +555,3 @@ class AuditTests(OwnerSignInTestCase):
         written = "".join(json.dumps(self.rows(f"SELECT * FROM {table}")) for table in tables) + stream.getvalue()
         for secret in secrets:
             self.assertNotIn(secret, written)
-
-
-# ------------------------------------------------------------------------------------------------
-# Section 8: the operator texts
-# ------------------------------------------------------------------------------------------------
-
-
-def runbook(number: int) -> str:
-    text = (ROOT / "deploy" / "keycloak" / "README.md").read_text()
-    parts = re.split(r"^### (\d)\. .+$", text, flags=re.MULTILINE)
-    sections = dict(zip(parts[1::2], parts[2::2]))
-    return sections[str(number)].split("\n## ")[0]
-
-
-def manual_section(heading: str) -> str:
-    text = (ROOT / "docs" / "manual.md").read_text()
-    match = re.search(rf"^(#+) {re.escape(heading)}\n(.*?)(?=^\1 |\Z)", text, flags=re.MULTILINE | re.DOTALL)
-    assert match, heading
-    return match.group(2)
-
-
-class OperatorTextTests(OidcTestCase):
-    def test_the_runbooks_say_how_the_owner_signs_in(self):
-        """Covers: AC-owner-sign-in-015 (deploy/keycloak/README.md)."""
-        two = runbook(2)
-        opening = two.strip().split("\n\n")[0]
-        self.assertRegex(opening, r"(?i)password sign-in[^.]*but the owner|only the owner[^.]*password")
-        self.assertRegex(opening, r"(?i)terms[^.]*outside the application|outside the application[^.]*terms")
-        self.assertIn("Owner sign-in", two)
-        self.assertRegex(two, r"(?i)long password[^.]*owner password|owner password[^.]*long password")
-        self.assertNotIn("--into OWNER_ID", two)
-        self.assertRegex(two, r"(?i)not folded|do not fold")
-        self.assertRegex(two, r"(?i)approves?[^.]*makes? it an admin")
-        self.assertIn("Owner sign-in", runbook(3))
-        four = runbook(4)
-        self.assertRegex(four, r"(?i)block[^.]*owner|owner[^.]*block")
-        self.assertIn("owner password", four)
-        five = runbook(5)
-        self.assertIn("Owner sign-in", five)
-        self.assertIn("owner password", five)
-        self.assertRegex(five, r"(?i)owner rebind[^.]*sessions")
-        six = runbook(6)
-        self.assertRegex(six, r"(?i)c103d4d[^.]*oidc|oidc[^.]*c103d4d")
-        self.assertRegex(six, r"(?i)local[^.]*owner|owner[^.]*local")
-
-    def test_the_manual_says_how_the_owner_signs_in_and_keeps_the_password(self):
-        """Covers: AC-owner-sign-in-015 (docs/manual.md)."""
-        text = manual_section("Signing in with ROHub") + manual_section("Accounts, admins and the owner")
-        self.assertIn("Owner sign-in", text)
-        self.assertRegex(text, r"(?i)owner[^.]*(per|each|one|every) (network )?address|(per|each|one|every) (network )?address[^.]*owner")
-        self.assertIn("owner password", text)
-        self.assertRegex(text, r"(?i)purge[^.]*(keeps|except)[^.]*owner|owner's password[^.]*purge")

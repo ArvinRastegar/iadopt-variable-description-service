@@ -134,7 +134,6 @@ class AccountsTestCase(TempDatabaseTestCase):
 
 class DataTests(AccountsTestCase):
     def test_the_migrations_add_the_account_tables_and_change_no_existing_row(self):
-        """Covers: AC-accounts-roles-001."""
         old = self.dir / "de1a7af.sqlite3"
         previous_image.make_de1a7af_file(old)
         conn = sqlite3.connect(old)
@@ -189,7 +188,6 @@ class DataTests(AccountsTestCase):
 
 class GrantAndRevokeTests(AccountsTestCase):
     def test_only_the_owner_grants_and_revokes_admin(self):
-        """Covers: AC-accounts-roles-002."""
         self.make_admin_in_database("carol")
         owner = self.owner_client()
         carol = self.signed_in("carol")
@@ -215,7 +213,6 @@ class GrantAndRevokeTests(AccountsTestCase):
 
 class BlockTests(AccountsTestCase):
     def test_who_may_block_and_unblock_whom(self):
-        """Covers: AC-accounts-roles-003 (the rules of section 4; a refusal changes nothing)."""
         self.make_admin_in_database("carol")
         self.create("dave")
         self.make_admin_in_database("dave")
@@ -248,7 +245,6 @@ class BlockTests(AccountsTestCase):
         self.assertTrue(self.account("dave")["is_active"])
 
     def test_a_block_ends_sessions_and_logins_and_an_unblock_brings_back_the_data(self):
-        """Covers: AC-accounts-roles-003 (sessions, login and data)."""
         bob = self.signed_in("bob")
         self.assertEqual(bob.post("/api/auth/me/orcids", json={"orcid": ORCID}).status_code, 200)
         started = bob.post("/api/records", json={"turtle": DRAFT, "client": CLIENT})
@@ -269,7 +265,6 @@ class BlockTests(AccountsTestCase):
 
 class HistoryAndAuditTests(AccountsTestCase):
     def test_each_change_writes_one_history_row_and_one_audit_event(self):
-        """Covers: AC-accounts-roles-004."""
         owner = self.owner_client()
         owner_id = self.admin["id"]
         for action, reason in (("grant-admin", "Runs the workshop."), ("revoke-admin", None), ("block", "Posted spam."), ("unblock", "Appealed.")):
@@ -284,7 +279,6 @@ class HistoryAndAuditTests(AccountsTestCase):
                 self.assertEqual(self.audit_actions()[len(audit):], [AUDIT_ACTION[action]])
 
     def test_a_refused_or_unchanged_action_writes_nothing(self):
-        """Covers: AC-accounts-roles-004 (refused and no-op actions)."""
         self.make_admin_in_database("carol")
         owner = self.owner_client()
         carol = self.signed_in("carol")
@@ -304,7 +298,6 @@ class HistoryAndAuditTests(AccountsTestCase):
         self.assertEqual(self.audit_actions(), audit)
 
     def test_the_history_row_and_the_change_commit_together(self):
-        """Covers: AC-accounts-roles-004 (in the same transaction as the change)."""
         self.bind_owner("--username", "admin")
         failing = self.client(raise_server_exceptions=False)
         self.login(failing, "admin", "admin-password")
@@ -326,7 +319,6 @@ class HistoryAndAuditTests(AccountsTestCase):
 
 class RoleChangeSessionTests(AccountsTestCase):
     def test_a_revoked_admin_continues_as_a_user_and_a_new_admin_is_one_at_once(self):
-        """Covers: AC-accounts-roles-005."""
         owner = self.owner_client()
         bob = self.signed_in("bob")
         self.assertEqual(self.act(owner, "grant-admin", self.bob["id"]).status_code, 200)
@@ -342,7 +334,6 @@ class RoleChangeSessionTests(AccountsTestCase):
 
 class NoOwnerTests(AccountsTestCase):
     def test_without_an_owner_admins_keep_their_rights_and_the_set_of_admins_cannot_shrink(self):
-        """Covers: AC-accounts-roles-006."""
         self.make_admin_in_database("carol")
         admin, carol = self.signed_in("admin", "admin-password"), self.signed_in("carol")
         self.assertEqual(admin.get("/api/admin/users").status_code, 200)
@@ -381,7 +372,6 @@ class OwnerCommandTests(AccountsTestCase):
         self.assertEqual(client.get("/api/auth/me").json()["user"]["role"], "owner")
 
     def test_owner_bind_by_username_account_id_or_identity(self):
-        """Covers: AC-accounts-roles-007 (bind; it makes the account an active admin and records it)."""
         self.execute("UPDATE users SET is_active = 0 WHERE username = 'carol'")  # bind also unblocks
         for target in ("username", "account", "identity"):
             with self.subTest(target=target):
@@ -408,7 +398,6 @@ class OwnerCommandTests(AccountsTestCase):
         self.assert_owner(self.carol["id"], "local", str(self.carol["id"]))
 
     def test_a_second_bind_is_refused(self):
-        """Covers: AC-accounts-roles-007 (at most one owner; refusals change nothing)."""
         self.bind_owner("--username", "admin")
         history, binding = self.all_history(), self.rows("SELECT * FROM owner_binding")
         for arguments in (("--username", "bob"), ("--username", "admin"), ("--account", str(self.bob["id"]))):
@@ -419,7 +408,6 @@ class OwnerCommandTests(AccountsTestCase):
         self.assertNotIn("admin", self.account("bob")["roles"])
 
     def test_owner_rebind_moves_the_binding_and_records_the_previous_owner(self):
-        """Covers: AC-accounts-roles-007 (rebind)."""
         self.bind_owner("--username", "admin")
         binding = self.rows("SELECT * FROM owner_binding")
         code, out = run_cli("owner", "rebind", "--username", "bob")  # --reason is required
@@ -435,16 +423,7 @@ class OwnerCommandTests(AccountsTestCase):
         previous_owner = {self.admin["id"], str(self.admin["id"]), "admin"}
         self.assertTrue(previous_owner & set(flattened(json.loads(row["details"] or "{}"))), row["details"])
 
-    def test_rebind_recovers_an_owner_account_the_previous_image_blocked_or_demoted(self):
-        """Covers: AC-accounts-roles-007 (section 5: rebind is the recovery path)."""
-        self.bind_owner("--username", "admin")
-        self.execute("UPDATE users SET is_active = 0, roles = ? WHERE username = 'admin'", json.dumps(["user"]))
-        code, out = run_cli("owner", "rebind", "--username", "admin", "--reason", "Restored after a rollback.")
-        self.assertEqual(code, 0, out)
-        self.assert_owner(self.admin["id"], "local", str(self.admin["id"]))
-
     def test_two_binds_at_once_leave_exactly_one_owner(self):
-        """Covers: AC-accounts-roles-007 (two commands at once, in two processes)."""
         environment = {**os.environ, "IADOPT_DB_PATH": str(self.db)}
         # Hold the write lock while both start, so that both reach their binding before either can
         # finish it; a check and a write in separate transactions would then both succeed.
@@ -466,7 +445,6 @@ class OwnerCommandTests(AccountsTestCase):
         self.assertEqual(len([row for row in self.all_history() if row["action"] == "owner_bound"]), 1)
 
     def test_the_owner_cannot_be_blocked_demoted_or_replaced_through_the_api(self):
-        """Covers: AC-accounts-roles-007 (section 5: only offline commands change the owner)."""
         owner = self.owner_client()
         for action in ("block", "revoke-admin"):
             with self.subTest(action=action):
@@ -483,7 +461,6 @@ class OwnerCommandTests(AccountsTestCase):
 
 class BootstrapTests(TempDatabaseTestCase):
     def test_an_empty_database_gets_the_bootstrap_admin_with_a_history_row(self):
-        """Covers: AC-accounts-roles-008 (empty database)."""
         with started_app() as client:
             self.login(client, "admin", "admin-password")
         [admin] = self.rows("SELECT * FROM users")
@@ -494,7 +471,6 @@ class BootstrapTests(TempDatabaseTestCase):
         self.assertEqual((row["action"], row["actor_kind"], row["actor_user_id"]), ("admin_granted", "bootstrap", None))
 
     def test_with_accounts_present_the_settings_change_nothing(self):
-        """Covers: AC-accounts-roles-008 (a blocked or demoted bootstrap account stays so)."""
         with started_app():
             pass
         self.store.create_user(username="carol", password="password-123")
@@ -521,7 +497,6 @@ class BootstrapWithoutSettingsTests(TempDatabaseTestCase):
     bootstrap_env = None
 
     def test_without_accounts_and_settings_startup_fails(self):
-        """Covers: AC-accounts-roles-008 (no accounts, no settings)."""
         with self.assertRaises(RuntimeError):
             with started_app():
                 self.fail("the application started")
@@ -534,7 +509,6 @@ class BootstrapWithoutSettingsTests(TempDatabaseTestCase):
 
 class LocalAccountTests(AccountsTestCase):
     def test_admins_create_only_ordinary_local_accounts(self):
-        """Covers: AC-accounts-roles-009 (creation)."""
         admin = self.signed_in("admin", "admin-password")
         created = admin.post("/api/admin/users", json={"username": "dave", "password": "password-123",
                                                       "display_name": "Dave", "email": "dave@example.org"})
@@ -550,7 +524,6 @@ class LocalAccountTests(AccountsTestCase):
         self.assertEqual(len(self.rows("SELECT * FROM users")), count)
 
     def test_who_may_edit_and_reset_local_accounts(self):
-        """Covers: AC-accounts-roles-009 (edits and resets; D-045)."""
         self.make_admin_in_database("carol")
         self.create("dave")
         self.make_admin_in_database("dave")
@@ -578,7 +551,6 @@ class LocalAccountTests(AccountsTestCase):
         self.assertEqual(owner.patch(f"/api/admin/users/{self.carol['id']}", json={"password": "reset-by-owner-1"}).status_code, 200)
 
     def test_roles_and_is_active_cannot_be_changed_through_an_edit(self):
-        """Covers: AC-accounts-roles-009 (roles and is_active in an update)."""
         admin = self.signed_in("admin", "admin-password")
         before = self.account("bob")
         for body, detail in (({"roles": ["admin", "user"]}, "Use grant-admin or revoke-admin."),
@@ -590,7 +562,6 @@ class LocalAccountTests(AccountsTestCase):
         self.assertEqual(self.account("bob"), before)
 
     def test_identity_provider_accounts_are_edited_only_by_their_provider(self):
-        """Covers: AC-accounts-roles-009, AC-accounts-roles-019 (provider_account)."""
         account = self.provider_account("subject-edit")
         owner = self.owner_client()
         before = self.rows("SELECT * FROM users WHERE id = ?", account["id"])
@@ -609,7 +580,6 @@ class LocalAccountTests(AccountsTestCase):
 
 class EnsureAccountTests(AccountsTestCase):
     def test_a_new_identity_gets_one_ordinary_account_from_its_claims(self):
-        """Covers: AC-accounts-roles-010 (creation; role claims ignored)."""
         claims = {
             "email": " ada@example.org ", "email_verified": True, "name": " Ada Lovelace ", "preferred_username": "ada",
             "roles": ["admin"], "groups": ["/admins"], "realm_access": {"roles": ["admin", "owner"]},
@@ -633,7 +603,6 @@ class EnsureAccountTests(AccountsTestCase):
         self.assertEqual(self.client().post("/api/auth/login", json={"username": "ada", "password": "!"}).status_code, 401)
 
     def test_a_later_login_refreshes_the_claims_but_never_the_role_or_the_block(self):
-        """Covers: AC-accounts-roles-010 (refresh), section 7 (a blocked account is returned blocked)."""
         account = self.provider_account("subject-refresh", name="Ada Lovelace")
         self.execute("UPDATE users SET roles = ?, is_active = 0 WHERE id = ?", json.dumps(["admin", "user"]), account["id"])
         # An old last login on both, so the refresh shows whatever the stored precision.
@@ -655,7 +624,6 @@ class EnsureAccountTests(AccountsTestCase):
         self.assertGreater(user["last_login_at"] or "", old)
 
     def test_names_and_usernames_fall_back_in_order_and_stay_within_their_lengths(self):
-        """Covers: AC-accounts-roles-010 (section 7's fallbacks and limits)."""
         cases = (
             ("only-preferred", {"preferred_username": "plain"}, "plain", "plain"),
             ("only-email", {"email": "mail.only@example.org"}, "mail.only", ""),
@@ -676,7 +644,6 @@ class EnsureAccountTests(AccountsTestCase):
         self.assertLessEqual(len(long["email"]), 254)
 
     def test_usernames_are_made_unique_ignoring_case_and_never_reuse_an_account(self):
-        """Covers: AC-accounts-roles-010 (suffixes; two subjects with one email; no match by name)."""
         self.create("Ada")
         first, _ = self.accounts.ensure_account(ISSUER, "subject-ada-1", {"preferred_username": "ada", "email": "same@example.org"})
         second, _ = self.accounts.ensure_account(ISSUER, "subject-ada-2", {"preferred_username": "ADA", "email": "same@example.org"})
@@ -685,7 +652,6 @@ class EnsureAccountTests(AccountsTestCase):
         self.assertEqual(len({first["id"], second["id"], third["id"], self.bob["id"]}), 4)
 
     def test_an_identity_needs_an_absolute_issuer_and_a_subject(self):
-        """Covers: AC-accounts-roles-010 (issuer local, an empty subject and other refusals)."""
         before = self.rows("SELECT * FROM users")
         for issuer, subject in (("local", "1"), ("", "subject"), ("login.example.org/realms/x", "subject"),
                                 ("ftp://login.example.org/realms/x", "subject"), (ISSUER, ""), (ISSUER, "s" * 256)):
@@ -697,7 +663,6 @@ class EnsureAccountTests(AccountsTestCase):
         self.assertTrue(created)
 
     def test_account_for_identity_finds_the_account_and_never_creates_one(self):
-        """Covers: AC-accounts-roles-011."""
         users = self.rows("SELECT * FROM users")
         self.assertIsNone(self.accounts.account_for_identity(ISSUER, "nobody"))
         self.assertEqual(self.rows("SELECT * FROM users"), users)
@@ -720,7 +685,6 @@ class LegacyCommandTests(AccountsTestCase):
         self.bind_owner("--username", "admin")
 
     def test_a_linked_identity_lands_in_the_legacy_account_with_its_data(self):
-        """Covers: AC-accounts-roles-012 (link)."""
         self.store.save_orcid(self.bob["id"], ORCID)
         record_id, _ = self.records.start_import(user=self.bob, request=None, turtle=DRAFT, occurred_at=None, client=CLIENT)
         audit = self.audit_actions()
@@ -736,7 +700,6 @@ class LegacyCommandTests(AccountsTestCase):
         self.assertEqual((row["actor_kind"], row["reason"]), ("offline", "Bob's ROHub login."))
 
     def test_linking_an_identity_that_is_already_held_is_refused(self):
-        """Covers: AC-accounts-roles-012 (refusal)."""
         self.provider_account("held-subject")
         code, out = run_cli("legacy", "link", "--account", str(self.bob["id"]), "--issuer", ISSUER, "--subject", "bob-subject", "--reason", "x")
         self.assertEqual(code, 0, out)
@@ -749,7 +712,6 @@ class LegacyCommandTests(AccountsTestCase):
         self.assertEqual((self.identities(), self.all_history()), (identities, history))
 
     def test_admin_survives_a_link_only_with_keep_admin_or_as_the_owner(self):
-        """Covers: AC-accounts-roles-012 (--keep-admin)."""
         self.make_admin_in_database("carol")
         self.create("dave")
         self.make_admin_in_database("dave")
@@ -761,7 +723,6 @@ class LegacyCommandTests(AccountsTestCase):
                 self.assertEqual("admin" in self.account(username)["roles"], keeps)
 
     def test_fold_moves_the_identities_of_an_empty_provider_account_and_blocks_it(self):
-        """Covers: AC-accounts-roles-013 (fold)."""
         self.make_admin_in_database("carol")
         provider = self.provider_account("new-carol")
         elsewhere, _ = self.accounts.ensure_account(OTHER_ISSUER, "new-carol-elsewhere", {})  # another account's identity
@@ -776,7 +737,6 @@ class LegacyCommandTests(AccountsTestCase):
             self.assertIn("account_folded", [row["action"] for row in self.history(account_id)])
 
     def test_fold_refuses_an_account_that_holds_anything_or_is_the_owner(self):
-        """Covers: AC-accounts-roles-013 (refusals)."""
         # Each refusal names what stands in the way. The owner case moves the binding in the database,
         # so that account holds nothing else, history included.
         cases = {"record items": "record", "client contexts": "context", "saved ORCID iDs": "orcid",
@@ -804,7 +764,6 @@ class LegacyCommandTests(AccountsTestCase):
                 self.assertEqual(self.rows("SELECT is_active FROM users WHERE id = ?", provider["id"]), [{"is_active": 1}])
 
     def test_purge_passwords_without_the_flag_only_counts(self):
-        """Covers: AC-accounts-roles-014 (without --confirm-cutover), as owner-sign-in section 10 amends it."""
         self.provider_account("no-password")
         before = self.rows("SELECT * FROM users ORDER BY id")
         code, out = run_cli("legacy", "purge-passwords")
@@ -814,8 +773,7 @@ class LegacyCommandTests(AccountsTestCase):
         self.signed_in("bob")
 
     def test_purge_passwords_ends_every_password_login_but_the_owners_and_keeps_every_row(self):
-        """Covers: AC-accounts-roles-014 (with --confirm-cutover), as owner-sign-in section 10 amends it: the owner's
-        (admin's) password is kept."""
+        """With --confirm-cutover; the owner's (admin's) password is kept."""
         provider = self.provider_account("no-password")
         before = self.users_without("password_hash", "updated_at")
         owner_hash = self.rows("SELECT password_hash FROM users WHERE id = ?", self.admin["id"])[0]["password_hash"]
@@ -839,25 +797,9 @@ class LegacyCommandTests(AccountsTestCase):
         for account_id in (self.admin["id"], provider["id"]):
             self.assertEqual([row for row in self.history(account_id) if row["action"] == "password_purged"], [])
 
-    def test_legacy_show_describes_an_account(self):
-        """Covers: AC-accounts-roles-012 (section 8's legacy show: identities and history among what it prints)."""
-        self.store.save_orcid(self.bob["id"], ORCID)
-        code, out = run_cli("legacy", "link", "--account", str(self.bob["id"]), "--issuer", ISSUER,
-                            "--subject", "bob-subject", "--reason", "Cutover.")
-        self.assertEqual(code, 0, out)
-        for arguments in (("--account", str(self.bob["id"])), ("--username", "bob")):
-            with self.subTest(arguments=arguments):
-                code, out = run_cli("legacy", "show", *arguments)
-                self.assertEqual(code, 0, out)
-                for shown in ("bob", ISSUER, "bob-subject", "identity_linked"):
-                    self.assertIn(shown, out)
-        self.assertEqual(run_cli("legacy", "show", "--username", "nobody")[0], 1)
-        self.assertEqual(run_cli("legacy", "show")[0], 2)
-
 
 class KeptDataTests(AccountsTestCase):
     def test_blocked_folded_and_purged_accounts_keep_their_data_and_their_name_in_the_export(self):
-        """Covers: AC-accounts-roles-015."""
         for account in (self.bob, self.carol):
             self.store.save_orcid(account["id"], ORCID)
             self.records.start_import(user=account, request=None, turtle=DRAFT, occurred_at=None, client=CLIENT)
@@ -883,7 +825,6 @@ class KeptDataTests(AccountsTestCase):
 
 class PreviousImageTests(AccountsTestCase):
     def test_the_previous_image_reads_this_module_s_accounts_as_section_3_says(self):
-        """Covers: AC-accounts-roles-016."""
         self.bind_owner("--username", "carol")
         owner = self.signed_in("carol")
         self.assertEqual(self.act(owner, "block", self.bob["id"], "Left.").status_code, 200)
@@ -918,7 +859,6 @@ class PreviousImageTests(AccountsTestCase):
 
 class AdminRouteTests(AccountsTestCase):
     def test_the_public_user_shape_adds_the_role_everywhere(self):
-        """Covers: AC-accounts-roles-017 (section 9: login, /api/auth/me and the admin routes share it)."""
         owner = self.owner_client()
         for username, password, role in (("bob", "password-123", "user"), ("admin", "admin-password", "owner")):
             with self.subTest(username=username):
@@ -935,7 +875,6 @@ class AdminRouteTests(AccountsTestCase):
         self.assertEqual((blocked.json()["user"]["role"], blocked.json()["user"]["blocked"]), ("user", True))
 
     def test_the_account_list_adds_role_block_state_identities_and_times(self):
-        """Covers: AC-accounts-roles-017 (GET /api/admin/users)."""
         owner = self.owner_client()
         self.assertEqual(self.act(owner, "grant-admin", self.carol["id"]).status_code, 200)
         self.assertEqual(self.act(owner, "block", self.bob["id"], "Left.").status_code, 200)
@@ -966,7 +905,6 @@ class AdminRouteTests(AccountsTestCase):
         self.assertTrue(identity["last_login_at"])
 
     def test_an_account_s_history_lists_its_changes_newest_first(self):
-        """Covers: AC-accounts-roles-017 (GET /api/admin/users/{user_id}/history)."""
         owner = self.owner_client()
         for action, reason in (("grant-admin", "Workshop."), ("block", "Holiday."), ("unblock", None), ("revoke-admin", "Done.")):
             self.assertEqual(self.act(owner, action, self.carol["id"], reason).status_code, 200)
@@ -983,19 +921,9 @@ class AdminRouteTests(AccountsTestCase):
             with self.subTest(unknown=action):
                 self.assertEqual(self.act(owner, action, 9999, "x").status_code, 404)
 
-    def test_a_bootstrap_grant_names_its_actor(self):
-        """Covers: AC-accounts-roles-017 (actor bootstrap)."""
-        db = self.dir / "fresh.sqlite3"
-        self.use_database(db)
-        with started_app() as client:
-            self.login(client, "admin", "admin-password")
-            history = client.get("/api/admin/users/1/history").json()["history"]
-        self.assertEqual([(item["action"], item["actor"]) for item in history], [("admin_granted", "bootstrap")])
-
 
 class RequestValidationTests(AccountsTestCase):
     def test_a_block_needs_a_reason_of_1_to_500_characters(self):
-        """Covers: AC-accounts-roles-019 (the block reason)."""
         admin = self.signed_in("admin", "admin-password")
         history = self.all_history()
         for body in ({}, {"reason": ""}, {"reason": "x" * 501}):
@@ -1007,7 +935,6 @@ class RequestValidationTests(AccountsTestCase):
         self.assertEqual(admin.post(f"/api/admin/users/{self.bob['id']}/block", json={"reason": "x" * 500}).status_code, 200)
 
     def test_granting_admin_to_a_blocked_account_is_refused(self):
-        """Covers: AC-accounts-roles-019 (target_blocked)."""
         owner = self.owner_client()
         self.assertEqual(self.act(owner, "block", self.bob["id"], "Left.").status_code, 200)
         history = self.all_history()

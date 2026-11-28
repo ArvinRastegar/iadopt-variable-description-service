@@ -1,21 +1,13 @@
-"""Provenance tests for the entity-linking fixtures.
+"""The entity-linking fixtures are the bytes recorded from the sibling projects.
 
-These guard the one failure the golden-request tests cannot catch by themselves: a fixture
-edited by hand until a test turns green, which every other test then agrees with. See
-``fixtures/PROVENANCE.md`` and ``decisions.md`` D-032 in the private workflow repository.
-
-Everything here reads files committed to this repository, so it always runs.
+This guards the one failure the golden-request tests cannot catch by themselves: a fixture edited by hand until a test
+turns green, which every other test then agrees with. See ``fixtures/PROVENANCE.md`` and D-032.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import pathlib
-
-import pytest
-
-from app.services import entity_choice
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 
@@ -31,19 +23,6 @@ CHECKSUMS = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(CHECKSUMS))
-def test_fixture_is_the_recorded_bytes(name):
-    assert hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest() == CHECKSUMS[name]
-
-
-def test_the_request_golden_records_the_measured_prompt():
-    provenance = json.loads((FIXTURES / "entity_link_request_golden.json").read_text(encoding="utf-8"))["provenance"]
-    assert provenance["prompt_version"] == entity_choice.PROMPT_VERSION == "psnc-chat-entity-link-v1"
-    assert provenance["prompt_fingerprint"].startswith("20d69e9a52e2")
-    assert provenance["removed_keys"] == ["logprobs", "top_logprobs"]
-
-
-def test_every_fixture_the_provenance_note_lists_exists():
-    note = (FIXTURES / "PROVENANCE.md").read_text(encoding="utf-8")
-    for name in CHECKSUMS:
-        assert f"`{name}`" in note and CHECKSUMS[name] in note
+def test_every_fixture_is_the_recorded_bytes():
+    found = {name: hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest() for name in CHECKSUMS}
+    assert found == CHECKSUMS

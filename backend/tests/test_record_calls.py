@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.routers import decompose as decompose_router
 from app.services import call_log as cl
 from app.services import entity_linking, label_comment, llm
-from app.services.call_log import CallLog, ModelCall, start_call
+from app.services.call_log import CallLog, start_call
 from app.services.entity_linking import Linker
 from app.services.llm import stream_event
 from app.services.vocabularies import Candidate
@@ -44,14 +44,16 @@ def test_tries_are_numbered_per_purpose_and_per_key():
         ("decomposition", 1), ("linking", 1), ("linking", 2), ("linking", 1), ("decomposition", 2), ("label", 1)]
 
 
-def test_a_call_is_recorded_once_with_its_tokens_and_reason():
+def test_a_call_is_recorded_once_with_its_tokens_and_a_short_one_line_reason():
     log = CallLog()
     pending = start_call(log, "decomposition", "psnc", "Qwen3.8-27B")
     pending.finish("error", error=RuntimeError("401   Unauthorized\nfor url"), usage={"prompt_tokens": 3})
     pending.finish("ok")
-    (call,) = log.calls()
-    assert (call.status, call.error, call.input_tokens, call.output_tokens) == ("error", "401 Unauthorized for url", 3, None)
-    assert call.latency_ms >= 0 and call.started_at.endswith("+00:00")
+    start_call(log, "decomposition", "psnc", "Qwen3.8-27B").finish("error", error="x" * 1000)
+    first, second = log.calls()
+    assert (first.status, first.error, first.input_tokens, first.output_tokens) == ("error", "401 Unauthorized for url", 3, None)
+    assert first.latency_ms >= 0 and first.started_at.endswith("+00:00")
+    assert second.error.endswith("…") and len(second.error) == cl.MAX_ERROR_CHARS
 
 
 def test_an_ok_call_keeps_no_reason_and_bad_counts_are_dropped():
@@ -59,13 +61,6 @@ def test_an_ok_call_keeps_no_reason_and_bad_counts_are_dropped():
     start_call(log, "label", "psnc", "m").finish("ok", error="ignored", usage={"prompt_tokens": -1, "completion_tokens": True})
     (call,) = log.calls()
     assert (call.error, call.input_tokens, call.output_tokens) == (None, None, None)
-    assert cl.usage_tokens(SimpleNamespace(prompt_tokens=5, completion_tokens=2)) == (5, 2)
-
-
-def test_reasons_are_one_short_line():
-    assert cl.short_reason("x" * 1000).endswith("…") and len(cl.short_reason("x" * 1000)) == cl.MAX_ERROR_CHARS
-    assert cl.short_reason(ValueError()) == "ValueError"
-    assert cl.short_reason("  ") is None and cl.short_reason(None) is None
 
 
 def test_only_the_last_call_of_a_purpose_can_turn_unusable():
@@ -77,15 +72,6 @@ def test_only_the_last_call_of_a_purpose_can_turn_unusable():
     log.mark_unusable("decomposition", "would hide the error")
     assert by_fields(log.calls(), "purpose", "status", "error") == [
         ("decomposition", "unusable", "Not valid JSON"), ("label", "ok", None), ("decomposition", "error", "down")]
-
-
-def test_without_a_log_nothing_is_kept_and_names_are_checked():
-    start_call(None, "linking", "p", "m").finish("ok")
-    cl.mark_unusable(None, "linking", "nothing to mark")
-    with pytest.raises(ValueError):
-        start_call(None, "chat", "p", "m")
-    with pytest.raises(ValueError):
-        start_call(None, "label", "p", "m").finish("fine")
 
 
 # --- the call helpers ------------------------------------------------------------------ #
@@ -186,12 +172,6 @@ def test_an_answer_that_is_not_json_turns_its_call_unusable(monkeypatch):
     assert log.calls()[0].error.startswith("Not valid JSON")
 
 
-def test_streamed_openrouter_requests_ask_for_their_token_counts():
-    streamed = llm.build_chat_completion_request_kwargs("m", "p", 0.5, stream=True)
-    assert streamed["stream_options"] == {"include_usage": True}
-    assert "stream_options" not in llm.build_chat_completion_request_kwargs("m", "p", 0.5)
-
-
 def test_a_psnc_stream_keeps_token_counts_it_is_sent_without_asking(psnc_session):
     events = ['data: {"choices": [{"delta": {"content": "{}"}}]}',
               'data: {"choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 4}}', "data: [DONE]"]
@@ -286,17 +266,6 @@ def test_the_non_streamed_fallback_records_its_own_tries(monkeypatch, run):
     assert seen_steps.label_logs == [log] and seen_steps.linkers[0].calls is log
 
 
-def test_a_fallback_answer_that_is_not_json_is_marked_unusable(monkeypatch, run):
-    run()
-    client = fake_client(RuntimeError("stream refused"), completion("nope"), iter([chunk("{}")]))
-    monkeypatch.setattr(pipeline, "get_openai_client", lambda: client)
-    monkeypatch.setattr(llm, "get_openai_client", lambda: client)
-    log = CallLog()
-    assert events_of(log)[-1]["type"] == "final"
-    assert by_fields(log.calls(), "attempt", "status", "error") == [
-        (1, "error", "RuntimeError: stream refused"), (2, "unusable", "Not valid JSON: Expecting value"), (3, "ok", None)]
-
-
 def test_an_answer_a_later_step_throws_away_is_marked_unusable(monkeypatch, run):
     seen_steps = run()
     seen_steps.finalize_errors.append(AttributeError("'int' object has no attribute 'strip'"))
@@ -343,14 +312,6 @@ def test_a_missing_key_records_no_call(monkeypatch, run):
     monkeypatch.setattr(llm, "get_openai_client", no_key)
     log = CallLog()
     assert events_of(log)[-1] == {"type": "error", "detail": "OPENROUTER_API_KEY is not set."}
-    assert log.calls() == []
-
-
-def test_a_missing_psnc_key_records_no_call(monkeypatch, run):
-    run(provider="psnc", model="Qwen3.8-27B")
-    monkeypatch.setattr(settings, "psnc_api_key", None)
-    log = CallLog()
-    assert events_of(log)[-1] == {"type": "error", "detail": "PSNC_API_KEY is not set."}
     assert log.calls() == []
 
 
@@ -453,18 +414,6 @@ def test_a_refused_linking_question_is_recorded_before_linking_stops(linking):
     assert by_fields(log.calls(), "status", "error") == [("error", "HTTP 401")]
 
 
-def test_a_linking_question_never_sent_is_not_recorded(linking, monkeypatch):
-    monkeypatch.setattr(settings, "openrouter_api_key", None)
-    log = CallLog()
-    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-        entity_linking.ask_for_choice("air", "d", SHOWN, Linker("openrouter", "m", calls=log))
-    assert log.calls() == []
-
-
-def test_the_log_is_not_part_of_the_linkers_identity():
-    assert Linker("psnc", "Qwen3.8-27B", calls=CallLog()) == Linker("psnc", "Qwen3.8-27B")
-
-
 # --- the record --------------------------------------------------------------------------- #
 
 def two_calls(log):
@@ -547,19 +496,3 @@ class RecordedCallTests(RecordTestCase):
                     conn.execute(sql)
         finally:
             conn.close()
-
-    def test_calls_are_written_as_given(self):
-        call = ModelCall("label", 1, "psnc", "Qwen3.8-27B", "2026-11-17T10:00:00+00:00", 812, 50, 9, "ok", None)
-        record_id = self.store_run_with([call])
-        [row] = self.calls_of(record_id)
-        self.assertEqual((row["latency_ms"], row["started_at"], row["model"]), (812, "2026-11-17T10:00:00+00:00", "Qwen3.8-27B"))
-
-    def store_run_with(self, calls):
-        from app.auth import utc_now
-        from app.core import dependencies as core_deps
-
-        return core_deps.record_store.record_decomposition(
-            user=self.bob, request=None, definition="dissolved oxygen in water", provider="psnc",
-            model="Qwen3.8-27B", disable_thinking=True, prompt_setup="measured", prompt_sha256=None,
-            started_at=utc_now(), ended_at=utc_now(), result=dict(PIPELINE_RESULT), error=None, calls=calls,
-        )

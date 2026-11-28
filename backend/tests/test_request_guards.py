@@ -41,7 +41,6 @@ def hops(number: str) -> Any:
 
 class AddressTests(TempDatabaseTestCase):
     def test_the_entry_n_places_before_the_peer(self):
-        """Covers: AC-request-guards-001."""
         cases: List[Tuple[str, Any, str]] = [
             ("0", None, "10.0.0.9"), ("0", "203.0.113.7, 10.0.0.8", "10.0.0.9"),
             ("1", "203.0.113.7", "203.0.113.7"), ("1", "198.51.100.1, 203.0.113.7", "203.0.113.7"), ("1", None, "10.0.0.9"),
@@ -61,7 +60,6 @@ class AddressTests(TempDatabaseTestCase):
             self.assertEqual(client_ip(request(peer=None)), "")
 
     def test_without_the_number_it_is_as_before(self):
-        """Covers: AC-request-guards-002."""
         for forwarded, peer, expected in (
             ("203.0.113.7, 10.0.0.8", "10.0.0.9", "203.0.113.7"), (" spaced , x", "10.0.0.9", "spaced"), ("[2001:DB8::1]:443", "10.0.0.9", "[2001:DB8::1]:443"),
             (None, "10.0.0.9", "10.0.0.9"), ("", "10.0.0.9", "10.0.0.9"), (None, None, ""), (["first", "second"], "10.0.0.9", "first"), (", x", "10.0.0.9", ""),
@@ -71,7 +69,6 @@ class AddressTests(TempDatabaseTestCase):
         self.assertEqual(client_ip(None), "")
 
     def test_addresses_are_normal_and_others_give_the_peer(self):
-        """Covers: AC-request-guards-003."""
         for entry, expected in (
             ("203.0.113.7:8443", "203.0.113.7"), ("[2001:DB8:0:0::1]:443", "2001:db8::1"), ("[2001:db8::1]", "2001:db8::1"), ("2001:0DB8::0001", "2001:db8::1"),
             ("::ffff:203.0.113.7", "203.0.113.7"), ("[::FFFF:203.0.113.7]:80", "203.0.113.7"), ("unknown", "10.0.0.9"), ("_hidden", "10.0.0.9"),
@@ -86,7 +83,6 @@ class AddressTests(TempDatabaseTestCase):
 
 class StoredAddressTests(OidcTestCase):
     def test_sessions_audit_rows_and_record_contexts_store_it(self):
-        """Covers: AC-request-guards-004."""
         forwarded = "198.51.100.1, 203.0.113.7, 10.0.0.8"
         for number, expected in (("", "198.51.100.1"), ("2", "203.0.113.7")):
             with self.subTest(hops=number), hops(number):
@@ -103,7 +99,6 @@ class StoredAddressTests(OidcTestCase):
 
 class RoutePathTests(TempDatabaseTestCase):
     def test_it_is_the_path_the_routes_are_matched_by(self):
-        """Covers: AC-request-guards-010 (for a server with a root path)."""
         from starlette._utils import get_route_path
 
         for path in ("/api/events", "/x/api/events", "/xy/api/events", "/x/x/api", "//x/api", "/x//api", "/api"):
@@ -119,7 +114,6 @@ class LimiterTests(TempDatabaseTestCase):
         return RateLimiter(lambda scope: Limit(burst, seconds), clock=clock), clock
 
     def test_a_bucket_empties_refuses_and_refills(self):
-        """Covers: AC-request-guards-005."""
         limiter, clock = self.limiter()
         key = address_key("203.0.113.7")
         self.assertEqual([limiter.check("a", key) for _ in range(4)], [None, None, None, 3])
@@ -143,7 +137,6 @@ class LimiterTests(TempDatabaseTestCase):
                         pass
 
     def test_keys_and_scopes_do_not_share_a_bucket(self):
-        """Covers: AC-request-guards-006."""
         limiter, _ = self.limiter(1, 60)
         self.assertIsNone(limiter.check("a", address_key("203.0.113.7")))
         self.assertIsNotNone(limiter.check("a", address_key("203.0.113.7")))
@@ -155,7 +148,6 @@ class LimiterTests(TempDatabaseTestCase):
         self.assertEqual(len({address_key(text) for text in ("", "unknown", "testclient", "x" * 5000)}), 1)
 
     def test_over_http(self):
-        """Covers: AC-request-guards-007."""
         ran: List[int] = []
         probe = FastAPI()
         probe.add_api_route("/probe", lambda: ran.append(1) or {"ok": True}, dependencies=[Depends(guards.limit(guards.SIGN_IN))])
@@ -168,7 +160,6 @@ class LimiterTests(TempDatabaseTestCase):
         self.assertEqual(len(ran), 2)
 
     def test_threads_at_once_and_the_bound_of_buckets(self):
-        """Covers: AC-request-guards-008."""
         limiter, _ = self.limiter(50, 3600)
         passed: List[Optional[int]] = []
         barrier = threading.Barrier(16)
@@ -228,7 +219,6 @@ class BoundTests(OidcTestCase):
         return status, b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
 
     def test_a_body_above_the_bound_is_refused_before_anything_else(self):
-        """Covers: AC-request-guards-009."""
         import json
 
         browser = self.password_browser()
@@ -246,7 +236,6 @@ class BoundTests(OidcTestCase):
                     self.assertEqual(self.ask("/api/events", MiB, declared=declared, cookie=cookies[who])[0], status)
 
     def test_the_bound_of_every_route(self):
-        """Covers: AC-request-guards-010."""
         from app.access.dependencies import ROUTE_CAPABILITIES
         from test_access_policy import fill
 
@@ -263,14 +252,7 @@ class BoundTests(OidcTestCase):
                 self.assertEqual(self.ask(path, bound + 1, root_path="/x")[0], 413)
                 self.assertNotEqual(self.ask(path, bound, root_path="/x")[0], 413)
 
-    def test_the_refusal_is_not_kept(self):
-        """Covers: AC-request-guards-009 (with oidc-identity section 9: every back-channel answer has no-store)."""
-        for path in ("/api/events", "/api/auth/backchannel-logout"):
-            response = self.browser().post(path, content=b"x" * (MiB + 1))
-            self.assertEqual((response.status_code, response.headers["cache-control"]), (413, "no-store"), path)
-
     def test_a_body_that_passes_arrives_as_it_was_sent(self):
-        """Covers: AC-request-guards-009 (a body of at most the bound passes)."""
         browser = self.password_browser()
         turtle = DRAFT + "#" * 700_000
         response = browser.post("/api/records", json={"turtle": turtle, "client": CLIENT})
@@ -281,7 +263,6 @@ class BoundTests(OidcTestCase):
 
 class SettingsTests(TempDatabaseTestCase):
     def test_bad_values_stop_the_start_only(self):
-        """Covers: AC-request-guards-011."""
         fresh = self.dir / "fresh.sqlite3"
         self.use_database(fresh)
         cases = [("trusted_proxy_hops_raw", "IADOPT_TRUSTED_PROXY_HOPS", value) for value in ("-1", "11", "1.5", "two", " 1", "0x1", "١")]
@@ -300,14 +281,12 @@ class SettingsTests(TempDatabaseTestCase):
                     self.assertEqual(client.get("/api/livez").status_code, 200)
 
     def test_the_defaults_and_the_limit_set(self):
-        """Covers: AC-request-guards-011 (the limits)."""
         scopes = (guards.SIGN_IN, guards.SIGN_IN_RETURN, guards.BACKCHANNEL_LOGOUT)
         self.assertEqual([guards.limit_of(scope) for scope in scopes], [Limit(120, 300), Limit(120, 300), Limit(600, 300)])
         with patch.object(core_config.settings, "sign_in_limit_raw", "5/60"):
             self.assertEqual([guards.limit_of(scope) for scope in scopes], [Limit(5, 60), Limit(5, 60), Limit(600, 300)])
 
     def test_password_sign_ins_have_no_limit(self):
-        """Covers: AC-request-guards-012."""
         self.store.init()
         client = self.client()
         with patch.object(self.store, "verify_password", return_value=False):

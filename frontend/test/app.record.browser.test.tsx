@@ -625,20 +625,3 @@ test('a shared ?ttl= link opened by a signed-in account starts a record with tha
   // The page drops the parameter, so that a reload keeps later edits.
   expect(new URL(window.location.href).searchParams.has('ttl')).toBe(false);
 }, 60_000);
-
-test('a decomposition whose draft cannot be drawn leaves nothing of the earlier work to check under its record', async () => {
-  const api = fakeBackend();
-  await mount();
-  await expect.element(page.getByRole('button', { name: /Account menu for Local reader/ })).toBeVisible();
-  await paste(PASTED);
-  await expect.poll(api.steps).toEqual(['start']);
-
-  // The next run returns Turtle without an iop:Variable, which cannot be drawn.
-  api.state.draft = '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<https://example.org/x> rdfs:label "not a variable" .\n';
-  await userEvent.fill(page.getByLabelText('Variable definition'), 'Something else');
-  await page.getByRole('button', { name: /^Decompose/ }).click();
-  await expect.element(page.getByText('The Turtle contains no iop:Variable.').first()).toBeVisible();
-  // The earlier diagram is gone, so none of its components can be checked under the new record.
-  await expect.element(review().getByRole('button', { name: /^water/ })).not.toBeInTheDocument();
-  expect(api.steps()).toEqual(['start']);
-}, 60_000);

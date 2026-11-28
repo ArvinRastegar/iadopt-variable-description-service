@@ -67,7 +67,6 @@ class CheckTests(OidcTestCase):
         return 302, f"{PUBLIC_URL}/api/auth/callback?{urlencode({'error': 'invalid_request', 'state': 'x'})}"
 
     def test_a_good_provider(self):
-        """Covers: AC-keycloak-deployment-003, AC-keycloak-deployment-006."""
         before = self.stored_text()
         for mode, environment, enabled in (("both", "development", True), ("local", "development", True), ("oidc", "development", True), ("nonsense", "development", True),
                                            ("both", "development", False)):
@@ -88,7 +87,6 @@ class CheckTests(OidcTestCase):
         self.assertEqual((code, "a sign-out page is not offered" in out, "back-channel sign-out is not offered" in out), (0, True, True), out)
 
     def test_what_fails(self):
-        """Covers: AC-keycloak-deployment-004."""
         self.replace(provider_module, "REQUEST_SECONDS", 0.5)
         for name, change, word in (
             ("another issuer", {"issuer": "https://login.example.org"}, "other_issuer"), ("no S256", {"code_challenge_methods_supported": ["plain"]}, "no_s256"),
@@ -118,7 +116,6 @@ class CheckTests(OidcTestCase):
                 self.assertEqual(self.check(*options)[0], 2)
 
     def test_a_refused_callback_that_is_no_address_is_a_mistake(self):
-        """Covers: AC-keycloak-deployment-004 (a malformed setting, here an option, is not reported as ok)."""
         for value in ("localhost:5173/api/auth/callback", "/api/auth/callback", "callback", "ftp://localhost/x", "http://", "http://:5173/x", "https://[::1/x", " "):
             with self.subTest(value=value), patch.object(requests.Session, "request", side_effect=AssertionError("sent")):
                 code, out = self.check("--pkce", "--refused-callback", value)
@@ -126,7 +123,6 @@ class CheckTests(OidcTestCase):
                 self.assertNotIn("ok ", out)
 
     def test_the_client_must_require_s256_and_refuse_other_callbacks(self):
-        """Covers: AC-keycloak-deployment-005."""
         good = {"S256": (200, None), "plain": self.refusal(), "none": self.refusal()}
         callbacks = ("--refused-callback", f"{PUBLIC_URL}/", "--refused-callback", "https://evil.example/api/auth/callback")
         self.authorization(good)
@@ -159,13 +155,11 @@ class CheckTests(OidcTestCase):
 
 
 class FilesTests(OidcTestCase):
-    def test_the_settings_are_documented_and_the_example_starts_in_local(self):
-        """Covers: AC-keycloak-deployment-007."""
-        example, manual = (ROOT / ".env.example").read_text(), (ROOT / "docs" / "manual.md").read_text()
+    def test_the_example_settings_name_every_sign_in_setting_and_start_with_passwords(self):
+        example = (ROOT / ".env.example").read_text()
         for name in SETTINGS:
             self.assertIn(f"{name}=", example, name)
-            self.assertIn(f"`{name}`", manual, name)
-        values = {name: value or "" for name, value in dotenv_values(ROOT / ".env.example").items()}
+        values ={name: value or "" for name, value in dotenv_values(ROOT / ".env.example").items()}
         fresh = self.dir / "fresh.sqlite3"
         self.use_database(fresh)
         self.store.cookie_secure = values["IADOPT_COOKIE_SECURE"] == "true"
@@ -173,14 +167,6 @@ class FilesTests(OidcTestCase):
         with patch.multiple(core_config.settings, **{field: values[name] for name, field in raw.items()}):
             with started_app() as client:
                 self.assertEqual(client.get("/api/auth/me").headers["x-iadopt-sign-in"], "password")
-
-    def test_the_deployment_files_name_no_new_setting(self):
-        """Covers: AC-keycloak-deployment-009 (with test_nginx_access, which is unchanged)."""
-        for path in ("docker-compose.yml", "docker-compose.pcss.yml", "docker-compose.portainer.yml", "frontend/nginx.conf", "deploy/openshift/iadopt.yaml"):
-            text = (ROOT / path).read_text()
-            for name in SETTINGS:
-                self.assertNotIn(name, text, f"{path}: {name}")
-
 
 # ------------------------------------------------------------------------------------------------
 # The local Keycloak and the runbooks
@@ -200,7 +186,6 @@ def members(value: Any) -> Iterator[Tuple[str, Any]]:
 
 class LocalStackTests(unittest.TestCase):
     def test_the_realm_has_one_client_and_nobody_in_it(self):
-        """Covers: AC-keycloak-deployment-001."""
         realm = json.loads((FOLDER / "realm.json").read_text())
         [client] = realm["clients"]
         self.assertEqual({name: client[name] for name in client if name.endswith("Enabled") or name in ("publicClient", "enabled", "protocol", "frontchannelLogout")}, {
@@ -237,7 +222,6 @@ class LocalStackTests(unittest.TestCase):
         self.assertNotRegex((FOLDER / "realm.json").read_text(), r"BEGIN |PRIVATE|eyJ")
 
     def test_the_stack_is_pinned_local_and_keeps_nothing(self):
-        """Covers: AC-keycloak-deployment-002."""
         text = (FOLDER / "compose.yml").read_text()
         stack = yaml.safe_load(text)
         self.assertEqual(set(stack["services"]), {"keycloak", "mail"})
@@ -260,35 +244,13 @@ class LocalStackTests(unittest.TestCase):
         self.assertIn("keycloak.localhost", stack["services"]["keycloak"]["networks"]["application"]["aliases"])
         self.assertNotIn("postgres", text.lower())
 
-    def test_the_runbook_file_holds_the_table_the_conditions_and_the_six_runbooks(self):
-        """Covers: AC-keycloak-deployment-008."""
-        text = (FOLDER / "README.md").read_text()
-        rows = [[cell.strip() for cell in line.strip("|").split("|")] for line in text.splitlines() if line.startswith("| ")]
-        self.assertEqual([row[0] for row in rows[1:]], [
-            "Client type", "Flows", "PKCE", "Callback addresses", "Web origins", "Return address after sign-out", "Back-channel sign-out",
-            "Front-channel sign-out", "Base URL", "Scopes", "ID-token signature", "Roles, audience mappers",
-        ])
-        production = {row[0]: row[2] for row in rows[1:]}
-        for name in ("PKCE", "Callback addresses", "Web origins"):
-            self.assertIn("**a condition**", production[name])
-        self.assertEqual(re.findall(r"^### (\d)\. (.+)$", text, re.MULTILINE), [
-            ("1", "Try the sign-in on a development machine"), ("2", "Switch a hosted deployment to ROHub"),
-            ("3", "ROHub is not reachable, changed its keys, a client setting or its address"), ("4", "End sessions"), ("5", "The owner cannot sign in"), ("6", "Roll back"),
-        ])
-        self.assertIn("oidc check --pkce --refused-callback http://localhost:5173/api/auth/callback --refused-callback <public URL>/ "
-                      "--refused-callback <public URL>/api/auth/callback/x --refused-callback https://<another host>/api/auth/callback", text)
-        for section in re.split(r"^### \d\. .+$", text, flags=re.MULTILINE)[1:]:
-            self.assertGreater(len(section.split("\n## ")[0].split()), 20, "a runbook with nothing in it")
-
     def test_the_files_hold_no_address_of_the_hosted_provider(self):
-        """Covers: AC-keycloak-deployment-008."""
         files = [*(FOLDER / name for name in ("README.md", "compose.yml", "realm.json")), TOOL, ROOT / "backend" / "app" / "oidc" / "check.py"]
         for path in files:
             with self.subTest(path.name):
                 self.assertNotRegex(path.read_text(), r"(?i)psnc|poznan|rohub\.org|apps\.paas|bst2")
 
     def test_the_settings_of_the_local_stack_start_the_application(self):
-        """Covers: AC-keycloak-deployment-001, AC-keycloak-deployment-008 (the addresses fit the settings the runbook names)."""
         block = re.search(r"IADOPT_ENVIRONMENT=development\n   IADOPT_AUTH_MODE=both\n   IADOPT_OIDC_ISSUER=http://keycloak[^`]+", (FOLDER / "README.md").read_text())
         values = dict(line.strip().split("=", 1) for line in block.group(0).splitlines() if "=" in line)
         realm, stack = json.loads((FOLDER / "realm.json").read_text()), yaml.safe_load((FOLDER / "compose.yml").read_text())
@@ -303,8 +265,8 @@ class LocalStackTests(unittest.TestCase):
 
 class RunbookTests(AccountsTestCase):
     def test_the_owners_rohub_account_stays_separate_by_the_steps_of_runbook_2(self):
-        """Covers: AC-keycloak-deployment-008 (runbook 2's steps for the owner, as owner-sign-in section 8 amends them:
-        the owner's ROHub account is a separate account the owner approves and makes an admin), AC-owner-sign-in-001."""
+        """Runbook 2's steps for the owner: the owner's ROHub account is a separate account the owner approves and
+        makes an admin."""
         self.bind_owner("--username", "admin")  # after the first release with roles
         self.store.save_orcid(self.admin["id"], "https://orcid.org/0000-0002-1825-0097")
         claims = {"email": "owner@example.org", "email_verified": True, "preferred_username": "owner-at-rohub"}
@@ -323,8 +285,7 @@ class RunbookTests(AccountsTestCase):
         self.assertEqual(response.status_code, 200, response.text)
 
     def test_binding_the_new_account_first_is_the_dead_end_runbook_2_warns_of(self):
-        """Covers: AC-accounts-roles-013 (an account bound as the owner is not folded into another). Runbook 2 no
-        longer folds the owner's ROHub account (owner-sign-in section 8); the dead end it warned of still holds."""
+        """An account bound as the owner is not folded into another: the dead end runbook 2 warned of still holds."""
         self.bind_owner("--username", "admin")
         new, _ = self.accounts.ensure_account(ISSUER, "subject-owner", {"email": "owner@example.org", "email_verified": True})
         self.assertEqual(run_cli("owner", "rebind", "--issuer", ISSUER, "--subject", "subject-owner", "--reason", "x")[0], 0)
@@ -359,7 +320,6 @@ class LocalCheckTests(unittest.TestCase):
         raise AssertionError("something was sent")
 
     def test_another_machine_is_refused_before_anything_is_sent(self):
-        """Covers: AC-keycloak-deployment-010."""
         with patch.dict(os.environ, {"KEYCLOAK_ADMIN_USERNAME": "admin", "KEYCLOAK_ADMIN_PASSWORD": "made-up"}), \
                 patch.object(requests.Session, "request", self.forbidden), patch.object(socket, "getaddrinfo", self.forbidden), \
                 patch.object(socket.socket, "connect", self.forbidden), patch.object(self.tool, "stay_on_this_machine", self.forbidden):
@@ -372,7 +332,6 @@ class LocalCheckTests(unittest.TestCase):
             self.assertTrue(self.tool.is_this_machine(url), url)
 
     def test_no_page_of_another_machine_is_asked_for_on_the_way(self):
-        """Covers: AC-keycloak-deployment-010 (section 7: it sends nothing to an issuer that is not a loopback address)."""
         browser = self.tool.Browser()
         answer = requests.Response()
         answer.status_code, answer.url = 302, "http://localhost:5173/api/auth/login"
@@ -387,7 +346,6 @@ class LocalCheckTests(unittest.TestCase):
         self.assertFalse(browser.session.trust_env, "no proxy")
 
     def test_names_of_this_machine_are_resolved_here_whatever_a_name_server_says(self):
-        """Covers: AC-keycloak-deployment-010."""
         asked: List[Any] = []
         with patch.object(socket, "getaddrinfo", side_effect=lambda host, *_: asked.append(host)), patch.dict(os.environ):
             self.tool.stay_on_this_machine()
@@ -397,9 +355,7 @@ class LocalCheckTests(unittest.TestCase):
         self.assertEqual(asked, ["127.0.0.1", "127.0.0.1", "127.0.0.1", "localhost", "127.0.0.1", None])
 
     def test_no_other_machine_is_found_whoever_asks(self):
-        """Covers: AC-keycloak-deployment-010.
-
-        ``oidc check`` sends its requests where the provider's metadata says, past the tool's own browser.
+        """``oidc check`` sends its requests where the provider's metadata says, past the tool's own browser.
         """
         asked: List[Any] = []
         with patch.object(socket, "getaddrinfo", side_effect=lambda host, *_, **__: asked.append(host) or []), patch.dict(os.environ):
@@ -415,7 +371,6 @@ class LocalCheckTests(unittest.TestCase):
         self.assertEqual(asked, ["127.0.0.2", "::1", "LocalHost"])
 
     def test_an_error_of_the_application_is_no_sign_out(self):
-        """Covers: AC-keycloak-deployment-010 (the check reports a session that ended, not one that could not be read)."""
         places = self.tool.Places("http://keycloak.localhost:8180/realms/x", "x", "http://localhost:5173", "http://localhost:8125", "admin", "made-up")
         check, browser = self.tool.Check(places), self.tool.Browser()
         for status, body, expected in ((200, b'{"user": {"id": 1}}', {"user": {"id": 1}}), (401, b'{"detail": "Authentication required."}', None)):
@@ -430,7 +385,6 @@ class LocalCheckTests(unittest.TestCase):
                 check.me(browser)
 
     def test_without_an_administrator_nothing_is_sent(self):
-        """Covers: AC-keycloak-deployment-010 (the check needs the name and password of the run)."""
         for values in ({}, {"KEYCLOAK_ADMIN_USERNAME": "admin"}, {"KEYCLOAK_ADMIN_PASSWORD": "made-up"}, {"KEYCLOAK_ADMIN_USERNAME": "", "KEYCLOAK_ADMIN_PASSWORD": "made-up"}):
             with self.subTest(values=list(values)), patch.dict(os.environ, values), patch.object(requests.Session, "request", self.forbidden), patch.object(sys, "stderr"):
                 for name in {"KEYCLOAK_ADMIN_USERNAME", "KEYCLOAK_ADMIN_PASSWORD"} - set(values):

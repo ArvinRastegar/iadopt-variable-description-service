@@ -6,8 +6,8 @@ import { toast } from 'sonner';
  * access-policy (components/access-policy.md, approved under gate G-017), section 8, on the main
  * page; increment-1 tests gate G-018. The frontend shows what `capabilities` in GET /api/auth/me
  * reports and never decides access itself: the admin link follows `capabilities`, not `roles`, and
- * a refusal's `detail` is the error the person sees. Covers: AC-access-policy-017 (the admin page's
- * controls are in admin.accounts.browser.test.tsx). No request reaches a real API.
+ * a refusal's `detail` is the error the person sees. The admin page's controls are tested in
+ * admin.accounts.browser.test.tsx. No request reaches a real API.
  */
 
 type Entry = { allowed: boolean; reason: string | null; message: string | null; uses_left_today?: number | null; resets_at?: string | null };

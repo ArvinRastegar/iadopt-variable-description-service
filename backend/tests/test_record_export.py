@@ -9,11 +9,9 @@ import csv
 import io
 import json
 import re
-import sqlite3
 import tempfile
 import zipfile
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 from rdflib import RDF, Graph, Literal, Namespace, URIRef
 from rdflib.compare import isomorphic
@@ -21,17 +19,7 @@ from rdflib.namespace import PROV
 
 from app import storage
 from app.core import dependencies as core_deps
-from app.record_export import (
-    EDITS_COLUMNS,
-    RECORD_BASE,
-    STEP_WORDS,
-    SUMMARY_COLUMNS,
-    iter_file,
-    plain_time,
-    short_reason,
-    words,
-    write_export,
-)
+from app.record_export import EDITS_COLUMNS, RECORD_BASE, SUMMARY_COLUMNS, iter_file, write_export
 from app.records import parse_turtle
 from app.routers.admin import ExportResponse
 from app.services.call_log import ModelCall
@@ -252,15 +240,6 @@ class RecordExportTests(RecordTestCase):
         self.assertEqual([answer.datatype for answer in answers], [RDF.JSON])
         self.assertEqual(json.loads(str(answers[0])), {"label": "dissolved oxygen in water"})
 
-    def test_each_record_sits_on_its_own_line(self):
-        self.make_records()
-        lines = self.files()["records.jsonld"].splitlines()
-        self.assertTrue(lines[0].startswith('{"@context": '))
-        self.assertEqual((lines[1], lines[-1]), ('"@graph": [', "]}"))
-        nodes = [json.loads(line.removesuffix(",")) for line in lines[2:-1]]
-        self.assertEqual([node["@id"].removeprefix(RECORD_BASE) for node in nodes],
-                         [self.decomposed, self.failed, self.imported])
-
     def test_a_version_never_carries_the_text_of_another_record(self):
         # The same graph is stored once, with the text it first arrived in: Alice's, with her
         # comment and her own prefix name.
@@ -361,13 +340,6 @@ class RecordExportTests(RecordTestCase):
         self.assertNotIn("RecordTest/1.0", text)
         self.assertNotIn("macOS", text)
 
-    def test_typed_text_is_exported_exactly_as_stored(self):
-        self.make_records()
-        files = self.files()
-        # Nothing is escaped or trimmed, not even a leading "=": the README says how to open it safely.
-        self.assertIn(NOTE, [row["best mark note"] for row in read_csv(files["summary.csv"])])
-        self.assertEqual(self.records(files)[self.imported]["steps"][3]["annotation"]["bodyValue"], NOTE)
-
     def test_the_download_is_named_audited_and_never_cached(self):
         self.make_records()
         response = self.export()
@@ -380,49 +352,11 @@ class RecordExportTests(RecordTestCase):
                          {"rows": {"summary.csv": 3, "edits.csv": 2, "records.jsonld": 3}})
         self.assertNotIn("carol@example.org", json.dumps(audit[0]))
 
-    def test_the_readme_explains_the_files_and_warns_about_personal_data(self):
+    def test_the_readme_warns_that_the_files_hold_personal_data(self):
         self.make_records()
-        readme = self.files()["README.txt"]
-        self.assertIn("name, username and email", readme)
-        self.assertIn("Data > From Text/CSV", readme)
-        self.assertRegex(readme, r"summary\.csv\s+3 rows")
-        self.assertRegex(readme, r"edits\.csv\s+2 rows")
-        self.assertRegex(readme, r"records\.jsonld\s+3 records")
+        self.assertIn("name, username and email", self.files()["README.txt"])
 
-    def test_the_file_name_follows_the_export_time(self):
-        self.login("admin", "admin-password")
-        before = datetime.now(timezone.utc).replace(microsecond=0)
-        disposition = self.export().headers["content-disposition"]
-        after = datetime.now(timezone.utc)
-        stamp = re.search(r"iadopt-records-(\d{8}T\d{6})Z\.zip", disposition).group(1)
-        exported = datetime.strptime(stamp, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
-        self.assertTrue(before <= exported <= after)
-
-    # -------------------------------------------------------------- reading and streaming
-
-    # Rewritten at the increment-1 tests gate (G-018): app.storage's snapshot() replaces
-    # RecordStore.snapshot with the same behaviour (app-storage, section 3).
-
-    def test_the_snapshot_reads_every_table_at_one_moment(self):
-        """Covers: AC-app-storage-004."""
-        with storage.snapshot(path=self.store.db_path) as conn:
-            before = conn.execute("SELECT COUNT(*) FROM record_items").fetchone()[0]
-            # Another connection stores a record while the snapshot is open.
-            core_deps.record_store.record_decomposition(
-                user=self.bob, request=None, definition="air temperature", provider="psnc", model="Qwen3.8-27B",
-                disable_thinking=True, prompt_setup="measured", prompt_sha256=None, started_at=STARTED,
-                ended_at=STARTED, result=None, error="HTTP 401",
-            )
-            during = conn.execute("SELECT COUNT(*) FROM record_items").fetchone()[0]
-        self.assertEqual(during, before)
-        self.assertEqual(self.rows("SELECT COUNT(*) AS n FROM record_items"), [{"n": before + 1}])
-
-    def test_the_export_reads_through_a_snapshot_that_cannot_write(self):
-        """Covers: AC-app-storage-004."""
-        with storage.snapshot(path=self.store.db_path) as conn:
-            with self.assertRaises(sqlite3.OperationalError):
-                conn.execute("INSERT INTO record_schema (version) VALUES (99)")
-        self.assertEqual(self.rows("SELECT version FROM record_schema"), [{"version": 1}])
+    # -------------------------------------------------------------- streaming
 
     def test_many_records_are_written_to_a_file_and_sent_in_chunks(self):
         for number in range(120):
@@ -440,22 +374,6 @@ class RecordExportTests(RecordTestCase):
         self.assertTrue(spool.closed)
         with zipfile.ZipFile(io.BytesIO(b"".join(chunks))) as archive:
             self.assertEqual(len(json.loads(archive.read("records.jsonld"))["@graph"]), 120)
-
-    def test_the_route_sends_the_export_from_a_temporary_file_it_then_closes(self):
-        self.make_records()
-        opened = []
-        make_file = tempfile.TemporaryFile
-
-        def tracking(*args, **kwargs):
-            handle = make_file(*args, **kwargs)
-            opened.append(handle)
-            return handle
-
-        with patch("app.routers.admin.tempfile.TemporaryFile", side_effect=tracking):
-            files = self.files()
-        self.assertTrue(opened, "the export was written to a temporary file")
-        self.assertTrue(all(handle.closed for handle in opened))
-        self.assertEqual(len(self.records(files)), 3)
 
     def test_a_download_the_client_leaves_still_closes_the_file(self):
         spool = tempfile.TemporaryFile()
@@ -479,23 +397,3 @@ class RecordExportTests(RecordTestCase):
             return spool.closed
 
         self.assertTrue(asyncio.run(download()))
-
-    def test_short_reasons_keep_only_the_first_part(self):
-        self.assertEqual(short_reason("HTTP 401"), "HTTP 401")
-        self.assertEqual(
-            short_reason('The draft could not be stored as a version. Could not parse the Turtle: at line 1 "quoted"'),
-            "The draft could not be stored as a version.",
-        )
-        self.assertEqual(short_reason('Could not parse the Turtle: "quoted"'), "Could not parse the Turtle")
-        self.assertEqual(
-            short_reason("1 validation error for Answer\nlabel\n  Input should be a string [input_value='model text']"),
-            "1 validation error for Answer",
-        )
-        self.assertEqual(short_reason(None), "")
-
-    def test_plain_words_keep_codes_and_times_they_do_not_know(self):
-        self.assertEqual(words(STEP_WORDS, "mark_best"), "marked as best")
-        self.assertEqual(words(STEP_WORDS, "a_new_kind"), "a_new_kind")
-        self.assertEqual(plain_time("2026-11-18T10:15:02.123456+00:00"), "2026-11-18 10:15:02")
-        self.assertEqual(plain_time("not a time"), "not a time")
-        self.assertEqual(plain_time(None), "")

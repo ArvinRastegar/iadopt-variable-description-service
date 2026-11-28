@@ -8,7 +8,7 @@ import { page, userEvent } from 'vitest/browser';
  * 4 allows the viewer (buttons Block, Unblock, Make admin, Remove admin, Edit, Reset password and
  * History, the names agreed at this gate); an edit sends neither `roles` nor `is_active`; creating
  * an account offers no role; and a refusal's `detail` is shown as the error.
- * Covers: AC-accounts-roles-018, AC-access-policy-017. No request reaches a real API.
+ * No request reaches a real API.
  */
 
 const ISSUER = 'https://login.rohub.example.org/auth/realms/rohub';
